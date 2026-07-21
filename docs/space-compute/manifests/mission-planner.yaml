@@ -1,0 +1,89 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: space-compute-mission-planner, namespace: kube-system}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata: {name: system:space-compute-mission-planner}
+rules:
+- apiGroups: [spacecompute.k3s.io]
+  resources: [spacemissions, spaceplacementintents, spacelinksnapshots, spacedomainresourcesummaries]
+  verbs: [get, list, watch]
+- apiGroups: [spacecompute.k3s.io]
+  resources: [spaceplacementintents]
+  verbs: [create, update, patch]
+- apiGroups: [spacecompute.k3s.io]
+  resources: [spacemissions/status, spaceplacementintents/status, spacelinksnapshots/status, spacedomainresourcesummaries/status]
+  verbs: [get, update, patch]
+- apiGroups: [""]
+  resources: [nodes]
+  verbs: [get, list, watch, update, patch]
+- apiGroups: [""]
+  resources: [pods]
+  verbs: [get, list, watch, create]
+- apiGroups: ["", events.k8s.io]
+  resources: [events]
+  verbs: [create, patch, update]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: {name: space-compute-mission-planner}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: system:space-compute-mission-planner}
+subjects: [{kind: ServiceAccount, name: space-compute-mission-planner, namespace: kube-system}]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: {name: space-compute-mission-planner-leader, namespace: kube-system}
+rules:
+- apiGroups: [coordination.k8s.io]
+  resources: [leases]
+  verbs: [create]
+- apiGroups: [coordination.k8s.io]
+  resources: [leases]
+  resourceNames: [space-compute-mission-planner]
+  verbs: [get, update, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: {name: space-compute-mission-planner-leader, namespace: kube-system}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: space-compute-mission-planner-leader}
+subjects: [{kind: ServiceAccount, name: space-compute-mission-planner, namespace: kube-system}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: space-compute-mission-planner, namespace: kube-system}
+spec:
+  replicas: 2
+  selector: {matchLabels: {app.kubernetes.io/name: space-compute-mission-planner}}
+  template:
+    metadata: {labels: {app.kubernetes.io/name: space-compute-mission-planner}}
+    spec:
+      serviceAccountName: space-compute-mission-planner
+      priorityClassName: system-cluster-critical
+      containers:
+      - name: planner
+        image: space-compute-mission-planner:v1.33.7-k3s1
+        args: [--leader-elect=true, --leader-election-namespace=kube-system, --workers=4, --metrics-bind-address=:10261]
+        ports: [{name: metrics, containerPort: 10261}]
+        readinessProbe: {httpGet: {path: /readyz, port: metrics}, initialDelaySeconds: 3}
+        livenessProbe: {httpGet: {path: /livez, port: metrics}, initialDelaySeconds: 10}
+        resources: {requests: {cpu: 100m, memory: 128Mi}, limits: {memory: 512Mi}}
+        securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, runAsNonRoot: true, capabilities: {drop: [ALL]}}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: space-compute-mission-planner, namespace: kube-system}
+spec:
+  selector: {app.kubernetes.io/name: space-compute-mission-planner}
+  ports: [{name: metrics, port: 10261, targetPort: metrics}]
+---
+# Bind this role only to authenticated cross-domain reporter ServiceAccounts.
+# The admission policy additionally requires provenance.reporterID to equal the
+# authenticated Kubernetes principal.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata: {name: system:space-compute-domain-reporter}
+rules:
+- apiGroups: [spacecompute.k3s.io]
+  resources: [spacelinksnapshots, spacedomainresourcesummaries]
+  verbs: [create, get, update, patch]

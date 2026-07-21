@@ -1,0 +1,54 @@
+{
+  "apiVersion": "spacecompute.k3s.io/v1alpha1",
+  "kind": "SpaceLinkSnapshotList",
+  "items": [
+    {
+      "apiVersion": "spacecompute.k3s.io/v1alpha1", "kind": "SpaceLinkSnapshot",
+      "metadata": {"name": "ground-leo"},
+      "spec": {
+        "source": {"name": "ground-a", "clusterID": "ground-a-cluster", "orbitClass": "ground"},
+        "destination": {"name": "leo-a", "clusterID": "leo-a-cluster", "orbitClass": "leo"},
+        "observedAt": "2026-07-21T00:00:00Z", "validUntil": "2026-07-21T03:00:00Z",
+        "maximumClockSkewSeconds": 2, "minimumUpdateSeconds": 10, "historyLimit": 16,
+        "provenance": {"reporterID": "authenticated-reporter", "source": "recorded-contact-product", "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "sequence": 1},
+        "windows": [{"id": "ground-leo-window", "start": "2026-07-21T00:01:00Z", "end": "2026-07-21T00:15:00Z", "bandwidthBitsPerSecond": 100000000, "rttMicroseconds": 20000, "lossPartsPerMillion": 100, "errorPartsPerMillion": 10, "stabilityMilli": 900, "confidenceMilli": 900, "predicted": true}]
+      }
+    },
+    {
+      "apiVersion": "spacecompute.k3s.io/v1alpha1", "kind": "SpaceLinkSnapshot",
+      "metadata": {"name": "leo-ground"},
+      "spec": {
+        "source": {"name": "leo-a", "clusterID": "leo-a-cluster", "orbitClass": "leo"},
+        "destination": {"name": "ground-a", "clusterID": "ground-a-cluster", "orbitClass": "ground"},
+        "observedAt": "2026-07-21T00:00:00Z", "validUntil": "2026-07-21T03:00:00Z",
+        "maximumClockSkewSeconds": 2, "minimumUpdateSeconds": 10, "historyLimit": 16,
+        "provenance": {"reporterID": "authenticated-reporter", "source": "recorded-contact-product", "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "sequence": 1},
+        "windows": [{"id": "leo-ground-window", "start": "2026-07-21T00:20:00Z", "end": "2026-07-21T00:35:00Z", "bandwidthBitsPerSecond": 100000000, "rttMicroseconds": 20000, "lossPartsPerMillion": 100, "errorPartsPerMillion": 10, "stabilityMilli": 900, "confidenceMilli": 900, "predicted": true}]
+      }
+    },
+    {
+      "apiVersion": "spacecompute.k3s.io/v1alpha1", "kind": "SpaceLinkSnapshot",
+      "metadata": {"name": "ground-geo"},
+      "spec": {
+        "source": {"name": "ground-a", "clusterID": "ground-a-cluster", "orbitClass": "ground"},
+        "destination": {"name": "geo-a", "clusterID": "geo-a-cluster", "orbitClass": "geo"},
+        "observedAt": "2026-07-21T00:00:00Z", "validUntil": "2026-07-21T03:00:00Z",
+        "maximumClockSkewSeconds": 2, "minimumUpdateSeconds": 10, "historyLimit": 16,
+        "provenance": {"reporterID": "authenticated-reporter", "source": "recorded-contact-product", "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "sequence": 1},
+        "windows": [{"id": "ground-geo-window", "start": "2026-07-21T00:25:00Z", "end": "2026-07-21T00:40:00Z", "bandwidthBitsPerSecond": 1000000000, "rttMicroseconds": 20000, "lossPartsPerMillion": 100, "errorPartsPerMillion": 10, "stabilityMilli": 900, "confidenceMilli": 900, "predicted": true}]
+      }
+    },
+    {
+      "apiVersion": "spacecompute.k3s.io/v1alpha1", "kind": "SpaceLinkSnapshot",
+      "metadata": {"name": "geo-ground"},
+      "spec": {
+        "source": {"name": "geo-a", "clusterID": "geo-a-cluster", "orbitClass": "geo"},
+        "destination": {"name": "ground-a", "clusterID": "ground-a-cluster", "orbitClass": "ground"},
+        "observedAt": "2026-07-21T00:00:00Z", "validUntil": "2026-07-21T03:00:00Z",
+        "maximumClockSkewSeconds": 2, "minimumUpdateSeconds": 10, "historyLimit": 16,
+        "provenance": {"reporterID": "authenticated-reporter", "source": "recorded-contact-product", "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "sequence": 1},
+        "windows": [{"id": "geo-ground-window", "start": "2026-07-21T00:50:00Z", "end": "2026-07-21T01:05:00Z", "bandwidthBitsPerSecond": 1000000000, "rttMicroseconds": 20000, "lossPartsPerMillion": 100, "errorPartsPerMillion": 10, "stabilityMilli": 900, "confidenceMilli": 900, "predicted": true}]
+      }
+    }
+  ]
+}

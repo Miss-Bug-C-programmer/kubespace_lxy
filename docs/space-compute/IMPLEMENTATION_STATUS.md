@@ -11,10 +11,10 @@ inspection or compilation.
   `github.com/k3s-io/kubernetes` or its staging modules at `v1.33.7-k3s1`.
 - The verified toolchain is `go1.24.11 linux/amd64`, matching the `go 1.24.11`
   directive in `go.mod`; `CGO_ENABLED=1` for the recorded baseline.
-- The workspace has an empty `.git` directory. There is no usable repository,
-  branch, status, diff, commit history, or upstream merge base, so custom-file
-  provenance cannot be established from local Git evidence. File/module evidence
-  is used and no provenance is invented.
+- Git status is usable and remained on branch `master`; no branch, reset,
+  rebase, merge or checkout operation was performed. The pre-Phase-4 short
+  status was clean, so the changes listed below are Phase 4 work rather than
+  overwritten unrelated edits.
 - Existing custom implementation:
   - `pkg/scheduler/plugins/gpustability/gpu_stability.go`
   - `pkg/scheduler/plugins/gpustability/metrics_profiles.go`
@@ -58,6 +58,12 @@ inspection or compilation.
   ephemeral K3s API/control-plane e2e now pass, including two standalone
   scheduler processes, real Lease failover, exporter-backed Pod Binding,
   probes, RBAC, and manifest install/uninstall. Phase 3 is complete.
+- Phase 4 adds versioned link/resource/mission/placement APIs, strict
+  validation and admission, a restart-safe global mission planner and workload
+  controller, informer-local link/domain projections, deterministic local
+  policy dimensions, an ownership/state-machine ADR, bounded metrics/Events,
+  and a CPU-only real-K3s full-flow e2e. Future waiting, transfer/retry and
+  result-return state remain above the scheduler. Phase 4 is complete.
 
 ## Verified plugin catalogue
 
@@ -86,7 +92,7 @@ inspection or compilation.
   metrics, an atomic declarative profile registry, and concurrency-safe bounded
   target/snapshot stores. There is no DRA allocation linkage or vGPU slicing.
 
-## Known limitations after Phase 3 implementation
+## Known limitations after Phase 4 implementation
 
 - Physical-device selection is still owned by the configured device plugin.
   Because telemetry identity is not linked to the allocated device yet, strict
@@ -112,8 +118,15 @@ inspection or compilation.
   separately launched scheduler processes. It validates scheduling and control
   plane isolation, not kubelet image execution, CNI, a vendor device plugin, or
   physical accelerator allocation; those remain Phase 5/hardware qualification.
-- No durable heterogeneous inventory, DRA/device identity linkage,
-  link/contact-window model, or global mission planner exists yet.
+- Cross-domain summary delivery is an authenticated at-least-once integration
+  boundary; this phase does not ship a WAN transport or stretch one etcd quorum
+  across orbital links. Each domain must deploy its own reporter credentials,
+  audit sink and time-synchronization monitoring.
+- The agentless CPU-only K3s Phase 4 e2e validates real CRDs/admission,
+  controller persistence, contact planning, exporter collection, independent
+  scheduler Binding and terminal status. It does not claim kubelet image
+  execution, CNI, physical contact hardware, a vendor device plugin or result
+  transfer-agent qualification. Those remain Phase 5/hardware work.
 
 ## Phase state
 
@@ -123,19 +136,19 @@ inspection or compilation.
 | 1 — Existing plugin hardening | Complete | Unit/race/static/integration/fuzz gates passed on 2026-07-20; callbacks are snapshot-only |
 | 2 — Exporter collection and snapshots | Complete | Dynamic Node discovery, atomic declarative reload, unified generation-safe snapshots, race tests, and 100/1,000-target fixture benchmarks passed on 2026-07-20 |
 | 3 — Independent scheduler | Complete | Version-matched K3s API e2e, two-process Lease failover, probes/RBAC/install-uninstall, exporter-backed binding, unit/race/static/fuzz/scale gates passed on 2026-07-20 |
-| 4 — Space-aware orchestration | Not started | No link/window/planner model yet |
+| 4 — Space-aware orchestration | Complete | Versioned CRDs/admission, accepted-generation link/resource control, deterministic planner/local policy, restart-safe workload state, CPU-only fixtures and real K3s full-flow/race e2e passed on 2026-07-21 |
 | 5 — Production qualification | Not started | Phase 2 fixture scale exists; qualification-scale, chaos, hardware, soak, and release evidence remain |
 
 ## Latest Phase 3 work
 
 - Implemented the Phase 3 production milestone without branch operations, test
   weakening, production mocks, simulator code, vGPU/device allocation, or
-  default-scheduler coupling. The `.git` directory remains empty; preservation
-  is based on visible-file evidence.
+  default-scheduler coupling. The current repository has a usable `master`
+  branch; Phase 4 likewise performed no branch-changing operation.
 - Added `cmd/space-compute-scheduler`, which invokes the exact upstream
   Kubernetes `v1.33.7-k3s1` scheduler command and registers only the external
-  plugin factory. The reproducible command uses `-buildvcs=false` because local
-  Git metadata is absent; it does not fabricate a revision. JSON log
+  plugin factory. The reproducible command uses `-buildvcs=false` so workspace
+  state is not embedded as a fabricated release revision. JSON log
   registration adds the canonical indirect `github.com/go-logr/zapr v1.3.0`
   module requirement; `go mod tidy -diff` reports no remaining delta.
 - Added a strict typed `SpaceComputeWorkloadIntent` annotation for state policy,
@@ -512,16 +525,179 @@ production behavior. No pre-existing production test failure is being carried.
   static-Pod template under `docs/gpu-scheduler/manifests/`.
 - Handoff: this status file. No generated binary remains in the repository.
 
+## Phase 4 outcome
+
+Phase 4 is complete. It was implemented without branch operations, default-
+scheduler coupling, vGPU allocation, a link/orbit simulator, scheduler-path
+remote I/O, future waiting in callbacks, test weakening or unrelated-file
+discard.
+
+- Added `spacecompute.k3s.io/v1alpha1` Go APIs and structural CRDs for directed
+  link/contact snapshots, exporter-derived domain resource summaries,
+  namespaced mission intent and durable placement intent. Fixed-unit validation
+  covers identity, SHA-256 provenance, sequence, observation/validity, clock
+  skew, overlapping/impossible windows, bounds, capability alternatives,
+  deadline/duration/safety contradictions, migration/checkpoint constraints,
+  workload templates and one-active-execution policy.
+- Added fail-closed admission for contradictory mission intent and authenticated
+  immutable reporter identity. Cross-domain reporter RBAC is intentionally
+  unbound. Planner RBAC cannot read Secrets or bind Pods; the independent
+  scheduler retains binding ownership.
+- Added the resource-controller acceptance boundary: link observations record a
+  capped acceptance/rejection history and reject replay/too-fast unchanged
+  updates. Real API generations enter planning only when matching
+  resource-controller conditions and accepted link sequence are true. Rejected
+  current generations cannot bypass status by being syntactically valid.
+- Added a deterministic global planner that selects domain and epoch before Pod
+  scheduling, fits input/compute/return against guarded windows, expires plans,
+  hashes all material inputs, and ranks fixed scores for completion, locality,
+  link risk, energy/thermal, resilience and fragmentation. It consumes no
+  fabricated future link and persists structured rejection/score explanations.
+- Added dynamic-CRD optimistic persistence, bounded work queues/workers,
+  informer watches, leader election, health/readiness and restart/idempotency.
+  Placement uses mission UID, plan ID, attempt and material digest. Duplicate or
+  out-of-order observations cannot regress state.
+- Added a workload controller for store-and-forward waiting, deterministic
+  attempt Pod creation, UID/plan fencing, checkpoint/retry/migration policy and
+  explicit result-return tracking. Checkpointable partition recovery replans
+  only after fencing/checkpoint; non-checkpointable execution fails without a
+  duplicate Pod.
+- Added informer-local Node projection and Phase 4 scheduler feasibility for
+  planned domain, current epoch, expiry, exact link sequence/window and snapshot
+  freshness. Strict/degraded/best-effort stale behavior is explicit. Scheduler
+  callbacks clone immutable cycle state and issue no API, exporter or remote
+  calls and perform no long wait.
+- Extended fixed scheduler scoring with predicted completion, link risk and
+  resilience while retaining backward-compatible explicit old scoring configs.
+  Shipped configs use eleven weights totaling 100. Queue hints wake only Pods
+  affected by domain/projection/placement changes.
+- Added bounded planner metrics for latency, active reconciliations, replan
+  reason, deadline slack, snapshot age, link-risk class and error stage;
+  conditions/Events; security, retention and clock assumptions; troubleshooting
+  runbook; and the accepted ownership/state-machine ADR.
+- Added golden workload, Kubernetes Node, recorded link and expected decision
+  inputs. The first-class Iluvatar `ix_*` exporter fixture continues through the
+  production parser/collector. CPU-only tests use the production CRDs,
+  controllers, projections and scheduler plugin with injectable clocks, not a
+  separate simulator or validation bypass.
+
+## Phase 4 scenario coverage
+
+- LEO, GEO/high-orbit and ground candidates with changing directed windows;
+  higher GEO compute loses to earlier/data-near LEO total completion.
+- Input transfer fit and window-close failure; execution fit with required
+  result-return deadline failure.
+- Strict energy/thermal rejection and degraded penalty.
+- Strict/degraded/best-effort stale projection and missing exact-window
+  behavior; no future availability is inferred.
+- Inclusive/exclusive boundary and configured clock-skew guards.
+- Checkpointable partition/replan and non-checkpointable terminal failure.
+- Planner/workload restart, duplicate intent, deterministic attempt naming,
+  duplicate/out-of-order observations and one-active-Pod cross-domain fence.
+- Ordinary K3s workload independence and deterministic replay of reversed input
+  ordering with identical plan, score and explanation order.
+- Full CPU-only flow on a real K3s 1.33 API: production exporter snapshot ->
+  accepted link/resource CRDs -> durable plan -> deterministic attempt Pod ->
+  independent scheduler Binding -> terminal placement status.
+
+## Phase 4 commands and exact results (2026-07-21)
+
+Pre-change stability evidence:
+
+| Command | Result |
+| --- | --- |
+| `scripts/space-compute unit` | Passed with approved loopback permission: plugin `1.034s`, scheduler command `0.038s`, existing external harness compile/skip `0.012s` |
+| `scripts/space-compute race` | Passed: plugin `6.245s`, scheduler command `1.162s`, external harness compile/skip `1.054s` |
+
+Final repeatable evidence:
+
+| Command | Result |
+| --- | --- |
+| `scripts/space-compute unit` | Passed all nine affected packages: plugin `1.158s`, scheduler command `0.052s`, planner command `0.037s`, API `0.012s`, kube adapter `0.033s`, planner `0.015s`, local policy `0.013s`, workload `0.013s`, external harness compile/skip `0.015s` |
+| `scripts/space-compute race` | Passed all nine packages: plugin `3.364s`, scheduler command `1.204s`, planner command `1.130s`, API `1.044s`, kube adapter `1.098s`, planner `1.085s`, local policy `1.046s`, workload `1.070s`, external harness compile/skip `1.063s` |
+| `scripts/space-compute static` | Passed: gofmt listed no paths and `go vet` exited 0 |
+| `scripts/space-compute integration` | Passed: plugin production/framework flow `0.984s`; both commands and all four Phase 4 packages passed; external harness compile/skip `0.015s` |
+| `scripts/space-compute scenarios` | Passed: API `0.022s`, kube `0.018s`, planner `0.010s`, policy `0.005s`, workload `0.010s`, scheduler Phase 4 flow `0.222s` |
+| `scripts/space-compute fuzz` | Passed six 5-second targets: metric parser 3,138 executions/3 new/137 total; typed args 5,595/16/134; workload intent 6,154/26/48; link validation 15/0/1; mission validation 18/0/1; Pod mission projection 15/0/1 |
+| `scripts/space-compute scale` | Passed. Collector: 100 `6.398192ms`, 4,862,368 B, 67,181 allocs; 1,000 `61.750772ms`, 45,931,880 B, 663,730 allocs. Scheduler callbacks: 100 `2.223319ms`/22,233 ns per Node, 1,216,416 B/9,807 allocs; 1,000 `24.254854ms`/24,255 ns, 12,406,272 B/98,033; 5,000 `119.791074ms`/23,958 ns, 61,157,368 B/490,054 |
+| `scripts/space-compute hardware` | Passed with explicit skip: `K3S_GPU_TEST_METRICS_FILE is not set`; package `0.022s`. Recorded exporter coverage did run in unit/integration/e2e |
+| `go mod tidy -diff` and `bash -n scripts/space-compute` | Passed with no diff/output |
+| Scheduler/planner builds in `/tmp` | Scheduler reports `Kubernetes v1.33.7-k3s1`, 106,075,611 bytes, SHA-256 `cb60d81ee79496564055138b1a23a878962fcf07564c2eec5c37a2d7757331d1`. Planner 73,963,419 bytes, SHA-256 `10c0d27509f6c97dfd80771bf44bff46785bc3bfdec9534e9a11bc61266fd7e9` |
+
+Real API/control-plane qualification used the source-built K3s 1.33 binary from
+Phase 3 with an isolated `/tmp/space-compute-phase4-e2e.wpRRBe` datastore,
+port 17443, separate service/cluster CIDRs and no agent. The system-installed
+K3s 1.27 server was not modified. The isolated process was stopped cleanly;
+its datastore remains in `/tmp` for audit/replay.
+
+| Command or check | Result |
+| --- | --- |
+| K3s `/readyz`, CRD apply and `Established` wait | Passed for all four structural CRDs on API `v1.33.7+k3s-` |
+| Admission positive/negative objects | Valid link and mission accepted; forged reporter denied; contradictory duration mission denied by CRD CEL; admission policy type checking reported no errors |
+| Planner manifest server dry-run and real apply | Passed for ServiceAccount, least-privilege roles/bindings, two-replica Deployment and Service. Impersonation denied Secret reads and allowed placement creation/Node projection |
+| Production planner manual reconciliation and restart | Created one durable plan and one `valid-mission-attempt-1` Pod, projected 1,112-byte Node state, recorded accepted link history and Events; restart retained exactly one plan/Pod and the same plan ID |
+| `scripts/space-compute cluster-e2e` | Passed both tests together after scoped zero-grace agentless cleanup: Phase 4 full flow `25.84s`, Phase 3 independence/failover regression `15.41s`, package `41.276s` |
+| Final accepted-generation Phase 4 e2e | Passed `25.65s`; production controller/scheduler binaries and real CRDs/API bound and completed the mission |
+| Final accepted-generation Phase 4 e2e with `-race` | Passed test `27.67s`, package `28.739s`; no race reported |
+| Both external tests with `-race` before the final conservative acceptance check | Passed Phase 4 `25.41s`, Phase 3 `14.98s`, package `41.441s`; the final planner package race gate above also includes the accepted-generation code |
+
+The non-fatal read-only module `zapr` stat-cache warning recurred in some Go
+commands; build/test exit status remained 0 and `go mod tidy -diff` remained
+empty.
+
+## Phase 4 diagnostic disposition
+
+- An unprivileged `httptest`/K3s run could not bind local sockets. Required
+  commands were rerun with approved local bind permission and passed. One later
+  unprivileged scenario invocation reproduced that same environmental panic;
+  the immediately repeated elevated command passed all scenarios.
+- The first isolated server used `--disable=cloud-controller`, which did not
+  disable K3s's built-in cloud controller and collided with the host's port
+  10258. It exited before manifest mutation. The documented
+  `--disable-cloud-controller` agentless command then passed.
+- First real API validation rejected explicit `additionalProperties: false`
+  combined with named schema properties. The structural CRDs were corrected and
+  a manifest regression guard was added. All four then became Established.
+- The first admission condition treated absent `request.subResource` as a
+  string and failed closed on valid creates. Base-resource rules already exclude
+  status subresources, so the redundant condition was removed; positive and
+  negative admission cases then passed.
+- Sequential external tests initially reused a Terminating namespace while
+  no kubelet was available to complete normal Pod grace periods. Teardown now
+  zero-grace deletes only fixture Pods, waits for actual namespace/Node removal,
+  and both external tests pass together. No production behavior or assertion
+  was weakened.
+- Final audit found planner input needed the resource-controller accepted
+  generation/sequence, not only fresh syntactic validation. Conservative
+  generation/status gating and rejection tests were added, then unit/race/live
+  e2e gates were rerun successfully.
+
+## Phase 4 files changed
+
+- API/controllers: `contrib/space-compute/pkg/apis/v1alpha1`, `pkg/planner`,
+  `pkg/policy`, `pkg/workload` and `pkg/kube`.
+- Components/build: `cmd/space-compute-mission-planner`,
+  `Dockerfile.space-compute-mission-planner`, `Makefile` and
+  `scripts/space-compute`.
+- Scheduler: `config.go`, `gpu_stability.go`, `queueing.go`, Phase 4 unit/full
+  integration tests, and shipped standalone scoring configurations.
+- E2E/fixtures: real external Phase 4 harness, safer agentless cleanup, golden
+  workload/Node/link/decision data and retained Iluvatar exporter text.
+- Operations: Phase 4 CRDs, admission, planner RBAC/Deployment/Service,
+  ownership ADR, API/state/operations/runbook documentation and this handoff.
+  `go.mod` and `go.sum` did not change. No generated binary was written into the
+  repository.
+
 ## Next action
 
-Phase 4 is permitted. Its smallest production-complete next milestone is the
-versioned link/contact snapshot API plus strict validation, injectable-clock
-boundary tests, and an informer-local read interface for the independent
-scheduler. Future-window waiting, cross-cluster transfer orchestration and
-mission retry state must remain in a separate planner/controller state machine,
-not in scheduler callbacks. Before implementation, add the Phase 4 ownership
-ADR described by `PROJECT.md`; stop for a product decision if that ADR would
-materially change the documented planner/scheduler/resource-controller split.
+Phase 5 is permitted but not started. Production qualification must add
+full-agent K3s/kubelet/CNI and version-matched vendor device-plugin execution,
+physical exporter/hardware evidence, transfer/result-agent qualification,
+multi-domain disconnect/chaos and planner failover, clock-fault campaigns,
+long-duration soak/retention, scale SLOs, backup/restore/upgrade rollback and an
+independent security/RBAC/audit review. Phase 5 must not move WAN I/O, future
+waiting, retry or transfer state into scheduler callbacks and must not claim
+per-device identity until the allocation linkage is real.
 
 ## Handoff template
 

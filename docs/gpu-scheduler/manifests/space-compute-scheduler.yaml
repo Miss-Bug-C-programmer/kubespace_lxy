@@ -168,14 +168,17 @@ data:
             bestEffortScore: 10
             scoreAllPods: false
             scoring:
-              utilization: 15
-              memoryHeadroom: 15
-              thermalHeadroom: 15
-              energyHeadroom: 5
+              utilization: 10
+              memoryHeadroom: 10
+              thermalHeadroom: 10
+              energyHeadroom: 10
               computeCapability: 10
-              health: 10
+              health: 5
               dataLocality: 10
-              fragmentation: 20
+              fragmentation: 10
+              predictedCompletion: 10
+              linkRisk: 10
+              resilience: 5
 ---
 apiVersion: apps/v1
 kind: Deployment

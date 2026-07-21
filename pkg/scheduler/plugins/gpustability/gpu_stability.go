@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	spacev1 "github.com/k3s-io/k3s/contrib/space-compute/pkg/apis/v1alpha1"
+	spacepolicy "github.com/k3s-io/k3s/contrib/space-compute/pkg/policy"
 	dto "github.com/prometheus/client_model/go"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -61,6 +63,7 @@ type Plugin struct {
 	collector *collector
 	handle    framework.Handle
 	blocked   *blockedPodIndex
+	clock     spacev1.Clock
 }
 
 type nodeMetrics struct {
@@ -117,7 +120,7 @@ func New(ctx context.Context, obj runtime.Object, handle framework.Handle) (fram
 	}
 	plugin := &Plugin{
 		config: cfg, collector: collector, handle: handle,
-		blocked: newBlockedPodIndex(cfg.MaxTrackedPods, cfg.BlockedPodTTL),
+		blocked: newBlockedPodIndex(cfg.MaxTrackedPods, cfg.BlockedPodTTL), clock: spacev1.RealClock{},
 	}
 	collector.setSnapshotListener(plugin.activateForSnapshot)
 	if err := collector.registerNodeInformer(handle); err != nil {
@@ -151,6 +154,7 @@ type workloadRequirement struct {
 	RequiredProfiles    map[string]struct{}
 	RequiredNodeLabels  map[string]string
 	PreferredNodeLabels map[string]string
+	Space               *spacepolicy.Requirement
 }
 
 func (w *workloadRequirement) Clone() framework.StateData {
@@ -163,6 +167,7 @@ func (w *workloadRequirement) Clone() framework.StateData {
 	clone.RequiredProfiles = copyStringSet(w.RequiredProfiles)
 	clone.RequiredNodeLabels = copyStringMap(w.RequiredNodeLabels)
 	clone.PreferredNodeLabels = copyStringMap(w.PreferredNodeLabels)
+	clone.Space = w.Space.Clone()
 	return &clone
 }
 
@@ -193,6 +198,12 @@ func (p *Plugin) Filter(_ context.Context, state *framework.CycleState, pod *v1.
 		return framework.NewStatus(framework.Unschedulable, "node information is unavailable")
 	}
 	nodeName := nodeInfo.Node().Name
+	spaceEvaluation := spacepolicy.Evaluate(requirement.Space, nodeInfo.Node(), p.clock)
+	if !spaceEvaluation.Feasible {
+		p.trackBlocked(nodeName, pod)
+		observeFilterDecision(requirement.Policy, spaceEvaluation.ReasonCode)
+		return framework.NewStatus(framework.Unschedulable, structuredSpaceReason(spaceEvaluation))
+	}
 	if reason := labelMismatchReason(nodeInfo.Node().Labels, requirement.RequiredNodeLabels); reason != "" {
 		p.trackBlocked(nodeName, pod)
 		observeFilterDecision(requirement.Policy, "node_label_incompatible")
@@ -255,6 +266,7 @@ func (s *preScoreState) Clone() framework.StateData {
 type nodeScoreInput struct {
 	State      snapshotState
 	Evaluation nodeEvaluation
+	Space      spacepolicy.Evaluation
 	Reason     string
 }
 
@@ -273,9 +285,10 @@ func (p *Plugin) PreScore(_ context.Context, state *framework.CycleState, _ *v1.
 		}
 		node := nodeInfo.Node()
 		snapshot := p.collector.snapshotForNodeInfo(nodeInfo)
-		input := nodeScoreInput{State: snapshot.State, Reason: snapshot.Reason}
+		input := nodeScoreInput{State: snapshot.State, Reason: snapshot.Reason, Space: spacepolicy.Evaluate(requirement.Space, node, p.clock)}
 		if snapshot.State == snapshotFresh {
 			input.Evaluation = p.evaluateFreshSnapshot(requirement, snapshot.Metrics, snapshot.Resources, node.Labels)
+			input.Evaluation.applySpace(input.Space)
 		}
 		result.Nodes[node.Name] = input
 	}
@@ -301,6 +314,9 @@ func (p *Plugin) Score(ctx context.Context, state *framework.CycleState, pod *v1
 	input, ok := preScore.Nodes[nodeInfo.Node().Name]
 	if !ok {
 		return framework.MinNodeScore, framework.NewStatus(framework.Error, "node was not evaluated during PreScore")
+	}
+	if !input.Space.Feasible {
+		return framework.MinNodeScore, framework.NewStatus(framework.Unschedulable, structuredSpaceReason(input.Space))
 	}
 	score := p.scoreInput(requirement, input)
 	reason := string(input.State)
@@ -353,7 +369,12 @@ func (p *Plugin) schedulingRequirement(pod *v1.Pod) (*workloadRequirement, error
 	if err != nil {
 		return nil, err
 	}
-	forced := strings.EqualFold(strings.TrimSpace(pod.Annotations[AnnotationEnabled]), "true") || intent != nil
+	spaceRequirement, err := spacepolicy.ParsePod(pod, p.clock)
+	if err != nil {
+		return nil, err
+	}
+	requirement.Space = spaceRequirement
+	forced := strings.EqualFold(strings.TrimSpace(pod.Annotations[AnnotationEnabled]), "true") || intent != nil || spaceRequirement != nil
 	requests := resourcehelper.PodRequests(pod, resourcehelper.PodResourcesOptions{})
 	for name, quantity := range requests {
 		mapping, managed := p.config.ResourceMappings[name]
@@ -459,6 +480,16 @@ func (p *Plugin) schedulingRequirement(pod *v1.Pod) (*workloadRequirement, error
 		}
 		requirement.RequiredNodeLabels = nil
 	}
+	if requirement.Space != nil && !requirement.Observational {
+		missionPolicy := StatePolicy(requirement.Space.Mission.Spec.StatePolicy)
+		if intent != nil && intent.StatePolicy != "" && StatePolicy(intent.StatePolicy) != missionPolicy {
+			return nil, fmt.Errorf("workload and mission intent statePolicy values contradict")
+		}
+		if raw := strings.TrimSpace(pod.Annotations[AnnotationStatePolicy]); raw != "" && StatePolicy(strings.ToLower(raw)) != missionPolicy {
+			return nil, fmt.Errorf("annotation %s contradicts mission intent statePolicy", AnnotationStatePolicy)
+		}
+		requirement.Policy = missionPolicy
+	}
 	return requirement, nil
 }
 
@@ -474,14 +505,38 @@ type nodeEvaluation struct {
 }
 
 type scoreDimensions struct {
-	Utilization       float64 `json:"utilization"`
-	MemoryHeadroom    float64 `json:"memoryHeadroom"`
-	ThermalHeadroom   float64 `json:"thermalHeadroom"`
-	EnergyHeadroom    float64 `json:"energyHeadroom"`
-	ComputeCapability float64 `json:"computeCapability"`
-	Health            float64 `json:"health"`
-	DataLocality      float64 `json:"dataLocality"`
-	Fragmentation     float64 `json:"fragmentation"`
+	Utilization         float64 `json:"utilization"`
+	MemoryHeadroom      float64 `json:"memoryHeadroom"`
+	ThermalHeadroom     float64 `json:"thermalHeadroom"`
+	EnergyHeadroom      float64 `json:"energyHeadroom"`
+	ComputeCapability   float64 `json:"computeCapability"`
+	Health              float64 `json:"health"`
+	DataLocality        float64 `json:"dataLocality"`
+	Fragmentation       float64 `json:"fragmentation"`
+	PredictedCompletion float64 `json:"predictedCompletion"`
+	LinkRisk            float64 `json:"linkRisk"`
+	Resilience          float64 `json:"resilience"`
+}
+
+func (e *nodeEvaluation) applySpace(space spacepolicy.Evaluation) {
+	if !space.Feasible {
+		e.Compatible = false
+		e.DynamicEligible = false
+		e.ReasonCode = space.ReasonCode
+		e.Reason = structuredSpaceReason(space)
+		return
+	}
+	e.Dimensions.PredictedCompletion = space.Dimensions.PredictedCompletion
+	if len(space.Explanations) > 0 || space.ReasonCode != "not_space_mission" {
+		e.Dimensions.DataLocality = space.Dimensions.DataLocality
+	}
+	e.Dimensions.LinkRisk = space.Dimensions.LinkRisk
+	e.Dimensions.Resilience = space.Dimensions.Resilience
+	if space.Degraded {
+		e.DynamicEligible = false
+		e.ReasonCode = space.ReasonCode
+		e.Reason = structuredSpaceReason(space)
+	}
 }
 
 func (p *Plugin) evaluateFreshSnapshot(requirement *workloadRequirement, metrics nodeMetrics, resources nodeResourceContext, nodeLabels map[string]string) nodeEvaluation {
@@ -667,7 +722,10 @@ func (p *Plugin) scoreInput(requirement *workloadRequirement, input nodeScoreInp
 		dimensions.ComputeCapability*float64(weights.ComputeCapability) +
 		dimensions.Health*float64(weights.Health) +
 		dimensions.DataLocality*float64(weights.DataLocality) +
-		dimensions.Fragmentation*float64(weights.Fragmentation)
+		dimensions.Fragmentation*float64(weights.Fragmentation) +
+		dimensions.PredictedCompletion*float64(weights.PredictedCompletion) +
+		dimensions.LinkRisk*float64(weights.LinkRisk) +
+		dimensions.Resilience*float64(weights.Resilience)
 	score := int64(math.Round(clampScore(weighted / 100)))
 	if !input.Evaluation.DynamicEligible {
 		switch requirement.Policy {
@@ -684,6 +742,18 @@ func (p *Plugin) scoreInput(requirement *workloadRequirement, input nodeScoreInp
 		}
 	}
 	return score
+}
+
+func structuredSpaceReason(evaluation spacepolicy.Evaluation) string {
+	if len(evaluation.Explanations) == 0 {
+		return evaluation.Reason
+	}
+	parts := make([]string, 0, len(evaluation.Explanations))
+	for _, explanation := range evaluation.Explanations {
+		parts = append(parts, explanation.Code+":"+explanation.Message)
+	}
+	sort.Strings(parts)
+	return evaluation.ReasonCode + " [" + strings.Join(parts, ",") + "]"
 }
 
 func deviceScore(device deviceMetrics, cfg Config, maxTemperature float64) float64 {

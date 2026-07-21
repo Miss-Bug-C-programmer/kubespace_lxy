@@ -40,6 +40,11 @@ space-compute-scheduler:
 	mkdir -p bin
 	go build -buildvcs=false -o bin/space-compute-scheduler ./cmd/space-compute-scheduler
 
+.PHONY: space-compute-mission-planner
+space-compute-mission-planner:
+	mkdir -p bin
+	go build -buildvcs=false -o bin/space-compute-mission-planner ./cmd/space-compute-mission-planner
+
 .PHONY: image-scan
 image-scan:
 	scripts/image_scan.sh $(IMAGE)

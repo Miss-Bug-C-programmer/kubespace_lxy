@@ -1,0 +1,21 @@
+{
+  "apiVersion": "v1",
+  "kind": "Node",
+  "metadata": {
+    "name": "leo-fixture-node",
+    "labels": {
+      "spacecompute.k3s.io/domain": "leo-a",
+      "spacecompute.k3s.io/orbit-class": "leo"
+    },
+    "annotations": {
+      "gpustability.k3s.io/exporter-port": "32021",
+      "gpustability.k3s.io/exporter-path": "/metrics",
+      "gpustability.k3s.io/exporter-scheme": "http",
+      "gpustability.k3s.io/exporter-profile": "iluvatar"
+    }
+  },
+  "status": {
+    "addresses": [{"type": "InternalIP", "address": "192.0.2.10"}],
+    "allocatable": {"iluvatar.com/gpu": "1"}
+  }
+}

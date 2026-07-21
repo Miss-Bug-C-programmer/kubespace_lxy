@@ -73,12 +73,14 @@ restart recovery, and extended-resource no-overcommit; and deletes every test
 Node/namespace it creates. It does not create a device or orbit simulator and
 does not require accelerator hardware.
 
-Build both binaries from the same worktree, start a disposable K3s control
-plane, and provide only its kubeconfig and the standalone binary path:
+Build all binaries from the same worktree, start a disposable K3s control
+plane, apply the Phase 4 CRD/admission manifests, and provide its kubeconfig and
+both standalone component paths:
 
 ```shell
 go build -buildvcs=false -trimpath -o /tmp/k3s-space-e2e ./cmd/k3s
 go build -buildvcs=false -trimpath -o /tmp/space-compute-scheduler-e2e ./cmd/space-compute-scheduler
+go build -buildvcs=false -trimpath -o /tmp/space-compute-mission-planner-e2e ./cmd/space-compute-mission-planner
 
 # Example for an agentless qualification host. Choose unused ports/CIDRs.
 /tmp/k3s-space-e2e server --rootless --disable-agent \
@@ -97,6 +99,7 @@ go build -buildvcs=false -trimpath -o /tmp/space-compute-scheduler-e2e ./cmd/spa
 
 SPACE_COMPUTE_E2E_KUBECONFIG=/tmp/k3s-space-e2e.yaml \
 SPACE_COMPUTE_E2E_SCHEDULER_BINARY=/tmp/space-compute-scheduler-e2e \
+SPACE_COMPUTE_PHASE4_E2E_PLANNER_BINARY=/tmp/space-compute-mission-planner-e2e \
 scripts/space-compute cluster-e2e
 ```
 
@@ -106,6 +109,12 @@ against a disposable full K3s cluster for kubelet/CRI qualification. Never point
 the test at a production cluster: it intentionally creates and deletes the
 fixed `space-compute-phase3-e2e` namespace and
 `space-compute-fixture-node` Node.
+
+Phase 4 adds versioned mission/placement annotations and four fixed scheduling
+dimensions—predicted completion, data locality, link risk and resilience—to the
+existing accelerator scores. Their global planning semantics, API units,
+controller ownership and runbook are documented in
+[`../space-compute/PHASE4_API_AND_OPERATIONS.md`](../space-compute/PHASE4_API_AND_OPERATIONS.md).
 
 ## Allocation boundary
 

@@ -1,0 +1,25 @@
+{
+  "apiVersion": "spacecompute.k3s.io/v1alpha1",
+  "kind": "PodMissionIntent",
+  "missionUID": "mission-uid",
+  "spec": {
+    "missionClass": "earth-observation",
+    "priority": 900,
+    "statePolicy": "strict",
+    "requiredCapabilities": [{"class": "gpu", "quantity": 1, "architecture": "space-cuda"}],
+    "requiredSoftware": {"runtime.spacecompute.k3s.io/cuda": "12.4"},
+    "inputs": [{"id": "sensor-frame", "sizeBytes": 600000000, "locations": ["ground-a"]}],
+    "outputSizeBytes": 10000000,
+    "resultDestinations": ["ground-a"],
+    "deadline": "2026-07-21T02:00:00Z",
+    "expectedDurationSeconds": 300,
+    "maximumDurationSeconds": 600,
+    "durationUncertaintySeconds": 100,
+    "safetyMarginSeconds": 10,
+    "maximumClockSkewSeconds": 2,
+    "resultReturnRequired": true,
+    "retry": {"maxAttempts": 3, "allowMigration": true, "maxConcurrentExecutions": 1},
+    "checkpoint": {"checkpointable": true, "minimumIntervalSeconds": 60, "maximumStateBytes": 1000000},
+    "workloadTemplate": {"spec": {"containers": [{"name": "processor", "image": "example.invalid/processor:v1"}]}}
+  }
+}

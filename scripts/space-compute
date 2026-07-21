@@ -8,39 +8,42 @@ export GOCACHE="${SPACE_COMPUTE_GOCACHE}"
 cd "${SPACE_COMPUTE_ROOT}"
 
 run_unit() {
-	go test ./pkg/scheduler/plugins/gpustability ./cmd/space-compute-scheduler ./tests/integration/spacecomputescheduler -count=1
+	go test ./pkg/scheduler/plugins/gpustability ./cmd/space-compute-scheduler ./cmd/space-compute-mission-planner ./contrib/space-compute/pkg/... ./tests/integration/spacecomputescheduler -count=1
 }
 
 run_race() {
-	go test -race ./pkg/scheduler/plugins/gpustability ./cmd/space-compute-scheduler ./tests/integration/spacecomputescheduler -count=1
+	go test -race ./pkg/scheduler/plugins/gpustability ./cmd/space-compute-scheduler ./cmd/space-compute-mission-planner ./contrib/space-compute/pkg/... ./tests/integration/spacecomputescheduler -count=1
 }
 
 run_static() {
 	local unformatted
-	unformatted="$(gofmt -s -l pkg/scheduler/plugins/gpustability/*.go cmd/space-compute-scheduler/*.go tests/integration/spacecomputescheduler/*.go)"
+	unformatted="$(gofmt -s -l pkg/scheduler/plugins/gpustability/*.go cmd/space-compute-scheduler/*.go cmd/space-compute-mission-planner/*.go contrib/space-compute/pkg/*/*.go contrib/space-compute/pkg/apis/v1alpha1/*.go tests/integration/spacecomputescheduler/*.go)"
 	if [[ -n "${unformatted}" ]]; then
 		echo "Go files need formatting:"
 		echo "${unformatted}"
 		return 1
 	fi
-	go vet ./pkg/scheduler/plugins/gpustability ./cmd/space-compute-scheduler ./tests/integration/spacecomputescheduler
+	go vet ./pkg/scheduler/plugins/gpustability ./cmd/space-compute-scheduler ./cmd/space-compute-mission-planner ./contrib/space-compute/pkg/... ./tests/integration/spacecomputescheduler
 }
 
 run_build() {
 	mkdir -p "${SPACE_COMPUTE_ROOT}/bin"
 	go build -buildvcs=false -o "${SPACE_COMPUTE_ROOT}/bin/space-compute-scheduler" ./cmd/space-compute-scheduler
+	go build -buildvcs=false -o "${SPACE_COMPUTE_ROOT}/bin/space-compute-mission-planner" ./cmd/space-compute-mission-planner
 }
 
 run_integration() {
-	go test ./pkg/scheduler/plugins/gpustability -run '^(TestHTTPIntegration|TestCollectorRejectsOversizedBodyAndRedirect|TestCollectorUsesConfiguredTLSRoot|TestBuiltInAndDeclarativeProfilesThroughProductionCollection|TestTargetChangesInvalidateOldGeneration|TestNodeDeletionRecreationProfileChangeAndInvalidMetadata|TestProfileRegistryReloadIsAtomicAndLastKnownGood|TestSnapshotPublicationPreciselyActivatesBlockedPods|TestNodeQueueHintsIgnoreUnrelatedChanges|TestStrictPhysicalCoverageDoesNotClaimUnlinkedDeviceEnforcement|TestRealSchedulersBindOnlyTheirOwnPodsAndRecoverSpaceComponent)' -count=1
+	go test ./pkg/scheduler/plugins/gpustability -run '^(TestHTTPIntegration|TestCollectorRejectsOversizedBodyAndRedirect|TestCollectorUsesConfiguredTLSRoot|TestBuiltInAndDeclarativeProfilesThroughProductionCollection|TestTargetChangesInvalidateOldGeneration|TestNodeDeletionRecreationProfileChangeAndInvalidMetadata|TestProfileRegistryReloadIsAtomicAndLastKnownGood|TestSnapshotPublicationPreciselyActivatesBlockedPods|TestNodeQueueHintsIgnoreUnrelatedChanges|TestStrictPhysicalCoverageDoesNotClaimUnlinkedDeviceEnforcement|TestRealSchedulersBindOnlyTheirOwnPodsAndRecoverSpaceComponent|TestPhase4)' -count=1
 	go test ./cmd/space-compute-scheduler -count=1
+	go test ./cmd/space-compute-mission-planner ./contrib/space-compute/pkg/... -count=1
 	go test ./tests/integration/spacecomputescheduler -count=1
 }
 
 run_cluster_e2e() {
 	: "${SPACE_COMPUTE_E2E_KUBECONFIG:?set SPACE_COMPUTE_E2E_KUBECONFIG to an isolated Kubernetes 1.33 K3s kubeconfig}"
 	: "${SPACE_COMPUTE_E2E_SCHEDULER_BINARY:?set SPACE_COMPUTE_E2E_SCHEDULER_BINARY to the version-matched standalone scheduler binary}"
-	go test ./tests/integration/spacecomputescheduler -run '^TestIndependentSchedulerAgainstK3s$' -count=1 -v
+	: "${SPACE_COMPUTE_PHASE4_E2E_PLANNER_BINARY:?set SPACE_COMPUTE_PHASE4_E2E_PLANNER_BINARY to the Phase 4 mission planner binary}"
+	go test ./tests/integration/spacecomputescheduler -run '^Test(IndependentSchedulerAgainstK3s|Phase4PlannerToIndependentSchedulerAgainstK3s)$' -count=1 -v
 }
 
 run_scale() {
@@ -53,6 +56,14 @@ run_fuzz() {
 	go test ./pkg/scheduler/plugins/gpustability -run '^$' -fuzz '^FuzzParseMetricsRejectsUntrustedInput$' -fuzztime=5s
 	go test ./pkg/scheduler/plugins/gpustability -run '^$' -fuzz '^FuzzTypedArgsDecoder$' -fuzztime=5s
 	go test ./pkg/scheduler/plugins/gpustability -run '^$' -fuzz '^FuzzWorkloadIntent$' -fuzztime=5s
+	go test ./contrib/space-compute/pkg/apis/v1alpha1 -run '^$' -fuzz '^FuzzLinkSnapshotValidation$' -fuzztime=5s
+	go test ./contrib/space-compute/pkg/apis/v1alpha1 -run '^$' -fuzz '^FuzzMissionValidation$' -fuzztime=5s
+	go test ./contrib/space-compute/pkg/policy -run '^$' -fuzz '^FuzzPodMissionProjection$' -fuzztime=5s
+}
+
+run_scenarios() {
+	go test ./contrib/space-compute/pkg/... -run 'Test(LEO|InputWindow|EnergyPolicy|Partition|ControllerRestart|FreshStale|FutureWait|DeterministicAttempt|DynamicRepository|LinkValidation|MissionValidation)' -count=1
+	go test ./pkg/scheduler/plugins/gpustability -run '^TestPhase4' -count=1
 }
 
 run_hardware() {
@@ -84,6 +95,9 @@ case "${1:-all}" in
 	scale)
 		run_scale
 		;;
+	scenarios)
+		run_scenarios
+		;;
 	build)
 		run_build
 		;;
@@ -92,12 +106,13 @@ case "${1:-all}" in
 		run_race
 		run_static
 		run_integration
+		run_scenarios
 		run_fuzz
 		run_hardware
 		run_build
 		;;
 	*)
-		echo "usage: $0 {unit|race|static|integration|cluster-e2e|fuzz|hardware|scale|build|all}" >&2
+		echo "usage: $0 {unit|race|static|integration|cluster-e2e|fuzz|hardware|scale|scenarios|build|all}" >&2
 		exit 2
 		;;
 esac

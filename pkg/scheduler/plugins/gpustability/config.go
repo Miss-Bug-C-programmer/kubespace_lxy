@@ -104,14 +104,17 @@ type PolicyArgs struct {
 // ScoringArgs assigns bounded relative importance to independently explainable
 // SLO dimensions. Missing telemetry contributes zero for its dimension.
 type ScoringArgs struct {
-	Utilization       int64 `json:"utilization"`
-	MemoryHeadroom    int64 `json:"memoryHeadroom"`
-	ThermalHeadroom   int64 `json:"thermalHeadroom"`
-	EnergyHeadroom    int64 `json:"energyHeadroom"`
-	ComputeCapability int64 `json:"computeCapability"`
-	Health            int64 `json:"health"`
-	DataLocality      int64 `json:"dataLocality"`
-	Fragmentation     int64 `json:"fragmentation"`
+	Utilization         int64 `json:"utilization"`
+	MemoryHeadroom      int64 `json:"memoryHeadroom"`
+	ThermalHeadroom     int64 `json:"thermalHeadroom"`
+	EnergyHeadroom      int64 `json:"energyHeadroom"`
+	ComputeCapability   int64 `json:"computeCapability"`
+	Health              int64 `json:"health"`
+	DataLocality        int64 `json:"dataLocality"`
+	Fragmentation       int64 `json:"fragmentation"`
+	PredictedCompletion int64 `json:"predictedCompletion,omitempty"`
+	LinkRisk            int64 `json:"linkRisk,omitempty"`
+	Resilience          int64 `json:"resilience,omitempty"`
 }
 
 type QueueingArgs struct {
@@ -259,9 +262,10 @@ func defaultArgs() GPUStabilityArgs {
 			BestEffortScore:    10,
 			MaxPowerWatts:      500,
 			Scoring: ScoringArgs{
-				Utilization: 15, MemoryHeadroom: 15, ThermalHeadroom: 15,
-				EnergyHeadroom: 5, ComputeCapability: 10, Health: 10,
-				DataLocality: 10, Fragmentation: 20,
+				Utilization: 10, MemoryHeadroom: 10, ThermalHeadroom: 10,
+				EnergyHeadroom: 10, ComputeCapability: 10, Health: 5,
+				DataLocality: 10, Fragmentation: 10, PredictedCompletion: 10,
+				LinkRisk: 10, Resilience: 5,
 			},
 		},
 		Queueing: QueueingArgs{MaxTrackedPods: 10_000, BlockedPodTTL: "10m"},
@@ -311,6 +315,17 @@ func decodeArgs(obj runtime.Object, into *GPUStabilityArgs) error {
 }
 
 func decodeStrictJSON(raw []byte, into *GPUStabilityArgs) error {
+	// A supplied scoring object is complete and replaces defaults. This preserves
+	// Phase 3 configurations whose eight weights already total 100: newly added
+	// Phase 4 weights remain zero unless explicitly configured.
+	var presence struct {
+		Policy struct {
+			Scoring json.RawMessage `json:"scoring"`
+		} `json:"policy"`
+	}
+	if err := json.Unmarshal(raw, &presence); err == nil && len(presence.Policy.Scoring) > 0 && string(presence.Policy.Scoring) != "null" {
+		into.Policy.Scoring = ScoringArgs{}
+	}
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(into); err != nil {
@@ -536,6 +551,8 @@ func validateScoringArgs(weights ScoringArgs) error {
 		"thermalHeadroom": weights.ThermalHeadroom, "energyHeadroom": weights.EnergyHeadroom,
 		"computeCapability": weights.ComputeCapability, "health": weights.Health,
 		"dataLocality": weights.DataLocality, "fragmentation": weights.Fragmentation,
+		"predictedCompletion": weights.PredictedCompletion, "linkRisk": weights.LinkRisk,
+		"resilience": weights.Resilience,
 	}
 	var total int64
 	for name, value := range values {

@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	spacev1 "github.com/k3s-io/k3s/contrib/space-compute/pkg/apis/v1alpha1"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/klog/v2"
@@ -215,6 +216,12 @@ func (p *Plugin) queueOnNodeChange(_ klog.Logger, pod *v1.Pod, oldObj, newObj in
 }
 
 func nodeCouldSupply(node *v1.Node, requirement *workloadRequirement) bool {
+	if requirement.Space != nil {
+		target := requirement.Space.Placement.Spec.Target
+		if node.Labels[spacev1.LabelDomain] != target.Name || node.Labels[spacev1.LabelOrbitClass] != string(target.OrbitClass) {
+			return false
+		}
+	}
 	for name, demand := range requirement.Resources {
 		quantity, exists := node.Status.Allocatable[name]
 		if !exists || quantity.Value() < demand {
@@ -238,6 +245,18 @@ func relevantNodeChange(oldNode, newNode *v1.Node, requirement *workloadRequirem
 	for _, key := range []string{AnnotationExporterPort, AnnotationExporterPath, AnnotationExporterScheme, AnnotationExporterProfile} {
 		if oldNode.Annotations[key] != newNode.Annotations[key] {
 			return true
+		}
+	}
+	if requirement.Space != nil {
+		for _, key := range []string{spacev1.AnnotationLinkProjection} {
+			if oldNode.Annotations[key] != newNode.Annotations[key] {
+				return true
+			}
+		}
+		for _, key := range []string{spacev1.LabelDomain, spacev1.LabelOrbitClass, spacev1.LabelPlacementID} {
+			if oldNode.Labels[key] != newNode.Labels[key] {
+				return true
+			}
 		}
 	}
 	for key := range requirement.RequiredNodeLabels {

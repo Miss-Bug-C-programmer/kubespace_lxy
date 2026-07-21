@@ -407,10 +407,18 @@ func waitForHTTPSProbe(t *testing.T, ctx context.Context, endpoint string) {
 
 func cleanupObjects(t *testing.T, ctx context.Context, client kubernetes.Interface) {
 	t.Helper()
+	// There is no kubelet in the agentless qualification cluster to complete a
+	// normal Pod grace period. Remove only this test namespace's fixture Pods
+	// with zero grace before namespace deletion.
+	zero := int64(0)
+	_ = client.CoreV1().Pods(testNamespace).DeleteCollection(ctx, metav1.DeleteOptions{GracePeriodSeconds: &zero}, metav1.ListOptions{})
 	propagation := metav1.DeletePropagationForeground
 	_ = client.CoreV1().Namespaces().Delete(ctx, testNamespace, metav1.DeleteOptions{PropagationPolicy: &propagation})
 	_ = client.CoreV1().Nodes().Delete(ctx, testNode, metav1.DeleteOptions{})
-	waitUntil := time.Now().Add(10 * time.Second)
+	// Namespaced CRDs add discovery/finalization work to the Phase 4 e2e. Wait
+	// for actual deletion so a following test never reuses a Terminating
+	// namespace and mistakes an API lifecycle race for a scheduler failure.
+	waitUntil := time.Now().Add(30 * time.Second)
 	for time.Now().Before(waitUntil) {
 		_, namespaceErr := client.CoreV1().Namespaces().Get(ctx, testNamespace, metav1.GetOptions{})
 		_, nodeErr := client.CoreV1().Nodes().Get(ctx, testNode, metav1.GetOptions{})
@@ -419,4 +427,5 @@ func cleanupObjects(t *testing.T, ctx context.Context, client kubernetes.Interfa
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
+	t.Fatal("fixture namespace or Node did not finish deletion")
 }

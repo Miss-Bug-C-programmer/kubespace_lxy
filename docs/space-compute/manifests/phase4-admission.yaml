@@ -1,0 +1,33 @@
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: space-compute-phase4-intent
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+    - apiGroups: [spacecompute.k3s.io]
+      apiVersions: [v1alpha1]
+      operations: [CREATE, UPDATE]
+      resources: [spacemissions, spacelinksnapshots, spacedomainresourcesummaries]
+  validations:
+  - expression: "request.resource.resource != 'spacemissions' || (object.spec.maximumDurationSeconds >= object.spec.expectedDurationSeconds && object.spec.expectedDurationSeconds + object.spec.durationUncertaintySeconds <= object.spec.maximumDurationSeconds)"
+    message: mission duration bounds are contradictory
+  - expression: "request.resource.resource != 'spacemissions' || (!object.spec.resultReturnRequired || size(object.spec.resultDestinations) > 0)"
+    message: result-return missions require a destination
+  - expression: "request.resource.resource != 'spacemissions' || (!object.spec.retry.allowMigration || object.spec.checkpoint.checkpointable)"
+    message: migration requires checkpointability
+  - expression: "request.resource.resource != 'spacelinksnapshots' || object.spec.provenance.reporterID == request.userInfo.username"
+    message: link provenance reporterID must equal the authenticated principal
+  - expression: "request.resource.resource != 'spacedomainresourcesummaries' || object.spec.provenance.reporterID == request.userInfo.username"
+    message: resource provenance reporterID must equal the authenticated principal
+  - expression: "oldObject == null || !has(oldObject.spec.provenance) || oldObject.spec.provenance.reporterID == object.spec.provenance.reporterID"
+    message: provenance reporterID is immutable
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: space-compute-phase4-intent
+spec:
+  policyName: space-compute-phase4-intent
+  validationActions: [Deny, Audit]
