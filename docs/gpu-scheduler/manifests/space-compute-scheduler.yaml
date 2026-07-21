@@ -1,0 +1,234 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: space-compute-scheduler
+  namespace: kube-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: system:space-compute-scheduler
+rules:
+- apiGroups: ["", events.k8s.io]
+  resources: [events]
+  verbs: [create, patch, update]
+- apiGroups: [""]
+  resources: [nodes, namespaces, persistentvolumes, persistentvolumeclaims, services, replicationcontrollers]
+  verbs: [get, list, watch]
+- apiGroups: [""]
+  resources: [pods]
+  verbs: [get, list, watch, delete]
+- apiGroups: [""]
+  resources: [pods/binding]
+  verbs: [create]
+- apiGroups: [""]
+  resources: [pods/status]
+  verbs: [patch, update]
+- apiGroups: [apps]
+  resources: [replicasets, statefulsets]
+  verbs: [get, list, watch]
+- apiGroups: [policy]
+  resources: [poddisruptionbudgets]
+  verbs: [get, list, watch]
+- apiGroups: [storage.k8s.io]
+  resources: [csinodes, csidrivers, csistoragecapacities, storageclasses, volumeattachments]
+  verbs: [get, list, watch]
+- apiGroups: [authentication.k8s.io]
+  resources: [tokenreviews]
+  verbs: [create]
+- apiGroups: [authorization.k8s.io]
+  resources: [subjectaccessreviews]
+  verbs: [create]
+- apiGroups: [resource.k8s.io]
+  resources: [deviceclasses, resourceclaims, resourceslices, devicetaintrules]
+  verbs: [get, list, watch]
+- apiGroups: [resource.k8s.io]
+  resources: [resourceclaims/status]
+  verbs: [patch, update]
+- apiGroups: [""]
+  resources: [pods/finalizers]
+  verbs: [update]
+- apiGroups: [coordination.k8s.io]
+  resources: [leasecandidates]
+  verbs: [create, get, list, watch, update, patch, delete]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: space-compute-scheduler
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:space-compute-scheduler
+subjects:
+- kind: ServiceAccount
+  name: space-compute-scheduler
+  namespace: kube-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: space-compute-scheduler-leader-election
+  namespace: kube-system
+rules:
+- apiGroups: [coordination.k8s.io]
+  resources: [leases]
+  verbs: [create]
+- apiGroups: [coordination.k8s.io]
+  resources: [leases]
+  resourceNames: [space-compute-scheduler]
+  verbs: [get, update, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: space-compute-scheduler-leader-election
+  namespace: kube-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: space-compute-scheduler-leader-election
+subjects:
+- kind: ServiceAccount
+  name: space-compute-scheduler
+  namespace: kube-system
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: space-compute-scheduler-config
+  namespace: kube-system
+data:
+  scheduler.yaml: |
+    apiVersion: kubescheduler.config.k8s.io/v1
+    kind: KubeSchedulerConfiguration
+    leaderElection:
+      leaderElect: true
+      resourceName: space-compute-scheduler
+      resourceNamespace: kube-system
+    profiles:
+    - schedulerName: space-compute-scheduler
+      plugins:
+        preFilter:
+          enabled: [{name: K3SGPUStability}]
+        filter:
+          enabled: [{name: K3SGPUStability}]
+        preScore:
+          enabled: [{name: K3SGPUStability}]
+        score:
+          enabled: [{name: K3SGPUStability, weight: 5}]
+      pluginConfig:
+      - name: K3SGPUStability
+        args:
+          apiVersion: gpustability.k3s.io/v1alpha1
+          kind: K3SGPUStabilityArgs
+          exporter:
+            scheme: https
+            port: "32021"
+            path: /metrics
+            profile: auto
+            timeout: 2s
+            maxResponseBytes: 4194304
+            maxMetricFamilies: 10000
+            maxSamples: 100000
+            maxLabelsPerSample: 64
+            allowInsecureHTTP: false
+            allowExternalIP: false
+            caFile: /etc/space-compute-exporter-tls/ca.crt
+            certFile: /etc/space-compute-exporter-tls/tls.crt
+            keyFile: /etc/space-compute-exporter-tls/tls.key
+          collector:
+            workers: 8
+            queueSize: 4096
+            cacheMaxEntries: 10000
+            snapshotTTL: 30s
+            refreshInterval: 10s
+            backoffBase: 1s
+            backoffMax: 1m
+            circuitFailures: 5
+            circuitOpenDuration: 2m
+            jitterFraction: 0.2
+          discovery:
+            addressTypes: [InternalIP]
+            preferredIPFamily: any
+          profileSource:
+            reloadInterval: 30s
+            maxBytes: 1048576
+          queueing:
+            maxTrackedPods: 10000
+            blockedPodTTL: 10m
+          policy:
+            defaultStatePolicy: strict
+            maxTemperatureC: 90
+            targetTemperatureC: 70
+            minSMClockMHz: 1
+            minMemoryClockMHz: 1
+            maxPowerWatts: 500
+            degradedScore: 20
+            bestEffortScore: 10
+            scoreAllPods: false
+            scoring:
+              utilization: 15
+              memoryHeadroom: 15
+              thermalHeadroom: 15
+              energyHeadroom: 5
+              computeCapability: 10
+              health: 10
+              dataLocality: 10
+              fragmentation: 20
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: space-compute-scheduler
+  namespace: kube-system
+spec:
+  replicas: 2
+  selector:
+    matchLabels: {app.kubernetes.io/name: space-compute-scheduler}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: space-compute-scheduler}
+    spec:
+      serviceAccountName: space-compute-scheduler
+      priorityClassName: system-cluster-critical
+      containers:
+      - name: scheduler
+        # Build and publish this repository's version-pinned binary before use.
+        image: space-compute-scheduler:v1.33.7-k3s1
+        imagePullPolicy: IfNotPresent
+        args: [--config=/etc/space-compute/scheduler.yaml]
+        ports:
+        - {name: https, containerPort: 10259}
+        readinessProbe:
+          httpGet: {scheme: HTTPS, path: /readyz, port: https}
+          initialDelaySeconds: 5
+        livenessProbe:
+          httpGet: {scheme: HTTPS, path: /livez, port: https}
+          initialDelaySeconds: 10
+        resources:
+          requests: {cpu: 100m, memory: 128Mi}
+          limits: {memory: 1Gi}
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          capabilities: {drop: [ALL]}
+        volumeMounts:
+        - {name: config, mountPath: /etc/space-compute, readOnly: true}
+        - {name: exporter-tls, mountPath: /etc/space-compute-exporter-tls, readOnly: true}
+      volumes:
+      - name: config
+        configMap: {name: space-compute-scheduler-config}
+      - name: exporter-tls
+        secret: {secretName: space-compute-exporter-tls}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: space-compute-scheduler
+  namespace: kube-system
+spec:
+  selector: {app.kubernetes.io/name: space-compute-scheduler}
+  ports:
+  - {name: https, port: 10259, targetPort: https}

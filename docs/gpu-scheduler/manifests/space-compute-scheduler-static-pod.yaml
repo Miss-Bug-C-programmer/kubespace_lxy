@@ -1,0 +1,28 @@
+# Alternative for operators who intentionally manage this binary as a K3s
+# static control-plane manifest. Update the host paths for the installation.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: space-compute-scheduler
+  namespace: kube-system
+spec:
+  hostNetwork: true
+  priorityClassName: system-cluster-critical
+  containers:
+  - name: scheduler
+    image: space-compute-scheduler:v1.33.7-k3s1
+    command: [/usr/local/bin/space-compute-scheduler]
+    args:
+    - --config=/etc/space-compute/scheduler.yaml
+    - --secure-port=10269
+    - --authentication-kubeconfig=/etc/rancher/k3s/k3s.yaml
+    - --authorization-kubeconfig=/etc/rancher/k3s/k3s.yaml
+    volumeMounts:
+    - {name: config, mountPath: /etc/space-compute, readOnly: true}
+    - {name: kubeconfig, mountPath: /etc/rancher/k3s/k3s.yaml, readOnly: true}
+  volumes:
+  - name: config
+    hostPath: {path: /etc/rancher/k3s/space-compute, type: Directory}
+  - name: kubeconfig
+    hostPath: {path: /etc/rancher/k3s/k3s.yaml, type: File}
+

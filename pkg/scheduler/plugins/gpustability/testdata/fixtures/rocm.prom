@@ -1,0 +1,13 @@
+# Recorded-format AMD ROCm SMI exporter fixture used by CPU-only tests.
+# TYPE rocm_smi_utilization_gpu gauge
+rocm_smi_utilization_gpu{gpu="0",serial="ROCM-0",name="AMD-MI"} 18
+# TYPE rocm_smi_memory_total_bytes gauge
+rocm_smi_memory_total_bytes{gpu="0",serial="ROCM-0",name="AMD-MI"} 34359738368
+# TYPE rocm_smi_memory_used_bytes gauge
+rocm_smi_memory_used_bytes{gpu="0",serial="ROCM-0",name="AMD-MI"} 4294967296
+# TYPE rocm_smi_temperature_celsius gauge
+rocm_smi_temperature_celsius{gpu="0",serial="ROCM-0",name="AMD-MI"} 61
+# TYPE rocm_smi_sclk_clock_mhz gauge
+rocm_smi_sclk_clock_mhz{gpu="0",serial="ROCM-0",name="AMD-MI"} 1700
+# TYPE rocm_smi_mclk_clock_mhz gauge
+rocm_smi_mclk_clock_mhz{gpu="0",serial="ROCM-0",name="AMD-MI"} 1600

@@ -1,0 +1,19 @@
+# Representative normalized NPU exporter metrics.
+# HELP k3s_npu_utilization_percent Accelerator utilization.
+# TYPE k3s_npu_utilization_percent gauge
+k3s_npu_utilization_percent{npu="0",npu_name="Ascend-0",npu_uuid="NPU-0"} 15
+# HELP k3s_npu_memory_free_mib Accelerator memory free.
+# TYPE k3s_npu_memory_free_mib gauge
+k3s_npu_memory_free_mib{npu="0",npu_name="Ascend-0",npu_uuid="NPU-0"} 28672
+# HELP k3s_npu_memory_total_mib Accelerator memory total.
+# TYPE k3s_npu_memory_total_mib gauge
+k3s_npu_memory_total_mib{npu="0",npu_name="Ascend-0",npu_uuid="NPU-0"} 32768
+# HELP k3s_npu_temperature_celsius Accelerator temperature.
+# TYPE k3s_npu_temperature_celsius gauge
+k3s_npu_temperature_celsius{npu="0",npu_name="Ascend-0",npu_uuid="NPU-0"} 62
+# HELP k3s_npu_compute_clock_mhz Accelerator compute clock.
+# TYPE k3s_npu_compute_clock_mhz gauge
+k3s_npu_compute_clock_mhz{npu="0",npu_name="Ascend-0",npu_uuid="NPU-0"} 1200
+# HELP k3s_npu_health Accelerator health.
+# TYPE k3s_npu_health gauge
+k3s_npu_health{npu="0",npu_name="Ascend-0",npu_uuid="NPU-0"} 1

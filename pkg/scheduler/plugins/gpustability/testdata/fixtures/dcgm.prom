@@ -1,0 +1,13 @@
+# Recorded-format NVIDIA DCGM exporter fixture used by CPU-only tests.
+# TYPE DCGM_FI_DEV_GPU_UTIL gauge
+DCGM_FI_DEV_GPU_UTIL{gpu="0",UUID="GPU-0",device="nvidia0"} 12
+# TYPE DCGM_FI_DEV_FB_FREE gauge
+DCGM_FI_DEV_FB_FREE{gpu="0",UUID="GPU-0",device="nvidia0"} 20000
+# TYPE DCGM_FI_DEV_FB_TOTAL gauge
+DCGM_FI_DEV_FB_TOTAL{gpu="0",UUID="GPU-0",device="nvidia0"} 24576
+# TYPE DCGM_FI_DEV_GPU_TEMP gauge
+DCGM_FI_DEV_GPU_TEMP{gpu="0",UUID="GPU-0",device="nvidia0"} 68
+# TYPE DCGM_FI_DEV_SM_CLOCK gauge
+DCGM_FI_DEV_SM_CLOCK{gpu="0",UUID="GPU-0",device="nvidia0"} 1410
+# TYPE DCGM_FI_DEV_MEM_CLOCK gauge
+DCGM_FI_DEV_MEM_CLOCK{gpu="0",UUID="GPU-0",device="nvidia0"} 5001

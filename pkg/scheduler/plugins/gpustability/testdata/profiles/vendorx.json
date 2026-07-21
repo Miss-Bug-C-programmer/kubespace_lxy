@@ -1,0 +1,20 @@
+{
+  "apiVersion": "gpustability.k3s.io/v1alpha1",
+  "kind": "MetricProfileList",
+  "profiles": [
+    {
+      "name": "vendorx",
+      "class": "fpga",
+      "matchNames": ["vendorx_mem_total_bytes"],
+      "identityLabels": ["serial"],
+      "nameLabels": ["chip"],
+      "requiredFields": ["gpu_utilization", "memory_total_mib", "temperature_celsius"],
+      "fields": {
+        "gpu_utilization": {"names": ["vendorx_busy"], "unit": "", "rollup": "avg", "min": 0, "max": 100},
+        "memory_free_mib": {"names": ["vendorx_mem_free_bytes"], "unit": "bytes", "rollup": "max", "min": 0},
+        "memory_total_mib": {"names": ["vendorx_mem_total_bytes"], "unit": "bytes", "rollup": "max", "min": 1},
+        "temperature_celsius": {"names": ["vendorx_temp_c"], "unit": "", "rollup": "max", "min": -99, "max": 250}
+      }
+    }
+  ]
+}

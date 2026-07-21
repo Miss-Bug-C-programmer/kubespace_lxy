@@ -1,0 +1,103 @@
+#!/bin/bash
+set -euo pipefail
+
+SPACE_COMPUTE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SPACE_COMPUTE_GOCACHE="${GOCACHE:-/tmp/k3s-space-compute-go-build}"
+export GOCACHE="${SPACE_COMPUTE_GOCACHE}"
+
+cd "${SPACE_COMPUTE_ROOT}"
+
+run_unit() {
+	go test ./pkg/scheduler/plugins/gpustability ./cmd/space-compute-scheduler ./tests/integration/spacecomputescheduler -count=1
+}
+
+run_race() {
+	go test -race ./pkg/scheduler/plugins/gpustability ./cmd/space-compute-scheduler ./tests/integration/spacecomputescheduler -count=1
+}
+
+run_static() {
+	local unformatted
+	unformatted="$(gofmt -s -l pkg/scheduler/plugins/gpustability/*.go cmd/space-compute-scheduler/*.go tests/integration/spacecomputescheduler/*.go)"
+	if [[ -n "${unformatted}" ]]; then
+		echo "Go files need formatting:"
+		echo "${unformatted}"
+		return 1
+	fi
+	go vet ./pkg/scheduler/plugins/gpustability ./cmd/space-compute-scheduler ./tests/integration/spacecomputescheduler
+}
+
+run_build() {
+	mkdir -p "${SPACE_COMPUTE_ROOT}/bin"
+	go build -buildvcs=false -o "${SPACE_COMPUTE_ROOT}/bin/space-compute-scheduler" ./cmd/space-compute-scheduler
+}
+
+run_integration() {
+	go test ./pkg/scheduler/plugins/gpustability -run '^(TestHTTPIntegration|TestCollectorRejectsOversizedBodyAndRedirect|TestCollectorUsesConfiguredTLSRoot|TestBuiltInAndDeclarativeProfilesThroughProductionCollection|TestTargetChangesInvalidateOldGeneration|TestNodeDeletionRecreationProfileChangeAndInvalidMetadata|TestProfileRegistryReloadIsAtomicAndLastKnownGood|TestSnapshotPublicationPreciselyActivatesBlockedPods|TestNodeQueueHintsIgnoreUnrelatedChanges|TestStrictPhysicalCoverageDoesNotClaimUnlinkedDeviceEnforcement|TestRealSchedulersBindOnlyTheirOwnPodsAndRecoverSpaceComponent)' -count=1
+	go test ./cmd/space-compute-scheduler -count=1
+	go test ./tests/integration/spacecomputescheduler -count=1
+}
+
+run_cluster_e2e() {
+	: "${SPACE_COMPUTE_E2E_KUBECONFIG:?set SPACE_COMPUTE_E2E_KUBECONFIG to an isolated Kubernetes 1.33 K3s kubeconfig}"
+	: "${SPACE_COMPUTE_E2E_SCHEDULER_BINARY:?set SPACE_COMPUTE_E2E_SCHEDULER_BINARY to the version-matched standalone scheduler binary}"
+	go test ./tests/integration/spacecomputescheduler -run '^TestIndependentSchedulerAgainstK3s$' -count=1 -v
+}
+
+run_scale() {
+	go test ./pkg/scheduler/plugins/gpustability -run '^TestCollectorScaleBoundsAndLifecycle$' -count=1
+	go test ./pkg/scheduler/plugins/gpustability -run '^$' -bench '^BenchmarkCollectorTargetDatasets$' -benchtime=1x -benchmem -count=1
+	go test ./pkg/scheduler/plugins/gpustability -run '^$' -bench '^BenchmarkSchedulerCallbacks$' -benchtime=1x -benchmem -count=1
+}
+
+run_fuzz() {
+	go test ./pkg/scheduler/plugins/gpustability -run '^$' -fuzz '^FuzzParseMetricsRejectsUntrustedInput$' -fuzztime=5s
+	go test ./pkg/scheduler/plugins/gpustability -run '^$' -fuzz '^FuzzTypedArgsDecoder$' -fuzztime=5s
+	go test ./pkg/scheduler/plugins/gpustability -run '^$' -fuzz '^FuzzWorkloadIntent$' -fuzztime=5s
+}
+
+run_hardware() {
+	go test ./pkg/scheduler/plugins/gpustability -run '^TestParseMetricsFromFile$' -count=1 -v
+}
+
+case "${1:-all}" in
+	unit)
+		run_unit
+		;;
+	race)
+		run_race
+		;;
+	static)
+		run_static
+		;;
+	integration)
+		run_integration
+		;;
+	cluster-e2e)
+		run_cluster_e2e
+		;;
+	fuzz)
+		run_fuzz
+		;;
+	hardware)
+		run_hardware
+		;;
+	scale)
+		run_scale
+		;;
+	build)
+		run_build
+		;;
+	all)
+		run_unit
+		run_race
+		run_static
+		run_integration
+		run_fuzz
+		run_hardware
+		run_build
+		;;
+	*)
+		echo "usage: $0 {unit|race|static|integration|cluster-e2e|fuzz|hardware|scale|build|all}" >&2
+		exit 2
+		;;
+esac
