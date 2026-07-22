@@ -1,0 +1,9 @@
+# Configuration-only exporter fixture. Production policy has no vendorx code.
+# TYPE vendorx_busy gauge
+vendorx_busy{chip="0",serial="VX-0"} 7
+# TYPE vendorx_mem_free_bytes gauge
+vendorx_mem_free_bytes{chip="0",serial="VX-0"} 17179869184
+# TYPE vendorx_mem_total_bytes gauge
+vendorx_mem_total_bytes{chip="0",serial="VX-0"} 34359738368
+# TYPE vendorx_temp_c gauge
+vendorx_temp_c{chip="0",serial="VX-0"} 58

@@ -1,0 +1,107 @@
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: space-compute-phase4-intent
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+    - apiGroups: [spacecompute.k3s.io]
+      apiVersions: [v1alpha1]
+      operations: [CREATE, UPDATE]
+      resources: [spacemissions]
+  validations:
+  - expression: "object.spec.maximumDurationSeconds >= object.spec.expectedDurationSeconds && object.spec.expectedDurationSeconds + object.spec.durationUncertaintySeconds <= object.spec.maximumDurationSeconds"
+    message: mission duration bounds are contradictory
+  - expression: "!object.spec.resultReturnRequired || size(object.spec.resultDestinations) > 0"
+    message: result-return missions require a destination
+  - expression: "!object.spec.retry.allowMigration || object.spec.checkpoint.checkpointable"
+    message: migration requires checkpointability
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: space-compute-phase4-intent
+spec:
+  policyName: space-compute-phase4-intent
+  validationActions: [Deny, Audit]
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: space-compute-phase4-link-ingest
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+    - apiGroups: [spacecompute.k3s.io]
+      apiVersions: [v1alpha1]
+      operations: [CREATE, UPDATE]
+      resources: [spacelinksnapshots]
+  validations:
+  - expression: "object.spec.provenance.reporterID == request.userInfo.username"
+    message: link provenance reporterID must equal the authenticated principal
+  - expression: "oldObject == null || object.spec.provenance.sequence > oldObject.spec.provenance.sequence"
+    message: link provenance sequence must increase on every update
+  - expression: "oldObject == null || oldObject.spec.provenance.reporterID == object.spec.provenance.reporterID"
+    message: provenance reporterID is immutable
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: space-compute-phase4-link-ingest
+spec:
+  policyName: space-compute-phase4-link-ingest
+  validationActions: [Deny, Audit]
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: space-compute-phase4-resource-ingest
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+    - apiGroups: [spacecompute.k3s.io]
+      apiVersions: [v1alpha1]
+      operations: [CREATE, UPDATE]
+      resources: [spacedomainresourcesummaries]
+  validations:
+  - expression: "object.spec.provenance.reporterID == request.userInfo.username"
+    message: resource provenance reporterID must equal the authenticated principal
+  - expression: "oldObject == null || object.spec.provenance.sequence > oldObject.spec.provenance.sequence"
+    message: resource provenance sequence must increase on every update
+  - expression: "oldObject == null || oldObject.spec.provenance.reporterID == object.spec.provenance.reporterID"
+    message: provenance reporterID is immutable
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: space-compute-phase4-resource-ingest
+spec:
+  policyName: space-compute-phase4-resource-ingest
+  validationActions: [Deny, Audit]
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: space-compute-phase4-placement-owner
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+    - apiGroups: [spacecompute.k3s.io]
+      apiVersions: [v1alpha1]
+      operations: [CREATE, UPDATE]
+      resources: [spaceplacementintents]
+  validations:
+  - expression: "request.userInfo.username == 'system:serviceaccount:kube-system:space-compute-mission-planner'"
+    message: only the mission planner ServiceAccount may create or update placement intent
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: space-compute-phase4-placement-owner
+spec:
+  policyName: space-compute-phase4-placement-owner
+  validationActions: [Deny, Audit]

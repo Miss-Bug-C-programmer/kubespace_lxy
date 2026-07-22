@@ -1,0 +1,28 @@
+# Recorded-format TianShu ZhiXin/Iluvatar two-device exporter snapshot.
+# TYPE ix_gpu_utilization gauge
+ix_gpu_utilization{gpu="0",name="MR-V100-32G",uuid="GPU-node-a-0000"} 12
+ix_gpu_utilization{gpu="1",name="MR-V100-32G",uuid="GPU-node-a-0001"} 55
+# TYPE ix_mem_free gauge
+ix_mem_free{gpu="0",name="MR-V100-32G",uuid="GPU-node-a-0000"} 30000
+ix_mem_free{gpu="1",name="MR-V100-32G",uuid="GPU-node-a-0001"} 16000
+# TYPE ix_mem_total gauge
+ix_mem_total{gpu="0",name="MR-V100-32G",uuid="GPU-node-a-0000"} 32768
+ix_mem_total{gpu="1",name="MR-V100-32G",uuid="GPU-node-a-0001"} 32768
+# TYPE ix_mem_used gauge
+ix_mem_used{gpu="0",name="MR-V100-32G",uuid="GPU-node-a-0000"} 2768
+ix_mem_used{gpu="1",name="MR-V100-32G",uuid="GPU-node-a-0001"} 16768
+# TYPE ix_mem_utilization gauge
+ix_mem_utilization{gpu="0",name="MR-V100-32G",uuid="GPU-node-a-0000"} 8.45
+ix_mem_utilization{gpu="1",name="MR-V100-32G",uuid="GPU-node-a-0001"} 51.17
+# TYPE ix_sm_clock gauge
+ix_sm_clock{gpu="0",name="MR-V100-32G",uuid="GPU-node-a-0000"} 1450
+ix_sm_clock{gpu="1",name="MR-V100-32G",uuid="GPU-node-a-0001"} 1400
+# TYPE ix_mem_clock gauge
+ix_mem_clock{gpu="0",name="MR-V100-32G",uuid="GPU-node-a-0000"} 1600
+ix_mem_clock{gpu="1",name="MR-V100-32G",uuid="GPU-node-a-0001"} 1550
+# TYPE ix_temperature gauge
+ix_temperature{gpu="0",name="MR-V100-32G",uuid="GPU-node-a-0000"} 61
+ix_temperature{gpu="1",name="MR-V100-32G",uuid="GPU-node-a-0001"} 78
+# TYPE ix_power_usage gauge
+ix_power_usage{gpu="0",name="MR-V100-32G",uuid="GPU-node-a-0000"} 120
+ix_power_usage{gpu="1",name="MR-V100-32G",uuid="GPU-node-a-0001"} 180

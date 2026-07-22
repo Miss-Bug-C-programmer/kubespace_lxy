@@ -1,0 +1,26 @@
+{
+  "targetDomain": "leo-a",
+  "targetOrbitClass": "leo",
+  "computeStart": "2026-07-21T00:02:08Z",
+  "computeEnd": "2026-07-21T00:12:08Z",
+  "resultEnd": "2026-07-21T00:20:06Z",
+  "score": {
+    "predictedCompletion": 83,
+    "dataLocality": 0,
+    "linkRisk": 90,
+    "energyThermal": 80,
+    "resilience": 85,
+    "fragmentation": 80,
+    "total": 67
+  },
+  "explanationCodes": [
+    "capabilities_satisfied",
+    "deadline_feasible",
+    "score_predicted_completion",
+    "score_data_locality",
+    "score_link_risk",
+    "score_energy_thermal",
+    "score_resilience",
+    "score_fragmentation"
+  ]
+}

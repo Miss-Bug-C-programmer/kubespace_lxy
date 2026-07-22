@@ -1,0 +1,28 @@
+# Recorded representative TianShu ZhiXin/Iluvatar exporter metrics.
+# HELP ix_gpu_utilization The utilization of iluvatar GPU (%).
+# TYPE ix_gpu_utilization gauge
+ix_gpu_utilization{gpu="0",name="MRC-V100-0x18",uuid="GPU-f2a72787"} 0
+# HELP ix_mem_free The free physical memory of iluvatar GPU (MiB).
+# TYPE ix_mem_free gauge
+ix_mem_free{gpu="0",name="MRC-V100-0x18",uuid="GPU-f2a72787"} 32704
+# HELP ix_mem_total The total physical memory of iluvatar GPU (MiB).
+# TYPE ix_mem_total gauge
+ix_mem_total{gpu="0",name="MRC-V100-0x18",uuid="GPU-f2a72787"} 32768
+# HELP ix_mem_used The used physical memory of iluvatar GPU (MiB).
+# TYPE ix_mem_used gauge
+ix_mem_used{gpu="0",name="MRC-V100-0x18",uuid="GPU-f2a72787"} 64
+# HELP ix_mem_utilization The memory utilization of iluvatar GPU (%).
+# TYPE ix_mem_utilization gauge
+ix_mem_utilization{gpu="0",name="MRC-V100-0x18",uuid="GPU-f2a72787"} 1
+# HELP ix_sm_clock Sm clock of iluvatar GPU (MHz).
+# TYPE ix_sm_clock gauge
+ix_sm_clock{gpu="0",name="MRC-V100-0x18",uuid="GPU-f2a72787"} 1500
+# HELP ix_mem_clock Mem clock of iluvatar GPU (MHz).
+# TYPE ix_mem_clock gauge
+ix_mem_clock{gpu="0",name="MRC-V100-0x18",uuid="GPU-f2a72787"} 1600
+# HELP ix_temperature The temperature of iluvatar GPU (C).
+# TYPE ix_temperature gauge
+ix_temperature{gpu="0",name="MRC-V100-0x18",uuid="GPU-f2a72787"} 70
+# HELP ix_power_usage The power usage of iluvatar GPU.
+# TYPE ix_power_usage gauge
+ix_power_usage{gpu="0",name="MRC-V100-0x18",uuid="GPU-f2a72787"} 28

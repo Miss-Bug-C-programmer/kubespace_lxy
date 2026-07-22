@@ -1,0 +1,15 @@
+# Keep the builder aligned with go.mod and the Kubernetes replacement compiled
+# into this repository. Build from the repository root.
+FROM golang:1.24.11-bookworm AS build
+WORKDIR /src
+COPY . .
+ARG TARGETOS=linux
+ARG TARGETARCH=amd64
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
+    go build -buildvcs=false -trimpath -ldflags='-s -w' \
+    -o /out/space-compute-scheduler ./cmd/space-compute-scheduler
+
+FROM gcr.io/distroless/static-debian12:nonroot
+COPY --from=build /out/space-compute-scheduler /usr/local/bin/space-compute-scheduler
+USER nonroot:nonroot
+ENTRYPOINT ["/usr/local/bin/space-compute-scheduler"]
