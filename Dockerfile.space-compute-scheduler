@@ -1,6 +1,6 @@
 # Keep the builder aligned with go.mod and the Kubernetes replacement compiled
 # into this repository. Build from the repository root.
-FROM golang:1.24.11-bookworm AS build
+FROM golang:1.26.5-bookworm AS build
 WORKDIR /src
 COPY . .
 ARG TARGETOS=linux
