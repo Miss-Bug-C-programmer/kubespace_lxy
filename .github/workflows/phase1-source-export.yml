@@ -1,0 +1,66 @@
+name: Phase 1 source export
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/phase1-source-export.yml
+
+permissions:
+  contents: read
+  statuses: write
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Publish run identity
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          COMMIT_SHA: ${{ github.sha }}
+          RUN_ID: ${{ github.run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail-with-body --silent --show-error \
+            -X POST \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${REPOSITORY}/statuses/${COMMIT_SHA}" \
+            -d "{\"state\":\"pending\",\"context\":\"sandbox/phase1-source-export\",\"description\":\"run_id=${RUN_ID}\"}"
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Package tracked source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git ls-files -z | tar --null -T - -czf kubespace-lxy-main.tar.gz
+      - name: Upload source archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase1-source-${{ github.run_id }}
+          path: kubespace-lxy-main.tar.gz
+          if-no-files-found: error
+          retention-days: 1
+      - name: Publish success
+        if: ${{ success() }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          COMMIT_SHA: ${{ github.sha }}
+          RUN_ID: ${{ github.run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail-with-body --silent --show-error \
+            -X POST \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${REPOSITORY}/statuses/${COMMIT_SHA}" \
+            -d "{\"state\":\"success\",\"context\":\"sandbox/phase1-source-export\",\"description\":\"run_id=${RUN_ID}\"}"
