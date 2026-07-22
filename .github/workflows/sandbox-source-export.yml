@@ -1,0 +1,32 @@
+name: Sandbox source export
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/sandbox-source-export.yml
+
+permissions:
+  contents: read
+
+jobs:
+  export-source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Package tracked source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git ls-files -z | tar --null -T - -czf kubespace-lxy-main.tar.gz
+      - name: Upload source archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: kubespace-lxy-main-source
+          path: kubespace-lxy-main.tar.gz
+          if-no-files-found: error
+          retention-days: 1
