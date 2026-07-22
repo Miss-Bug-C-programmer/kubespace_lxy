@@ -40,6 +40,19 @@ func TestCommandIdentityAndUpstreamSchedulerSurface(t *testing.T) {
 
 func TestDeploymentManifestHasIsolatedIdentityAndRequiredResources(t *testing.T) {
 	path := "../../docs/gpu-scheduler/manifests/space-compute-scheduler.yaml"
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{
+		"apiGroups: [resource.k8s.io]",
+		"resources: [deviceclasses, resourceclaims, resourceslices, devicetaintrules]",
+		"resources: [resourceclaims/status]",
+	} {
+		if !strings.Contains(string(raw), required) {
+			t.Fatalf("manifest lacks upstream DRA scheduler permission %q", required)
+		}
+	}
 	file, err := os.Open(path)
 	if err != nil {
 		t.Fatal(err)

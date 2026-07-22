@@ -124,7 +124,9 @@ Planner metrics use the `space_compute_planner_` prefix:
 - `planning_duration_seconds{result}` and `planning_active`;
 - `replans_total{reason}` and `reconciliation_errors_total{stage}`;
 - `deadline_slack_seconds`, `snapshot_age_seconds` and
-  `link_risk_decisions_total{class}`.
+  `link_risk_decisions_total{class}`;
+- `queue_depth{queue}`, `retry_exhausted_total{queue}` and
+  `api_writes_total{resource,operation,result}`.
 
 All labels are closed bounded enums; no mission, Node, endpoint, reporter or
 device identity is a label. Scheduler/exporter metrics remain documented in

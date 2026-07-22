@@ -3,6 +3,7 @@ package v1alpha1
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -12,15 +13,16 @@ import (
 )
 
 const (
-	MaxContactWindows       = 256
-	MaxLinkHistory          = 64
-	MaxCapabilities         = 64
-	MaxDataObjects          = 128
-	MaxDataBytes            = int64(1 << 50)
-	MaxMissionDurationSecs  = int64(30 * 24 * time.Hour / time.Second)
-	MaxSafetyMarginSecs     = int64(24 * time.Hour / time.Second)
-	MaxClockSkewSecs        = int64(10 * time.Minute / time.Second)
-	MaxSnapshotLifetimeSecs = int64(7 * 24 * time.Hour / time.Second)
+	MaxContactWindows        = 256
+	MaxLinkHistory           = 64
+	MaxCapabilities          = 64
+	MaxDataObjects           = 128
+	MaxDataBytes             = int64(1 << 50)
+	MaxMissionDurationSecs   = int64(30 * 24 * time.Hour / time.Second)
+	MaxSafetyMarginSecs      = int64(24 * time.Hour / time.Second)
+	MaxClockSkewSecs         = int64(10 * time.Minute / time.Second)
+	MaxSnapshotLifetimeSecs  = int64(7 * 24 * time.Hour / time.Second)
+	MaxWorkloadTemplateBytes = 64 << 10
 )
 
 // Clock is deliberately small so production and deterministic tests execute
@@ -89,8 +91,8 @@ func validateProvenance(path string, value Provenance, errs *ValidationErrors) {
 	if strings.TrimSpace(value.ReporterID) == "" || len(value.ReporterID) > 253 || strings.ContainsAny(value.ReporterID, "\r\n\x00") {
 		errs.add(path+".reporterID", "must be a non-empty authenticated principal of at most 253 bytes without control separators")
 	}
-	if strings.TrimSpace(value.Source) == "" || len(value.Source) > 256 {
-		errs.add(path+".source", "must be non-empty and at most 256 bytes")
+	if strings.TrimSpace(value.Source) == "" || len(value.Source) > 256 || strings.ContainsAny(value.Source, "\r\n\x00") {
+		errs.add(path+".source", "must be non-empty and at most 256 bytes without control separators")
 	}
 	decoded, err := hex.DecodeString(value.Digest)
 	if err != nil || len(decoded) != sha256.Size {
@@ -341,6 +343,11 @@ func ValidateMission(mission *SpaceMission, clock Clock) error {
 	if scheduler := spec.WorkloadTemplate.Spec.SchedulerName; scheduler != "" && scheduler != "space-compute-scheduler" {
 		errs.add("spec.workloadTemplate.spec.schedulerName", "must be empty or space-compute-scheduler")
 	}
+	if raw, err := json.Marshal(spec.WorkloadTemplate); err != nil {
+		errs.add("spec.workloadTemplate", "must be serializable")
+	} else if len(raw) > MaxWorkloadTemplateBytes {
+		errs.addf("spec.workloadTemplate", "serialized size cannot exceed %d bytes", MaxWorkloadTemplateBytes)
+	}
 	return errs.errOrNil()
 }
 
@@ -354,8 +361,21 @@ func validateCapabilities(path string, values []CapabilityRequirement, errs *Val
 			errs.add(item+".quantity", "must be between 1 and 1000000")
 		}
 		validateStringMap(item+".software", value.Software, errs)
+		if len(value.Architecture) > 128 || len(value.Model) > 128 {
+			errs.add(item, "architecture and model cannot exceed 128 bytes")
+		}
 		if len(value.Precision) > 32 {
 			errs.add(item+".precision", "cannot exceed 32 entries")
+		}
+		seenPrecision := map[string]struct{}{}
+		for j, precision := range value.Precision {
+			if strings.TrimSpace(precision) == "" || len(precision) > 63 {
+				errs.addf(fmt.Sprintf("%s.precision[%d]", item, j), "must be non-empty and at most 63 bytes")
+			}
+			if _, exists := seenPrecision[precision]; exists {
+				errs.addf(fmt.Sprintf("%s.precision[%d]", item, j), "duplicate precision")
+			}
+			seenPrecision[precision] = struct{}{}
 		}
 	}
 }
@@ -411,6 +431,9 @@ func ValidateResourceSummary(summary *SpaceDomainResourceSummary, clock Clock) e
 	if summary.Spec.ObservedAt.After(clock.Now().Add(time.Duration(MaxClockSkewSecs) * time.Second)) {
 		errs.add("spec.observedAt", "is beyond maximum supported clock skew")
 	}
+	if summary.Spec.ValidUntil.Time.Sub(summary.Spec.ObservedAt.Time) > time.Duration(MaxSnapshotLifetimeSecs)*time.Second {
+		errs.addf("spec.validUntil", "snapshot lifetime exceeds %d seconds", MaxSnapshotLifetimeSecs)
+	}
 	if len(summary.Spec.Devices) > MaxCapabilities {
 		errs.addf("spec.devices", "cannot exceed %d entries", MaxCapabilities)
 	}
@@ -430,6 +453,21 @@ func ValidateResourceSummary(summary *SpaceDomainResourceSummary, clock Clock) e
 		if device.FragmentationMilli < 0 || device.FragmentationMilli > 1000 {
 			errs.add(path+".fragmentationMilli", "must be between 0 and 1000")
 		}
+		for field, values := range map[string][]string{"architectures": device.Architectures, "models": device.Models, "precision": device.Precision} {
+			if len(values) > 64 {
+				errs.add(path+"."+field, "cannot exceed 64 entries")
+			}
+			seenValues := map[string]struct{}{}
+			for j, value := range values {
+				if strings.TrimSpace(value) == "" || len(value) > 128 {
+					errs.addf(fmt.Sprintf("%s.%s[%d]", path, field, j), "must be non-empty and at most 128 bytes")
+				}
+				if _, exists := seenValues[value]; exists {
+					errs.addf(fmt.Sprintf("%s.%s[%d]", path, field, j), "duplicate value")
+				}
+				seenValues[value] = struct{}{}
+			}
+		}
 	}
 	validateStringMap("spec.software", summary.Spec.Software, &errs)
 	validateLocations("spec.dataLocations", summary.Spec.DataLocations, &errs)
@@ -440,6 +478,10 @@ func ValidateResourceSummary(summary *SpaceDomainResourceSummary, clock Clock) e
 	}
 	if summary.Spec.QueueDelaySeconds < 0 || summary.Spec.MaximumSnapshotAgeSecs < 1 {
 		errs.add("spec", "queueDelaySeconds cannot be negative and maximumSnapshotAgeSeconds must be positive")
+	}
+	decoded, err := hex.DecodeString(summary.Spec.ExporterSnapshotDigest)
+	if err != nil || len(decoded) != sha256.Size || summary.Spec.ExporterSnapshotDigest != strings.ToLower(summary.Spec.ExporterSnapshotDigest) {
+		errs.add("spec.exporterSnapshotDigest", "must be a lowercase hexadecimal SHA-256 digest")
 	}
 	return errs.errOrNil()
 }

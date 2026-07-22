@@ -21,6 +21,7 @@ import (
 type Store interface {
 	GetPod(context.Context, string, string) (*corev1.Pod, error)
 	CreatePod(context.Context, *corev1.Pod) (*corev1.Pod, error)
+	DeletePod(context.Context, string, string) error
 	UpdatePlacementStatus(context.Context, *spacev1.SpacePlacementIntent) error
 	Event(context.Context, string, string, string, string, string)
 }
@@ -106,6 +107,28 @@ func (c *Controller) ReconcileDispatch(ctx context.Context, mission *spacev1.Spa
 		return placement.Spec.NotBefore.Time.Sub(clock.Now()), nil
 	}
 	name := AttemptPodName(mission.Name, placement.Spec.Attempt)
+	if active := placement.Status.ActivePod; active != nil && active.Name != "" && active.Name != name {
+		activeNamespace := active.Namespace
+		if activeNamespace == "" {
+			activeNamespace = mission.Namespace
+		}
+		_, err := c.Store.GetPod(ctx, activeNamespace, active.Name)
+		if err == nil {
+			if err := c.Store.DeletePod(ctx, activeNamespace, active.Name); err != nil {
+				return 0, err
+			}
+			placement.Status.Phase = spacev1.PlacementReplanning
+			if err := c.Store.UpdatePlacementStatus(ctx, placement); err != nil {
+				return 0, err
+			}
+			c.Store.Event(ctx, mission.Namespace, mission.Name, "Normal", "PreviousAttemptFenced", fmt.Sprintf("deleted fenced Pod %s before dispatching attempt %d", active.Name, placement.Spec.Attempt))
+			return time.Second, nil
+		}
+		if !errors.Is(err, planner.ErrNotFound) {
+			return 0, err
+		}
+		placement.Status.ActivePod = nil
+	}
 	existing, err := c.Store.GetPod(ctx, mission.Namespace, name)
 	if err == nil {
 		if existing.Labels[spacev1.LabelPlacementID] != placement.Spec.PlanID {
@@ -131,6 +154,7 @@ func (c *Controller) ReconcileDispatch(ctx context.Context, mission *spacev1.Spa
 	}
 	placement.Status.ActivePod = &corev1.ObjectReference{Namespace: created.Namespace, Name: created.Name, UID: created.UID}
 	placement.Status.Phase = spacev1.PlacementDispatched
+	placement.Status.RetryCount = placement.Spec.Attempt - 1
 	if err := c.Store.UpdatePlacementStatus(ctx, placement); err != nil {
 		return 0, err
 	}
@@ -163,9 +187,13 @@ func BuildAttemptPod(mission *spacev1.SpaceMission, placement *spacev1.SpacePlac
 		pod.Annotations = map[string]string{}
 	}
 	pod.Labels[spacev1.LabelPlacementID] = placement.Spec.PlanID
+	pod.Labels[spacev1.LabelMissionUID] = string(mission.UID)
 	pod.Annotations[spacev1.AnnotationMissionIntent] = string(missionRaw)
 	pod.Annotations[spacev1.AnnotationPlacement] = string(placementRaw)
 	pod.Spec.SchedulerName = "space-compute-scheduler"
+	controller := true
+	blockOwnerDeletion := true
+	pod.OwnerReferences = []metav1.OwnerReference{{APIVersion: spacev1.SchemeGroupVersion.String(), Kind: "SpaceMission", Name: mission.Name, UID: mission.UID, Controller: &controller, BlockOwnerDeletion: &blockOwnerDeletion}}
 	return pod, nil
 }
 

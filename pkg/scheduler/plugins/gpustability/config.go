@@ -56,6 +56,7 @@ type ExporterArgs struct {
 	MaxMetricFamilies  int    `json:"maxMetricFamilies"`
 	MaxSamples         int    `json:"maxSamples"`
 	MaxLabelsPerSample int    `json:"maxLabelsPerSample"`
+	MaxDevicesPerNode  int    `json:"maxDevicesPerNode"`
 	AllowInsecureHTTP  bool   `json:"allowInsecureHTTP"`
 	AllowExternalIP    bool   `json:"allowExternalIP"`
 	CAFile             string `json:"caFile,omitempty"`
@@ -167,6 +168,7 @@ type Config struct {
 	MaxMetricFamilies  int
 	MaxSamples         int
 	MaxLabelsPerSample int
+	MaxDevicesPerNode  int
 	AllowInsecureHTTP  bool
 	AllowExternalIP    bool
 	CAFile             string
@@ -230,6 +232,7 @@ func defaultArgs() GPUStabilityArgs {
 			MaxMetricFamilies:  10_000,
 			MaxSamples:         100_000,
 			MaxLabelsPerSample: 64,
+			MaxDevicesPerNode:  256,
 			AllowInsecureHTTP:  false,
 		},
 		Collector: CollectorArgs{
@@ -426,6 +429,9 @@ func validateAndConvertArgs(args GPUStabilityArgs) (Config, error) {
 	if args.Exporter.MaxLabelsPerSample < 1 || args.Exporter.MaxLabelsPerSample > 256 {
 		return Config{}, fmt.Errorf("exporter.maxLabelsPerSample must be between 1 and 256")
 	}
+	if args.Exporter.MaxDevicesPerNode < 1 || args.Exporter.MaxDevicesPerNode > 4096 {
+		return Config{}, fmt.Errorf("exporter.maxDevicesPerNode must be between 1 and 4096")
+	}
 	if args.ProfileSource.MaxBytes < 1024 || args.ProfileSource.MaxBytes > 16<<20 {
 		return Config{}, fmt.Errorf("profileSource.maxBytes must be between 1024 and %d", 16<<20)
 	}
@@ -527,6 +533,7 @@ func validateAndConvertArgs(args GPUStabilityArgs) (Config, error) {
 		Scheme: scheme, MetricProfile: profileName, MetricProfiles: profiles, Timeout: timeout,
 		MaxResponseBytes: args.Exporter.MaxResponseBytes, MaxMetricFamilies: args.Exporter.MaxMetricFamilies,
 		MaxSamples: args.Exporter.MaxSamples, MaxLabelsPerSample: args.Exporter.MaxLabelsPerSample,
+		MaxDevicesPerNode: args.Exporter.MaxDevicesPerNode,
 		AllowInsecureHTTP: args.Exporter.AllowInsecureHTTP,
 		AllowExternalIP:   args.Exporter.AllowExternalIP, CAFile: args.Exporter.CAFile,
 		CertFile: args.Exporter.CertFile, KeyFile: args.Exporter.KeyFile, ServerName: args.Exporter.ServerName,

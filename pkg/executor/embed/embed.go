@@ -26,7 +26,6 @@ import (
 	daemonconfig "github.com/k3s-io/k3s/pkg/daemons/config"
 	"github.com/k3s-io/k3s/pkg/daemons/executor"
 	"github.com/k3s-io/k3s/pkg/executor/embed/etcd"
-	"github.com/k3s-io/k3s/pkg/scheduler/plugins/gpustability"
 	"github.com/k3s-io/k3s/pkg/signals"
 	"github.com/k3s-io/k3s/pkg/util"
 	"github.com/k3s-io/k3s/pkg/version"
@@ -238,7 +237,7 @@ func (e *Embedded) APIServer(ctx context.Context, args []string) error {
 }
 
 func (e *Embedded) Scheduler(ctx context.Context, nodeReady <-chan struct{}, args []string) error {
-	command := sapp.NewSchedulerCommand(ctx.Done(), sapp.WithPlugin(gpustability.Name, gpustability.New))
+	command := sapp.NewSchedulerCommand(ctx.Done())
 	command.SetArgs(args)
 
 	go func() {

@@ -75,6 +75,10 @@ type metricProfile struct {
 	RequiredFields map[deviceMetricField]struct{}
 	Health         healthMapping
 	Fields         map[deviceMetricField]metricFieldSpec
+	// SingleSamplePerDeviceField is used by exporters such as Iluvatar where
+	// every ix_* family is a single device gauge. Duplicate series would make a
+	// rollup look valid while hiding exporter identity/configuration corruption.
+	SingleSamplePerDeviceField bool
 }
 
 type metricProfilesConfig struct {
@@ -117,10 +121,11 @@ type parserLimits struct {
 	MaxMetricFamilies  int
 	MaxSamples         int
 	MaxLabelsPerSample int
+	MaxDevices         int
 }
 
 func defaultParserLimits() parserLimits {
-	return parserLimits{MaxMetricFamilies: 10_000, MaxSamples: 100_000, MaxLabelsPerSample: 64}
+	return parserLimits{MaxMetricFamilies: 10_000, MaxSamples: 100_000, MaxLabelsPerSample: 64, MaxDevices: 256}
 }
 
 type telemetryAdapter interface {
@@ -143,7 +148,8 @@ type metricSample struct {
 }
 
 type metricStore struct {
-	samples map[string][]metricSample
+	samples    map[string][]metricSample
+	maxDevices int
 }
 
 func parseMetricsForProfile(r io.Reader, requestedProfile string) (nodeMetrics, error) {
@@ -216,7 +222,7 @@ func parsePrometheusMetricsWithLimits(r io.Reader, limits parserLimits) (*metric
 	if len(families) > limits.MaxMetricFamilies {
 		return nil, fmt.Errorf("metric family count %d exceeds limit %d", len(families), limits.MaxMetricFamilies)
 	}
-	store := &metricStore{samples: map[string][]metricSample{}}
+	store := &metricStore{samples: map[string][]metricSample{}, maxDevices: limits.MaxDevices}
 	sampleCount := 0
 	for name, family := range families {
 		for _, metric := range family.GetMetric() {
@@ -547,9 +553,10 @@ func nonEmptyStrings(values []string) []string {
 func registeredMetricProfiles() []metricProfile {
 	return []metricProfile{
 		{
-			Name:       "iluvatar",
-			Class:      DeviceClassGPU,
-			MatchNames: []string{"ix_gpu_utilization", "ix_mem_total", "ix_temperature"},
+			Name:                       "iluvatar",
+			Class:                      DeviceClassGPU,
+			MatchNames:                 []string{"ix_gpu_utilization", "ix_mem_total", "ix_temperature"},
+			SingleSamplePerDeviceField: true,
 			Fields: map[deviceMetricField]metricFieldSpec{
 				fieldGPUUtilization:    {Names: []string{"ix_gpu_utilization"}, Rollup: rollupAvg},
 				fieldMemoryUtilization: {Names: []string{"ix_mem_utilization"}, Rollup: rollupAvg},
@@ -623,6 +630,9 @@ func (p metricProfile) matches(store *metricStore) bool {
 func (p metricProfile) build(store *metricStore) (nodeMetrics, error) {
 	deviceValues := map[string]map[deviceMetricField][]float64{}
 	deviceInfo := map[string]deviceMetrics{}
+	deviceAliases := map[string]string{}
+	deviceLabelValues := map[string]map[string]string{}
+	deviceNames := map[string]string{}
 	identityLabels := p.IdentityLabels
 	if len(identityLabels) == 0 {
 		identityLabels = defaultIdentityLabels()
@@ -636,7 +646,13 @@ func (p metricProfile) build(store *metricStore) (nodeMetrics, error) {
 		health = defaultHealthMapping()
 	}
 
-	for field, spec := range p.Fields {
+	fields := make([]deviceMetricField, 0, len(p.Fields))
+	for field := range p.Fields {
+		fields = append(fields, field)
+	}
+	sort.Slice(fields, func(i, j int) bool { return fields[i] < fields[j] })
+	for _, field := range fields {
+		spec := p.Fields[field]
 		for _, metricName := range spec.Names {
 			for _, sample := range store.samples[metricName] {
 				class := metricDeviceClass(metricName, p.Class)
@@ -645,7 +661,11 @@ func (p metricProfile) build(store *metricStore) (nodeMetrics, error) {
 					key += "unlabeled"
 				}
 				if _, ok := deviceValues[key]; !ok {
+					if store.maxDevices > 0 && len(deviceValues) >= store.maxDevices {
+						return nodeMetrics{}, fmt.Errorf("normalized device count exceeds limit %d", store.maxDevices)
+					}
 					deviceValues[key] = map[deviceMetricField][]float64{}
+					deviceLabelValues[key] = map[string]string{}
 					deviceInfo[key] = deviceMetrics{
 						ID:      key,
 						Class:   class,
@@ -654,6 +674,31 @@ func (p metricProfile) build(store *metricStore) (nodeMetrics, error) {
 						Fields:  map[deviceMetricField]struct{}{},
 						Healthy: true,
 					}
+				}
+				for _, label := range identityLabels {
+					value := strings.TrimSpace(sample.Labels[label])
+					if value == "" {
+						continue
+					}
+					alias := string(class) + ":" + label + "=" + value
+					if owner, exists := deviceAliases[alias]; exists && owner != key {
+						return nodeMetrics{}, fmt.Errorf("identity alias %q maps to both %q and %q", alias, owner, key)
+					}
+					deviceAliases[alias] = key
+					if previous := deviceLabelValues[key][label]; previous != "" && previous != value {
+						return nodeMetrics{}, fmt.Errorf("device %q identity label %q changed from %q to %q within one scrape", key, label, previous, value)
+					}
+					deviceLabelValues[key][label] = value
+				}
+				name := firstLabel(sample.Labels, nameLabels...)
+				if previous := deviceNames[key]; previous != "" && name != "" && previous != name {
+					return nodeMetrics{}, fmt.Errorf("device %q model/name changed from %q to %q within one scrape", key, previous, name)
+				}
+				if name != "" {
+					deviceNames[key] = name
+				}
+				if p.SingleSamplePerDeviceField && len(deviceValues[key][field]) != 0 {
+					return nodeMetrics{}, fmt.Errorf("device %q field %q has duplicate samples", key, field)
 				}
 				deviceValues[key][field] = append(deviceValues[key][field], normalizeMetricValue(sample.Value, spec.Unit))
 			}
@@ -769,8 +814,20 @@ func validateDeviceMetrics(device deviceMetrics) error {
 	if device.MemoryFreeMiB > device.MemoryTotalMiB || device.MemoryUsedMiB > device.MemoryTotalMiB {
 		return fmt.Errorf("device %q memory values exceed total memory", device.ID)
 	}
-	if device.hasField(fieldMemoryFreeMiB) && device.hasField(fieldMemoryUsedMiB) && device.MemoryFreeMiB+device.MemoryUsedMiB > device.MemoryTotalMiB+0.001 {
-		return fmt.Errorf("device %q free plus used memory exceeds total memory", device.ID)
+	if device.hasField(fieldMemoryFreeMiB) && device.hasField(fieldMemoryUsedMiB) {
+		balance := device.MemoryFreeMiB + device.MemoryUsedMiB
+		// Exporter values may be rounded, but a discrepancy larger than 0.1%
+		// (or 1 MiB for small devices) is not a trustworthy capacity snapshot.
+		tolerance := math.Max(1, device.MemoryTotalMiB*0.001)
+		if math.Abs(balance-device.MemoryTotalMiB) > tolerance {
+			return fmt.Errorf("device %q free plus used memory is inconsistent with total memory", device.ID)
+		}
+	}
+	if device.hasField(fieldMemoryUtilization) && device.hasMemoryCapacity() {
+		calculated := (1 - device.MemoryFreeMiB/device.MemoryTotalMiB) * 100
+		if math.Abs(calculated-device.MemoryUtilization) > 2 {
+			return fmt.Errorf("device %q reported memory utilization is inconsistent with free and total memory", device.ID)
+		}
 	}
 	return nil
 }

@@ -35,6 +35,7 @@ profiles:
         maxMetricFamilies: 10000
         maxSamples: 100000
         maxLabelsPerSample: 64
+        maxDevicesPerNode: 256
         allowInsecureHTTP: false
         allowExternalIP: false
         caFile: /var/lib/rancher/k3s/server/tls/gpu-exporter-ca.crt

@@ -32,6 +32,11 @@ var (
 type Repository struct {
 	Dynamic  dynamic.Interface
 	Recorder record.EventRecorder
+	Observer WriteObserver
+}
+
+type WriteObserver interface {
+	APIWrite(resource, operation, result string)
 }
 
 func (r *Repository) GetMission(ctx context.Context, key planner.MissionKey) (*spacev1.SpaceMission, error) {
@@ -116,6 +121,7 @@ func (r *Repository) ApplyPlacement(ctx context.Context, desired *spacev1.SpaceP
 				return convertErr
 			}
 			_, createErr := r.Dynamic.Resource(PlacementGVR).Namespace(desired.Namespace).Create(ctx, object, metav1.CreateOptions{})
+			r.observeWrite("placement", "create", createErr)
 			if createErr == nil {
 				changed = true
 			}
@@ -142,6 +148,7 @@ func (r *Repository) ApplyPlacement(ctx context.Context, desired *spacev1.SpaceP
 			object.Object["status"] = status
 		}
 		_, updateErr := r.Dynamic.Resource(PlacementGVR).Namespace(desired.Namespace).Update(ctx, object, metav1.UpdateOptions{})
+		r.observeWrite("placement", "update", updateErr)
 		if updateErr == nil {
 			changed = true
 		}
@@ -162,6 +169,7 @@ func (r *Repository) UpdatePlacementStatus(ctx context.Context, desired *spacev1
 		}
 		current.Object["status"] = status
 		_, err = r.Dynamic.Resource(PlacementGVR).Namespace(desired.Namespace).UpdateStatus(ctx, current, metav1.UpdateOptions{})
+		r.observeWrite("placement", "status", err)
 		return err
 	})
 }
@@ -178,6 +186,7 @@ func (r *Repository) UpdateMissionStatus(ctx context.Context, desired *spacev1.S
 		}
 		current.Object["status"] = status
 		_, err = r.Dynamic.Resource(MissionGVR).Namespace(desired.Namespace).UpdateStatus(ctx, current, metav1.UpdateOptions{})
+		r.observeWrite("mission", "status", err)
 		return err
 	})
 }
@@ -206,7 +215,22 @@ func (s *WorkloadStore) GetPod(ctx context.Context, namespace, name string) (*co
 	return pod, err
 }
 func (s *WorkloadStore) CreatePod(ctx context.Context, pod *corev1.Pod) (*corev1.Pod, error) {
-	return s.Client.CoreV1().Pods(pod.Namespace).Create(ctx, pod, metav1.CreateOptions{})
+	created, err := s.Client.CoreV1().Pods(pod.Namespace).Create(ctx, pod, metav1.CreateOptions{})
+	if s.Repository != nil {
+		s.Repository.observeWrite("pod", "create", err)
+	}
+	return created, err
+}
+func (s *WorkloadStore) DeletePod(ctx context.Context, namespace, name string) error {
+	grace := int64(30)
+	err := s.Client.CoreV1().Pods(namespace).Delete(ctx, name, metav1.DeleteOptions{GracePeriodSeconds: &grace})
+	if apierrors.IsNotFound(err) {
+		return planner.ErrNotFound
+	}
+	if s.Repository != nil {
+		s.Repository.observeWrite("pod", "delete", err)
+	}
+	return err
 }
 func (s *WorkloadStore) UpdatePlacementStatus(ctx context.Context, value *spacev1.SpacePlacementIntent) error {
 	return s.Repository.UpdatePlacementStatus(ctx, value)
@@ -227,4 +251,17 @@ func toUnstructured(in interface{}) (*unstructured.Unstructured, error) {
 		return nil, err
 	}
 	return &unstructured.Unstructured{Object: value}, nil
+}
+
+func (r *Repository) observeWrite(resource, operation string, err error) {
+	if r == nil || r.Observer == nil {
+		return
+	}
+	result := "success"
+	if apierrors.IsConflict(err) {
+		result = "conflict"
+	} else if err != nil {
+		result = "error"
+	}
+	r.Observer.APIWrite(resource, operation, result)
 }

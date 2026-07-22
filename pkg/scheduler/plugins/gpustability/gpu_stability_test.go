@@ -278,6 +278,21 @@ func TestParseMetricsFromFile(t *testing.T) {
 	if metrics.GPUCount == 0 {
 		t.Fatalf("GPUCount = 0, want at least 1")
 	}
+	if metrics.Profile != "iluvatar" {
+		t.Fatalf("Profile = %q, want iluvatar for the vendor hardware gate", metrics.Profile)
+	}
+	if expectedID := strings.TrimSpace(os.Getenv("K3S_ILUVATAR_EXPECTED_DEVICE_ID")); expectedID != "" {
+		found := false
+		for _, device := range metrics.Devices {
+			if device.ID == expectedID {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("expected physical device ID %q not found in parsed devices %+v", expectedID, metrics.Devices)
+		}
+	}
 
 	plugin := newTestPlugin(t, string(raw))
 	nodeInfo := nodeInfoWithEndpointAndGPUCapacity("http://gpu-node:32021/metrics", int64(metrics.GPUCount))

@@ -9,12 +9,14 @@ inspection or compilation.
 - Workspace source identifies as K3s `v1.33.7+k3s1`: `go.mod` requires
   `k8s.io/kubernetes v1.33.7` and replaces Kubernetes modules with
   `github.com/k3s-io/kubernetes` or its staging modules at `v1.33.7-k3s1`.
-- The verified toolchain is `go1.24.11 linux/amd64`, matching the `go 1.24.11`
-  directive in `go.mod`; `CGO_ENABLED=1` for the recorded baseline.
+- The verified security-qualified toolchain is `go1.25.12 linux/amd64`; the
+  module minimum is pinned to `go 1.25.12` so vulnerable earlier 1.25 patches
+  cannot build the release.
+  The pre-remediation Phase 5 baseline was Go 1.24.11. `CGO_ENABLED=1`.
 - Git status is usable and remained on branch `master`; no branch, reset,
-  rebase, merge or checkout operation was performed. The pre-Phase-4 short
-  status was clean, so the changes listed below are Phase 4 work rather than
-  overwritten unrelated edits.
+  rebase, merge or checkout operation was performed. The pre-Phase-5 short
+  status was clean; unrelated upstream-baseline build/module differences were
+  preserved rather than reset.
 - Existing custom implementation:
   - `pkg/scheduler/plugins/gpustability/gpu_stability.go`
   - `pkg/scheduler/plugins/gpustability/metrics_profiles.go`
@@ -32,7 +34,7 @@ inspection or compilation.
   - `pkg/scheduler/plugins/gpustability/queueing.go`
   - `pkg/scheduler/plugins/gpustability/workload_intent.go`
   - `cmd/space-compute-scheduler/main.go`
-  - registration in `pkg/executor/embed/embed.go`
+  - standalone registration in `cmd/space-compute-scheduler/main.go`
   - configuration/documentation in `docs/gpu-scheduler/`
 - Current behavior is an opt-in scheduler-framework `PreFilter`, `Filter`,
   `PreScore`, and `Score` plugin. A bounded asynchronous collector watches Node
@@ -64,6 +66,10 @@ inspection or compilation.
   policy dimensions, an ownership/state-machine ADR, bounded metrics/Events,
   and a CPU-only real-K3s full-flow e2e. Future waiting, transfer/retry and
   result-return state remain above the scheduler. Phase 4 is complete.
+- Phase 5 qualifies and hardens Iluvatar multi-device parsing, multiple Agent
+  Nodes and schedulable-master isolation, controller bounds, typed admission,
+  5,000-node datasets and K3s lifecycle behavior. It also identifies release
+  blockers; Phase 5 is executed but the stack is not release-ready.
 
 ## Verified plugin catalogue
 
@@ -72,12 +78,10 @@ inspection or compilation.
   strictly decodes versioned
   `gpustability.k3s.io/v1alpha1` `K3SGPUStabilityArgs`; deprecated environment
   values are applied first and typed values take precedence.
-- `pkg/executor/embed/embed.go` registers the factory with
-  `sapp.WithPlugin(gpustability.Name, gpustability.New)`. That file and its OS
-  companions are excluded by the `no_embedded_executor` build tag; the plugin
-  package itself has no build tags.
-- Registration does not enable the plugin in the upstream/default scheduler
-  profile. `cmd/space-compute-scheduler` uses the real upstream
+- Phase 5 removed the earlier `pkg/executor/embed/embed.go` registration. Its
+  source content now matches verified upstream K3s, so the default scheduler has
+  no import or compiled dependency on the plugin. `cmd/space-compute-scheduler`
+  uses the real upstream
   `kube-scheduler/app.NewSchedulerCommand` with the plugin factory registered.
   Its production example contains only the `space-compute-scheduler` profile
   and lease; no current example adds a space profile to default K3s.
@@ -137,7 +141,7 @@ inspection or compilation.
 | 2 — Exporter collection and snapshots | Complete | Dynamic Node discovery, atomic declarative reload, unified generation-safe snapshots, race tests, and 100/1,000-target fixture benchmarks passed on 2026-07-20 |
 | 3 — Independent scheduler | Complete | Version-matched K3s API e2e, two-process Lease failover, probes/RBAC/install-uninstall, exporter-backed binding, unit/race/static/fuzz/scale gates passed on 2026-07-20 |
 | 4 — Space-aware orchestration | Complete | Versioned CRDs/admission, accepted-generation link/resource control, deterministic planner/local policy, restart-safe workload state, CPU-only fixtures and real K3s full-flow/race e2e passed on 2026-07-21 |
-| 5 — Production qualification | Not started | Phase 2 fixture scale exists; qualification-scale, chaos, hardware, soak, and release evidence remain |
+| 5 — Production qualification | Executed; Not ready | CPU gates, 5,000-node scale, K3s lifecycle, admission/security review and vulnerability remediation completed on 2026-07-21; full-agent, upgrade, hardware, API and transport gates remain open |
 
 ## Latest Phase 3 work
 
@@ -685,19 +689,126 @@ empty.
   workload/Node/link/decision data and retained Iluvatar exporter text.
 - Operations: Phase 4 CRDs, admission, planner RBAC/Deployment/Service,
   ownership ADR, API/state/operations/runbook documentation and this handoff.
-  `go.mod` and `go.sum` did not change. No generated binary was written into the
-  repository.
+  The security remediation updates `go.mod`/`go.sum`; no generated binary was
+  written into the repository.
+
+## Phase 5 qualification outcome (2026-07-21)
+
+**Release classification: Not ready.** Neither `Ready for CPU-only functional
+release` nor `Ready for vendor hardware release` is permitted. The scoped
+CPU-only implementation gates and the remediated vulnerability gate pass, but
+required compatibility/transport/full-agent, API and hardware evidence is
+missing. Hardware qualification was explicitly not run.
+
+### Phase 5 security-remediation evidence (2026-07-21)
+
+- Root cause: explicit K3s replace directives selected `golang.org/x/net`
+  v0.38.0, `x/crypto` v0.36.0 and `x/sys` v0.31.0 despite newer requirements;
+  OTel core/SDK modules were split across 1.37/1.38; the Go 1.24.11 runtime
+  exposed the standard-library findings. These were dependency/toolchain
+  defects, not scheduler policy behavior.
+- Production fix: `go.mod`/`go.sum` now require Go 1.25.12, x/net v0.55.0,
+  x/crypto v0.53.0, x/sys v0.45.0, gRPC-Go v1.79.3 and
+  the OTel 1.40.0 release line. Collector Node host validation performs an
+  IDNA round-trip and rejects ASCII-only Punycode labels.
+- Regression: `go test ./pkg/scheduler/plugins/gpustability -run TestExporterTargetRejectsASCIIOnlyPunycodeHost -count=1` passed (`0.024s`) through production target resolution.
+- Affected unit tests passed for all nine packages; affected race tests passed
+  for all nine packages; integration harness, gofmt, go vet, module verification
+  and tidy-diff passed under official Go 1.25.12.
+- Post-remediation `scripts/space-compute all` under the same toolchain passed
+  unit, race, static, integration, scenarios, fuzz, scale and component builds;
+  the full K3s binary also built successfully (`/tmp/k3s-phase5-go125`, Go
+  1.25.12, SHA-256 `249255e99431cb4710dae57fce2441914b5d29cf70ae6d74f55e0facd10887cb`).
+- Patched govulncheck exited 0 with `No vulnerabilities found` (zero
+  imported-package and one module-only non-reachable OpenPGP advisory was
+  informational). The former 22 reachable findings are closed; this does not
+  close the independent release blockers below.
+
+### Production changes
+
+- Hardened the Iluvatar `ix_*` adapter for deterministic multi-device identity,
+  label/model consistency, duplicate fields, memory arithmetic and bounded
+  devices (`maxDevicesPerNode`, default 256). Added an exact two-GPU fixture.
+- Background collection now targets only Nodes with a mapped positive physical
+  resource or explicit exporter metadata. Multiple Agent endpoints are
+  generation-isolated, duplicate Node endpoint ownership fails closed, and an
+  ordinary or schedulable K3s master consumes no collector slot unless it
+  actually advertises the accelerator/exporter.
+- Added O(1) resource-event coalescing, named rate-limited queues, a 15-retry
+  budget, API-write/queue/retry metrics, and local old-attempt Pod deletion and
+  UID/owner fencing before retry.
+- Bounded mission templates at 64 KiB; strengthened capability, resource
+  summary, provenance and digest validation; added fuzz targets.
+- Split admission into four type-safe policies. Live K3s evidence confirms all
+  observed generations have zero type warnings, forged reporters are rejected,
+  and only the planner SA writes placements.
+- Removed the embedded K3s plugin hook and unsafe administrator-kubeconfig
+  static-Pod example. Hardened production Deployments with fixed non-root
+  UID/GID, RuntimeDefault seccomp, read-only filesystems, dropped capabilities
+  and CPU/memory bounds.
+- Added the opt-in physical Iluvatar suite, 100/1,000/5,000 scale datasets,
+  production-manifest self-installing e2e and all Phase 5 reports.
+- Remediated the 22 reachable govulncheck findings: the K3s module graph now
+  uses `x/net` v0.55.0, `x/crypto` v0.53.0, `x/sys` v0.45.0, gRPC-Go v1.79.3
+  and the OTel 1.40.0
+  line, while `go.mod` pins the official Go 1.25.12 toolchain. Exporter Node
+  host validation rejects ASCII-only Punycode labels through an IDNA round-trip.
+  The production-path regression and the rerun govulncheck both pass.
+
+### Exact final evidence
+
+- `env GOCACHE=/tmp/space-compute-phase5-gocache scripts/space-compute all`:
+  PASS. Unit, race, gofmt/go vet, integration, scenarios, eight fuzz targets,
+  scale and builds all exited 0. Final key times: plugin unit `1.270s`, race
+  `3.667s`; scheduler 5,000-node callbacks `122.117ms` (`24.423us/node`);
+  planner 5,000-domain worst `62.424ms`; collector 5,000 targets `916.426ms`,
+  233.92 MB temporary allocations.
+- Current-tree K3s build: PASS, 1,227,768,176 bytes, SHA-256
+  `484a962e3207132161161c8c089c9d34347aaaa9b755168146e83e1af240e05b`,
+  byte-identical to the verified K3s baseline binary.
+- Final isolated real K3s e2e: PASS, Phase 4 production API/admission/RBAC ->
+  planner -> exporter -> independent scheduler -> Binding `32.00s`; ordinary
+  scheduling/failover `15.28s`; package `47.308s`. Same datastore restart and
+  duplicate install also passed (`46.284s`).
+- Server-side manifest dry-runs and uninstall passed. After custom API removal,
+  ordinary/independent scheduling passed `15.37s`. All four CRDs stored only
+  `v1alpha1`; all admission policies were observed with no warnings. Planner SA
+  can create placements and cannot read Secrets.
+- `go mod verify` and `go mod tidy -diff`: PASS.
+- Security remediation: official Go 1.25.12 `govulncheck` over all affected
+  packages exited 0 with `No vulnerabilities found`; the focused Punycode
+  regression, affected-package unit tests, race tests, integration harness,
+  `go vet`, module verification and tidy-diff all passed under the patched
+  graph.
+- `scripts/space-compute hardware`: two explicit skips because no live metrics,
+  physical K3s/device-plugin cluster, representative Pod or expected device ID.
+- The pre-remediation govulncheck failure (22 reachable findings in Go 1.24.11,
+  x/net v0.38.0 and OTel SDK v1.38.0) is closed by the dependency/toolchain
+  update; no finding was suppressed.
+- Targeted Trivy source secret scans passed. Manifest review retained only
+  intentional system-namespace and scheduler/planner Pod ownership warnings.
+  Repository golangci-lint is incompatible with current Go export data and is
+  recorded as not passed.
+
+### Remaining blockers
+
+Critical blocker is the absence of a shipped, qualified authenticated
+cross-domain transfer/result/fencing agent. High blockers are full-agent
+K3s/kubelet/CNI/CRI, supported patch upgrade/rollback, physical Iluvatar/device-
+plugin execution and PROJECT canonical resource/mission API gaps. Multi-hour
+soak, external chaos and supply-chain image evidence are also missing. See
+`PHASE5_TRACEABILITY.md`, `PHASE5_TEST_REPORT.md`,
+`PHASE5_PERFORMANCE.md`, `PHASE5_SECURITY.md`,
+`PHASE5_COMPATIBILITY.md`, `PHASE5_OPERATIONS.md` and
+`PHASE5_CHAOS.md` and `PHASE5_RISK_REGISTER.md`.
 
 ## Next action
 
-Phase 5 is permitted but not started. Production qualification must add
-full-agent K3s/kubelet/CNI and version-matched vendor device-plugin execution,
-physical exporter/hardware evidence, transfer/result-agent qualification,
-multi-domain disconnect/chaos and planner failover, clock-fault campaigns,
-long-duration soak/retention, scale SLOs, backup/restore/upgrade rollback and an
-independent security/RBAC/audit review. Phase 5 must not move WAN I/O, future
-waiting, retry or transfer state into scheduler callbacks and must not claim
-per-device identity until the allocation linkage is real.
+Phase 5 remains the active release-qualification phase. The Go/dependency
+security baseline is patched and verified. Implement/qualify the cross-domain
+transport and remote execution fence, close the API traceability gaps, and run
+full-agent patch-upgrade plus physical Iluvatar suites. Phase 6 or a production
+release is not permitted until every mandatory gate passes.
 
 ## Handoff template
 

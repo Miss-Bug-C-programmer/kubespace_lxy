@@ -72,11 +72,24 @@ func TestPhase4ManifestsHaveCRDsAdmissionIsolationAndLeastPrivilege(t *testing.T
 				}
 			}
 		}
-		if name == "phase4-admission.yaml" && (!strings.Contains(text, "failurePolicy: Fail") || !strings.Contains(text, "request.userInfo.username")) {
-			t.Fatal("admission policy does not fail closed on reporter identity")
+		if name == "phase4-admission.yaml" {
+			for _, required := range []string{
+				"failurePolicy: Fail",
+				"request.userInfo.username",
+				"object.spec.provenance.sequence > oldObject.spec.provenance.sequence",
+				"system:serviceaccount:kube-system:space-compute-mission-planner",
+				"resources: [spacemissions]",
+				"resources: [spacelinksnapshots]",
+				"resources: [spacedomainresourcesummaries]",
+				"resources: [spaceplacementintents]",
+			} {
+				if !strings.Contains(text, required) {
+					t.Fatalf("admission policy missing %q", required)
+				}
+			}
 		}
 		if name == "mission-planner.yaml" {
-			if strings.Contains(text, "resources: [secrets]") || !strings.Contains(text, "resourceNames: [space-compute-mission-planner]") || !strings.Contains(text, "replicas: 2") {
+			if strings.Contains(text, "resources: [secrets]") || !strings.Contains(text, "resourceNames: [space-compute-mission-planner]") || !strings.Contains(text, "replicas: 2") || !strings.Contains(text, "verbs: [get, list, watch, create, delete]") {
 				t.Fatal("planner RBAC/deployment isolation regression")
 			}
 		}

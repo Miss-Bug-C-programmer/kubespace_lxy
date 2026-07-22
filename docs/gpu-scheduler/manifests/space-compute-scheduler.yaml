@@ -132,6 +132,7 @@ data:
             maxMetricFamilies: 10000
             maxSamples: 100000
             maxLabelsPerSample: 64
+            maxDevicesPerNode: 256
             allowInsecureHTTP: false
             allowExternalIP: false
             caFile: /etc/space-compute-exporter-tls/ca.crt
@@ -195,6 +196,8 @@ spec:
     spec:
       serviceAccountName: space-compute-scheduler
       priorityClassName: system-cluster-critical
+      securityContext:
+        seccompProfile: {type: RuntimeDefault}
       containers:
       - name: scheduler
         # Build and publish this repository's version-pinned binary before use.
@@ -211,11 +214,13 @@ spec:
           initialDelaySeconds: 10
         resources:
           requests: {cpu: 100m, memory: 128Mi}
-          limits: {memory: 1Gi}
+          limits: {cpu: "1", memory: 1Gi}
         securityContext:
           allowPrivilegeEscalation: false
           readOnlyRootFilesystem: true
           runAsNonRoot: true
+          runAsUser: 65532
+          runAsGroup: 65532
           capabilities: {drop: [ALL]}
         volumeMounts:
         - {name: config, mountPath: /etc/space-compute, readOnly: true}

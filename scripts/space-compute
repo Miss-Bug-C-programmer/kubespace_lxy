@@ -48,8 +48,10 @@ run_cluster_e2e() {
 
 run_scale() {
 	go test ./pkg/scheduler/plugins/gpustability -run '^TestCollectorScaleBoundsAndLifecycle$' -count=1
+	go test ./contrib/space-compute/pkg/planner -run '^TestPlannerScaleDeterminismAndLatencyBudget$' -count=1
 	go test ./pkg/scheduler/plugins/gpustability -run '^$' -bench '^BenchmarkCollectorTargetDatasets$' -benchtime=1x -benchmem -count=1
 	go test ./pkg/scheduler/plugins/gpustability -run '^$' -bench '^BenchmarkSchedulerCallbacks$' -benchtime=1x -benchmem -count=1
+	go test ./contrib/space-compute/pkg/planner -run '^$' -bench '^BenchmarkMissionPlanningDatasets$' -benchtime=1x -benchmem -count=1
 }
 
 run_fuzz() {
@@ -58,6 +60,8 @@ run_fuzz() {
 	go test ./pkg/scheduler/plugins/gpustability -run '^$' -fuzz '^FuzzWorkloadIntent$' -fuzztime=5s
 	go test ./contrib/space-compute/pkg/apis/v1alpha1 -run '^$' -fuzz '^FuzzLinkSnapshotValidation$' -fuzztime=5s
 	go test ./contrib/space-compute/pkg/apis/v1alpha1 -run '^$' -fuzz '^FuzzMissionValidation$' -fuzztime=5s
+	go test ./contrib/space-compute/pkg/apis/v1alpha1 -run '^$' -fuzz '^FuzzResourceSummaryValidation$' -fuzztime=5s
+	go test ./contrib/space-compute/pkg/apis/v1alpha1 -run '^$' -fuzz '^FuzzPlacementValidation$' -fuzztime=5s
 	go test ./contrib/space-compute/pkg/policy -run '^$' -fuzz '^FuzzPodMissionProjection$' -fuzztime=5s
 }
 
@@ -68,6 +72,7 @@ run_scenarios() {
 
 run_hardware() {
 	go test ./pkg/scheduler/plugins/gpustability -run '^TestParseMetricsFromFile$' -count=1 -v
+	go test ./tests/integration/spacecomputescheduler -run '^TestIluvatarPhysicalAllocationAndWorkload$' -count=1 -v
 }
 
 case "${1:-all}" in
@@ -108,7 +113,7 @@ case "${1:-all}" in
 		run_integration
 		run_scenarios
 		run_fuzz
-		run_hardware
+		run_scale
 		run_build
 		;;
 	*)

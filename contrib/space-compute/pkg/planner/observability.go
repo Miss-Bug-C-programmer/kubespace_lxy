@@ -17,13 +17,16 @@ var (
 	plannerSnapshotAge   = metrics.NewHistogram(&metrics.HistogramOpts{Subsystem: "space_compute_planner", Name: "snapshot_age_seconds", Help: "Age of resource/link snapshots read by planning.", StabilityLevel: metrics.ALPHA, Buckets: metrics.ExponentialBuckets(1, 2, 18)})
 	linkRiskDecisions    = metrics.NewCounterVec(&metrics.CounterOpts{Subsystem: "space_compute_planner", Name: "link_risk_decisions_total", Help: "Selected plans by bounded link-risk class.", StabilityLevel: metrics.ALPHA}, []string{"class"})
 	reconciliationErrors = metrics.NewCounterVec(&metrics.CounterOpts{Subsystem: "space_compute_planner", Name: "reconciliation_errors_total", Help: "Planner reconciliation errors by bounded stage.", StabilityLevel: metrics.ALPHA}, []string{"stage"})
+	controllerQueueDepth = metrics.NewGaugeVec(&metrics.GaugeOpts{Subsystem: "space_compute_planner", Name: "queue_depth", Help: "Current controller work queue depth by bounded queue.", StabilityLevel: metrics.ALPHA}, []string{"queue"})
+	retryExhausted       = metrics.NewCounterVec(&metrics.CounterOpts{Subsystem: "space_compute_planner", Name: "retry_exhausted_total", Help: "Controller items dropped after the bounded retry budget.", StabilityLevel: metrics.ALPHA}, []string{"queue"})
+	apiWrites            = metrics.NewCounterVec(&metrics.CounterOpts{Subsystem: "space_compute_planner", Name: "api_writes_total", Help: "Controller API writes by bounded resource, operation, and result.", StabilityLevel: metrics.ALPHA}, []string{"resource", "operation", "result"})
 )
 
 type PrometheusObserver struct{}
 
 func NewPrometheusObserver() PrometheusObserver {
 	registerMetrics.Do(func() {
-		legacyregistry.MustRegister(planningLatency, planningActive, replans, deadlineSlack, plannerSnapshotAge, linkRiskDecisions, reconciliationErrors)
+		legacyregistry.MustRegister(planningLatency, planningActive, replans, deadlineSlack, plannerSnapshotAge, linkRiskDecisions, reconciliationErrors, controllerQueueDepth, retryExhausted, apiWrites)
 	})
 	return PrometheusObserver{}
 }
@@ -53,6 +56,43 @@ func (PrometheusObserver) LinkRisk(class string) {
 		class = "unknown"
 	}
 	linkRiskDecisions.WithLabelValues(class).Inc()
+}
+func (PrometheusObserver) QueueDepth(queue string, depth int) {
+	controllerQueueDepth.WithLabelValues(boundedQueue(queue)).Set(float64(depth))
+}
+func (PrometheusObserver) RetryExhausted(queue string) {
+	retryExhausted.WithLabelValues(boundedQueue(queue)).Inc()
+}
+func (PrometheusObserver) APIWrite(resource, operation, result string) {
+	apiWrites.WithLabelValues(boundedResource(resource), boundedOperation(operation), boundedWriteResult(result)).Inc()
+}
+func boundedQueue(value string) string {
+	if value == "missions" || value == "resources" {
+		return value
+	}
+	return "other"
+}
+func boundedResource(value string) string {
+	switch value {
+	case "mission", "placement", "pod", "node", "link", "resource_summary":
+		return value
+	default:
+		return "other"
+	}
+}
+func boundedOperation(value string) string {
+	switch value {
+	case "create", "update", "delete", "status":
+		return value
+	default:
+		return "other"
+	}
+}
+func boundedWriteResult(value string) string {
+	if value == "success" || value == "error" || value == "conflict" {
+		return value
+	}
+	return "other"
 }
 func boundedResult(value string) string {
 	switch value {

@@ -91,6 +91,33 @@ func TestStrictPhysicalCoverageDoesNotClaimUnlinkedDeviceEnforcement(t *testing.
 	}
 }
 
+func TestDRAClaimRemainsOwnedByUpstreamDynamicResources(t *testing.T) {
+	plugin := newTestPlugin(t, iluvatarMetrics)
+	claimName := "vendor-device"
+	pod := &v1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "dra-only"},
+		Spec: v1.PodSpec{
+			ResourceClaims: []v1.PodResourceClaim{{Name: "accelerator", ResourceClaimName: &claimName}},
+			Containers:     []v1.Container{{Name: "workload"}},
+		},
+	}
+	requirement, err := plugin.schedulingRequirement(pod)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if requirement.Required || requirement.Observational || len(requirement.Resources) != 0 {
+		t.Fatalf("DRA-only Pod was claimed by telemetry policy: %+v", requirement)
+	}
+	state := framework.NewCycleState()
+	if _, status := plugin.PreFilter(context.Background(), state, pod); status.Code() != framework.Skip {
+		t.Fatalf("DRA-only Pod status=%v, want Skip", status)
+	}
+	stored, status := workloadFromState(state)
+	if !status.IsSuccess() || stored.Required {
+		t.Fatalf("DRA-only stored state=%+v status=%v", stored, status)
+	}
+}
+
 func TestSnapshotPublicationPreciselyActivatesBlockedPods(t *testing.T) {
 	cfg := testConfig(t)
 	handle := &recordingActivationHandle{}

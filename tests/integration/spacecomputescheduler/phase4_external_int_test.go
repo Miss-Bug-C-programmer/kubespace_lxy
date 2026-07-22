@@ -3,6 +3,8 @@ package spacecomputescheduler
 import (
 	"bytes"
 	"context"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -15,6 +17,7 @@ import (
 
 	spacev1 "github.com/k3s-io/k3s/contrib/space-compute/pkg/apis/v1alpha1"
 	spacekube "github.com/k3s-io/k3s/contrib/space-compute/pkg/kube"
+	authenticationv1 "k8s.io/api/authentication/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -22,9 +25,12 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/util/yaml"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
+	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 	"k8s.io/client-go/util/retry"
 )
 
@@ -56,6 +62,8 @@ func TestPhase4PlannerToIndependentSchedulerAgainstK3s(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	installPhase4ControlPlaneAPIs(t, ctx, dynamicClient)
+	plannerKubeconfig := plannerServiceAccountKubeconfig(t, ctx, client, config)
 	cleanupPhase4Objects(t, context.Background(), client, dynamicClient)
 	defer cleanupPhase4Objects(t, context.Background(), client, dynamicClient)
 
@@ -93,7 +101,7 @@ func TestPhase4PlannerToIndependentSchedulerAgainstK3s(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	planner := startPlanner(t, plannerBinary, kubeconfig)
+	planner := startPlanner(t, plannerBinary, plannerKubeconfig)
 	defer planner.stop(t)
 	now := time.Now().UTC().Truncate(time.Second)
 	createPhase4Resource(t, ctx, dynamicClient, spacekube.LinkGVR, "", phase4Link(now))
@@ -114,6 +122,159 @@ func TestPhase4PlannerToIndependentSchedulerAgainstK3s(t *testing.T) {
 	waitForNodeBinding(t, ctx, client, "ordinary-phase4-control", testNode)
 	completePhase4Pod(t, ctx, client)
 	waitForPhase4Completion(t, ctx, dynamicClient)
+}
+
+func installPhase4ControlPlaneAPIs(t *testing.T, ctx context.Context, client dynamic.Interface) {
+	t.Helper()
+	root := filepath.Join("..", "..", "..", "docs", "space-compute", "manifests")
+	applyPhase4Manifest(t, ctx, client, filepath.Join(root, "phase4-crds.yaml"), false)
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		ready := true
+		for _, gvr := range []schema.GroupVersionResource{spacekube.LinkGVR, spacekube.ResourceSummaryGVR, spacekube.MissionGVR, spacekube.PlacementGVR} {
+			if _, err := client.Resource(gvr).List(ctx, metav1.ListOptions{Limit: 1}); err != nil {
+				ready = false
+				break
+			}
+		}
+		if ready {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	applyPhase4Manifest(t, ctx, client, filepath.Join(root, "mission-planner.yaml"), true)
+	applyPhase4Manifest(t, ctx, client, filepath.Join(root, "phase4-admission.yaml"), false)
+	waitForPhase4AdmissionPolicies(t, ctx, client)
+	forged := phase4Link(time.Now().UTC())
+	forged.Name = "phase4-forged-reporter"
+	forged.Spec.Provenance.ReporterID = "forged-reporter"
+	object, err := runtime.DefaultUnstructuredConverter.ToUnstructured(forged)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Resource(spacekube.LinkGVR).Create(ctx, &unstructured.Unstructured{Object: object}, metav1.CreateOptions{}); err == nil {
+		_ = client.Resource(spacekube.LinkGVR).Delete(ctx, forged.Name, metav1.DeleteOptions{})
+		t.Fatal("production admission accepted forged link reporter identity")
+	}
+}
+
+func waitForPhase4AdmissionPolicies(t *testing.T, ctx context.Context, client dynamic.Interface) {
+	t.Helper()
+	gvr := schema.GroupVersionResource{Group: "admissionregistration.k8s.io", Version: "v1", Resource: "validatingadmissionpolicies"}
+	names := []string{"space-compute-phase4-intent", "space-compute-phase4-link-ingest", "space-compute-phase4-resource-ingest", "space-compute-phase4-placement-owner"}
+	deadline := time.Now().Add(30 * time.Second)
+	var pending string
+	for time.Now().Before(deadline) {
+		ready := true
+		for _, name := range names {
+			policy, err := client.Resource(gvr).Get(ctx, name, metav1.GetOptions{})
+			if err != nil {
+				pending = fmt.Sprintf("%s: %v", name, err)
+				ready = false
+				break
+			}
+			observed, _, _ := unstructured.NestedInt64(policy.Object, "status", "observedGeneration")
+			warnings, found, _ := unstructured.NestedSlice(policy.Object, "status", "typeChecking", "expressionWarnings")
+			if observed < policy.GetGeneration() || (found && len(warnings) != 0) {
+				pending = fmt.Sprintf("%s generation=%d observed=%d warnings=%v", name, policy.GetGeneration(), observed, warnings)
+				ready = false
+				break
+			}
+		}
+		if ready {
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	t.Fatalf("Phase 4 admission policies did not become type-safe and active: %s", pending)
+}
+
+func applyPhase4Manifest(t *testing.T, ctx context.Context, client dynamic.Interface, path string, skipWorkloads bool) {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoder := yaml.NewYAMLOrJSONDecoder(bytes.NewReader(raw), 4096)
+	for {
+		object := &unstructured.Unstructured{}
+		if err := decoder.Decode(object); err != nil {
+			if err == io.EOF {
+				return
+			}
+			t.Fatalf("decode %s: %v", path, err)
+		}
+		if object.GetKind() == "" || (skipWorkloads && (object.GetKind() == "Deployment" || object.GetKind() == "Service")) {
+			continue
+		}
+		gvr, namespaced := phase4ManifestGVR(t, object)
+		resource := client.Resource(gvr)
+		var resourceClient dynamic.ResourceInterface = resource
+		if namespaced {
+			resourceClient = resource.Namespace(object.GetNamespace())
+		}
+		existing, getErr := resourceClient.Get(ctx, object.GetName(), metav1.GetOptions{})
+		switch {
+		case apierrors.IsNotFound(getErr):
+			if _, err := resourceClient.Create(ctx, object, metav1.CreateOptions{}); err != nil {
+				t.Fatalf("create %s %s: %v", object.GetKind(), object.GetName(), err)
+			}
+		case getErr != nil:
+			t.Fatalf("get %s %s: %v", object.GetKind(), object.GetName(), getErr)
+		default:
+			object.SetResourceVersion(existing.GetResourceVersion())
+			if _, err := resourceClient.Update(ctx, object, metav1.UpdateOptions{}); err != nil {
+				t.Fatalf("update %s %s: %v", object.GetKind(), object.GetName(), err)
+			}
+		}
+	}
+}
+
+func phase4ManifestGVR(t *testing.T, object *unstructured.Unstructured) (schema.GroupVersionResource, bool) {
+	t.Helper()
+	key := object.GetAPIVersion() + "/" + object.GetKind()
+	type manifestResource struct {
+		gvr        schema.GroupVersionResource
+		namespaced bool
+	}
+	resources := map[string]manifestResource{
+		"apiextensions.k8s.io/v1/CustomResourceDefinition":                 {gvr: schema.GroupVersionResource{Group: "apiextensions.k8s.io", Version: "v1", Resource: "customresourcedefinitions"}},
+		"admissionregistration.k8s.io/v1/ValidatingAdmissionPolicy":        {gvr: schema.GroupVersionResource{Group: "admissionregistration.k8s.io", Version: "v1", Resource: "validatingadmissionpolicies"}},
+		"admissionregistration.k8s.io/v1/ValidatingAdmissionPolicyBinding": {gvr: schema.GroupVersionResource{Group: "admissionregistration.k8s.io", Version: "v1", Resource: "validatingadmissionpolicybindings"}},
+		"v1/ServiceAccount":                               {gvr: schema.GroupVersionResource{Version: "v1", Resource: "serviceaccounts"}, namespaced: true},
+		"rbac.authorization.k8s.io/v1/ClusterRole":        {gvr: schema.GroupVersionResource{Group: "rbac.authorization.k8s.io", Version: "v1", Resource: "clusterroles"}},
+		"rbac.authorization.k8s.io/v1/ClusterRoleBinding": {gvr: schema.GroupVersionResource{Group: "rbac.authorization.k8s.io", Version: "v1", Resource: "clusterrolebindings"}},
+		"rbac.authorization.k8s.io/v1/Role":               {gvr: schema.GroupVersionResource{Group: "rbac.authorization.k8s.io", Version: "v1", Resource: "roles"}, namespaced: true},
+		"rbac.authorization.k8s.io/v1/RoleBinding":        {gvr: schema.GroupVersionResource{Group: "rbac.authorization.k8s.io", Version: "v1", Resource: "rolebindings"}, namespaced: true},
+	}
+	resource, ok := resources[key]
+	if !ok {
+		t.Fatalf("unsupported Phase 4 manifest object %s", key)
+	}
+	return resource.gvr, resource.namespaced
+}
+
+func plannerServiceAccountKubeconfig(t *testing.T, ctx context.Context, client kubernetes.Interface, config *rest.Config) string {
+	t.Helper()
+	token, err := client.CoreV1().ServiceAccounts("kube-system").CreateToken(ctx, "space-compute-mission-planner", &authenticationv1.TokenRequest{}, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	kubeconfig := clientcmdapi.Config{
+		Clusters:       map[string]*clientcmdapi.Cluster{"cluster": {Server: config.Host, CertificateAuthorityData: config.CAData, InsecureSkipTLSVerify: config.Insecure}},
+		AuthInfos:      map[string]*clientcmdapi.AuthInfo{"planner": {Token: token.Status.Token}},
+		Contexts:       map[string]*clientcmdapi.Context{"planner": {Cluster: "cluster", AuthInfo: "planner", Namespace: "kube-system"}},
+		CurrentContext: "planner",
+	}
+	raw, err := clientcmd.Write(kubeconfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "planner.kubeconfig")
+	if err := os.WriteFile(path, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	return path
 }
 
 type plannerProcess struct {

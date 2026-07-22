@@ -18,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/net/idna"
 	v1 "k8s.io/api/core/v1"
 	utilvalidation "k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/client-go/tools/cache"
@@ -227,6 +228,14 @@ func (c *collector) observeNode(node *v1.Node) {
 	if node == nil {
 		return
 	}
+	// Background collection is limited to Nodes that advertise a configured
+	// physical resource or explicit exporter metadata. This keeps ordinary
+	// agents and control-plane Nodes out of the scrape/cache budget. An
+	// annotation-only workload can still resolve a target on demand.
+	if !c.isBackgroundTarget(node) {
+		c.deleteNode(identityForNode(node))
+		return
+	}
 	target, changed, err := c.ensureTarget(node)
 	if err != nil {
 		c.recordTargetError(node.Name, err)
@@ -235,6 +244,26 @@ func (c *collector) observeNode(node *v1.Node) {
 	if changed || c.store.lookup(target, c.now()).State != snapshotFresh {
 		c.enqueue(target)
 	}
+}
+
+func (c *collector) isBackgroundTarget(node *v1.Node) bool {
+	if node == nil {
+		return false
+	}
+	for resourceName := range c.config.ResourceMappings {
+		if quantity, ok := node.Status.Allocatable[resourceName]; ok && quantity.Sign() > 0 {
+			return true
+		}
+		if quantity, ok := node.Status.Capacity[resourceName]; ok && quantity.Sign() > 0 {
+			return true
+		}
+	}
+	for _, key := range []string{AnnotationExporterPort, AnnotationExporterPath, AnnotationExporterScheme, AnnotationExporterProfile} {
+		if strings.TrimSpace(node.Annotations[key]) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *collector) deleteNode(identity nodeIdentity) {
@@ -539,7 +568,7 @@ func (c *collector) collectTarget(ctx context.Context, target scrapeTarget) erro
 	parseStart := time.Now()
 	metrics, err := c.registry.parseVersion(strings.NewReader(string(raw)), target.Profile, target.ProfileVersion, parserLimits{
 		MaxMetricFamilies: c.config.MaxMetricFamilies, MaxSamples: c.config.MaxSamples,
-		MaxLabelsPerSample: c.config.MaxLabelsPerSample,
+		MaxLabelsPerSample: c.config.MaxLabelsPerSample, MaxDevices: c.config.MaxDevicesPerNode,
 	})
 	observeParse(time.Since(parseStart), err)
 	if err != nil {
@@ -653,7 +682,7 @@ func (c *collector) pruneLocked(protectedNode string) {
 		}
 		return candidates[i].time.Before(candidates[j].time)
 	})
-	remove := len(candidates) - c.config.CacheMaxEntries
+	remove := len(c.targets) - c.config.CacheMaxEntries
 	for _, item := range candidates[:remove] {
 		target := c.targets[item.name]
 		if cancel := c.active[target.Key]; cancel != nil {
@@ -689,6 +718,12 @@ func (c *collector) ensureTarget(node *v1.Node) (scrapeTarget, bool, error) {
 		c.mu.Unlock()
 		c.store.updateResources(old, resources)
 		return old, false, nil
+	}
+	for otherName, target := range c.targets {
+		if otherName != node.Name && target.Endpoint == resolved.Endpoint {
+			c.mu.Unlock()
+			return scrapeTarget{}, false, fmt.Errorf("node %q exporter endpoint conflicts with node %q", node.Name, otherName)
+		}
 	}
 	c.nextGeneration++
 	resolved.Generation = c.nextGeneration
@@ -859,10 +894,34 @@ func validateNodeHost(host string) error {
 	if net.ParseIP(host) != nil {
 		return nil
 	}
+	ascii, err := idna.Lookup.ToASCII(host)
+	if err != nil {
+		return fmt.Errorf("invalid IDNA hostname: %w", err)
+	}
+	// A DNS-1123 hostname may contain an ASCII Punycode label, but an
+	// ASCII-only decoded label is never a valid IDNA representation. The
+	// explicit round-trip check keeps old x/net versions from accepting
+	// labels such as xn--example-, which were previously normalized to an
+	// unrelated ASCII hostname and could bypass host policy checks.
+	if strings.Contains(strings.ToLower(host), "xn--") {
+		unicode, err := idna.Lookup.ToUnicode(ascii)
+		if err != nil || isASCIIOnly(unicode) {
+			return fmt.Errorf("invalid Punycode hostname")
+		}
+	}
 	if errs := utilvalidation.IsDNS1123Subdomain(host); len(errs) == 0 {
 		return nil
 	}
 	return fmt.Errorf("must be an IP address or DNS-1123 name")
+}
+
+func isASCIIOnly(value string) bool {
+	for _, r := range value {
+		if r > 0x7f {
+			return false
+		}
+	}
+	return true
 }
 
 func resourceContextForNode(node *v1.Node, mappings map[v1.ResourceName]resourceMapping) nodeResourceContext {

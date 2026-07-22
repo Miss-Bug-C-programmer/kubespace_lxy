@@ -13,6 +13,7 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apiMeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -43,6 +44,8 @@ import (
 )
 
 const componentName = "space-compute-mission-planner"
+
+const maxControllerRetries = 15
 
 type options struct {
 	kubeconfig, master, metricsAddress, leaderNamespace, leaderName string
@@ -122,26 +125,20 @@ func runControllers(ctx context.Context, dynamicClient dynamic.Interface, client
 	resources := factory.ForResource(spacekube.ResourceSummaryGVR).Informer()
 	coreFactory := informers.NewSharedInformerFactory(client, 10*time.Minute)
 	pods := coreFactory.Core().V1().Pods().Informer()
-	queue := workqueue.NewRateLimitingQueue(workqueue.DefaultControllerRateLimiter())
+	queue := workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "space_compute_missions")
+	resourceQueue := workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "space_compute_resources")
 	defer queue.ShutDown()
-	resourceDirty := make(chan struct{}, 1)
+	defer resourceQueue.ShutDown()
 	enqueueMission := func(object interface{}) {
 		if key, err := cache.DeletionHandlingMetaNamespaceKeyFunc(object); err == nil {
 			queue.Add(key)
 		}
 	}
-	enqueueAll := func() {
-		for _, object := range missions.GetStore().List() {
-			enqueueMission(object)
-		}
-		select {
-		case resourceDirty <- struct{}{}:
-		default:
-		}
-	}
 	_, _ = missions.AddEventHandler(cache.ResourceEventHandlerFuncs{AddFunc: enqueueMission, UpdateFunc: func(_, value interface{}) { enqueueMission(value) }, DeleteFunc: enqueueMission})
 	_, _ = placements.AddEventHandler(cache.ResourceEventHandlerFuncs{AddFunc: func(value interface{}) { enqueuePlacementMission(value, queue) }, UpdateFunc: func(_, value interface{}) { enqueuePlacementMission(value, queue) }, DeleteFunc: func(value interface{}) { enqueuePlacementMission(value, queue) }})
-	resourceHandler := cache.ResourceEventHandlerFuncs{AddFunc: func(interface{}) { enqueueAll() }, UpdateFunc: func(_, _ interface{}) { enqueueAll() }, DeleteFunc: func(interface{}) { enqueueAll() }}
+	// Informer callbacks remain O(1). The resource worker validates/projects the
+	// coalesced update first and only then requeues affected mission planning.
+	resourceHandler := cache.ResourceEventHandlerFuncs{AddFunc: func(interface{}) { resourceQueue.Add("resources") }, UpdateFunc: func(_, _ interface{}) { resourceQueue.Add("resources") }, DeleteFunc: func(interface{}) { resourceQueue.Add("resources") }}
 	_, _ = links.AddEventHandler(resourceHandler)
 	_, _ = resources.AddEventHandler(resourceHandler)
 	_, _ = pods.AddEventHandler(cache.ResourceEventHandlerFuncs{AddFunc: func(value interface{}) { enqueuePodMission(value, queue) }, UpdateFunc: func(_, value interface{}) { enqueuePodMission(value, queue) }, DeleteFunc: func(value interface{}) { enqueuePodMission(value, queue) }})
@@ -150,26 +147,18 @@ func runControllers(ctx context.Context, dynamicClient dynamic.Interface, client
 	if !cache.WaitForCacheSync(ctx.Done(), missions.HasSynced, placements.HasSynced, links.HasSynced, resources.HasSynced, pods.HasSynced) {
 		return fmt.Errorf("CRD informer cache synchronization failed")
 	}
-	repository := &spacekube.Repository{Dynamic: dynamicClient, Recorder: recorder}
-	plannerController := &spaceplanner.Controller{Repository: repository, Clock: spacev1.RealClock{}, Observer: spaceplanner.NewPrometheusObserver()}
+	observer := spaceplanner.NewPrometheusObserver()
+	repository := &spacekube.Repository{Dynamic: dynamicClient, Recorder: recorder, Observer: observer}
+	plannerController := &spaceplanner.Controller{Repository: repository, Clock: spacev1.RealClock{}, Observer: observer}
 	workloadController := &spaceworkload.Controller{Store: &spacekube.WorkloadStore{Client: client, Repository: repository, Recorder: recorder}, Clock: spacev1.RealClock{}}
-	resourceController := &resourceController{dynamic: dynamicClient, client: client, recorder: recorder, clock: spacev1.RealClock{}}
+	resourceController := &resourceController{dynamic: dynamicClient, client: client, recorder: recorder, clock: spacev1.RealClock{}, observer: observer}
 	go wait.UntilWithContext(ctx, func(ctx context.Context) {
-		select {
-		case <-resourceDirty:
-			if err := resourceController.Reconcile(ctx); err != nil {
-				klog.ErrorS(err, "resource projection reconciliation failed")
-			}
-		case <-ctx.Done():
-		}
+		processResources(ctx, resourceQueue, queue, missions.GetStore(), resourceController, observer)
 	}, time.Second)
-	select {
-	case resourceDirty <- struct{}{}:
-	default:
-	}
+	resourceQueue.Add("resources")
 	for i := 0; i < workers; i++ {
 		go wait.UntilWithContext(ctx, func(ctx context.Context) {
-			processMission(ctx, queue, repository, plannerController, workloadController)
+			processMission(ctx, queue, repository, plannerController, workloadController, observer)
 		}, time.Second)
 	}
 	ready.Store(true)
@@ -178,12 +167,13 @@ func runControllers(ctx context.Context, dynamicClient dynamic.Interface, client
 	return nil
 }
 
-func processMission(ctx context.Context, queue workqueue.RateLimitingInterface, repository *spacekube.Repository, plannerController *spaceplanner.Controller, workloadController *spaceworkload.Controller) {
+func processMission(ctx context.Context, queue workqueue.RateLimitingInterface, repository *spacekube.Repository, plannerController *spaceplanner.Controller, workloadController *spaceworkload.Controller, observer spaceplanner.PrometheusObserver) {
 	item, shutdown := queue.Get()
 	if shutdown {
 		return
 	}
 	defer queue.Done(item)
+	defer observer.QueueDepth("missions", queue.Len())
 	key, ok := item.(string)
 	if !ok {
 		queue.Forget(item)
@@ -196,14 +186,14 @@ func processMission(ctx context.Context, queue workqueue.RateLimitingInterface, 
 	}
 	result, err := plannerController.Reconcile(ctx, spaceplanner.MissionKey{Namespace: namespace, Name: name})
 	if err != nil {
-		queue.AddRateLimited(item)
+		retryControllerItem(queue, item, "missions", err, observer)
 		return
 	}
 	mission, missionErr := repository.GetMission(ctx, spaceplanner.MissionKey{Namespace: namespace, Name: name})
 	placement, placementErr := repository.GetPlacement(ctx, spaceplanner.MissionKey{Namespace: namespace, Name: name})
 	if missionErr == nil && placementErr == nil {
 		if delay, dispatchErr := workloadController.ReconcileDispatch(ctx, mission, placement, mission.Spec.WorkloadTemplate); dispatchErr != nil {
-			queue.AddRateLimited(item)
+			retryControllerItem(queue, item, "missions", dispatchErr, observer)
 			return
 		} else if delay > 0 && (result.RequeueAfter == 0 || delay < result.RequeueAfter) {
 			result.RequeueAfter = delay
@@ -212,7 +202,7 @@ func processMission(ctx context.Context, queue workqueue.RateLimitingInterface, 
 		if placement != nil && placement.Status.ActivePod != nil && placement.Status.ActivePod.Name != "" {
 			if pod, podErr := workloadController.Store.(*spacekube.WorkloadStore).Client.CoreV1().Pods(placement.Status.ActivePod.Namespace).Get(ctx, placement.Status.ActivePod.Name, metav1.GetOptions{}); podErr == nil {
 				if _, observeErr := workloadController.ReconcilePodStatus(ctx, mission, placement, pod); observeErr != nil {
-					queue.AddRateLimited(item)
+					retryControllerItem(queue, item, "missions", observeErr, observer)
 					return
 				}
 			}
@@ -224,11 +214,43 @@ func processMission(ctx context.Context, queue workqueue.RateLimitingInterface, 
 	}
 }
 
+func processResources(ctx context.Context, resourceQueue, missionQueue workqueue.RateLimitingInterface, missions cache.Store, controller *resourceController, observer spaceplanner.PrometheusObserver) {
+	item, shutdown := resourceQueue.Get()
+	if shutdown {
+		return
+	}
+	defer resourceQueue.Done(item)
+	defer observer.QueueDepth("resources", resourceQueue.Len())
+	if err := controller.Reconcile(ctx); err != nil {
+		retryControllerItem(resourceQueue, item, "resources", err, observer)
+		return
+	}
+	resourceQueue.Forget(item)
+	for _, object := range missions.List() {
+		if key, err := cache.DeletionHandlingMetaNamespaceKeyFunc(object); err == nil {
+			missionQueue.Add(key)
+		}
+	}
+	observer.QueueDepth("missions", missionQueue.Len())
+}
+
+func retryControllerItem(queue workqueue.RateLimitingInterface, item interface{}, queueName string, err error, observer spaceplanner.PrometheusObserver) {
+	if queue.NumRequeues(item) < maxControllerRetries {
+		queue.AddRateLimited(item)
+		observer.QueueDepth(queueName, queue.Len())
+		return
+	}
+	queue.Forget(item)
+	observer.RetryExhausted(queueName)
+	klog.ErrorS(err, "controller retry budget exhausted", "queue", queueName, "retries", maxControllerRetries)
+}
+
 type resourceController struct {
 	dynamic  dynamic.Interface
 	client   kubernetes.Interface
 	recorder record.EventRecorder
 	clock    spacev1.Clock
+	observer spaceplanner.PrometheusObserver
 }
 
 func (c *resourceController) Reconcile(ctx context.Context) error {
@@ -246,7 +268,10 @@ func (c *resourceController) Reconcile(ctx context.Context) error {
 		if !reflect.DeepEqual(status, value.Status) {
 			linkList.Items[i].Object["status"], _ = runtime.DefaultUnstructuredConverter.ToUnstructured(&status)
 			if _, err := c.dynamic.Resource(spacekube.LinkGVR).UpdateStatus(ctx, &linkList.Items[i], metav1.UpdateOptions{}); err != nil {
+				c.observer.APIWrite("link", "status", writeResult(err))
 				return err
+			} else {
+				c.observer.APIWrite("link", "status", "success")
 			}
 		}
 		if validationErr != nil {
@@ -282,7 +307,10 @@ func (c *resourceController) Reconcile(ctx context.Context) error {
 		if !reflect.DeepEqual(status, summary.Status) {
 			resourceList.Items[i].Object["status"], _ = runtime.DefaultUnstructuredConverter.ToUnstructured(&status)
 			if _, err := c.dynamic.Resource(spacekube.ResourceSummaryGVR).UpdateStatus(ctx, &resourceList.Items[i], metav1.UpdateOptions{}); err != nil {
+				c.observer.APIWrite("resource_summary", "status", writeResult(err))
 				return err
+			} else {
+				c.observer.APIWrite("resource_summary", "status", "success")
 			}
 		}
 		if validationErr == nil {
@@ -318,6 +346,7 @@ func (c *resourceController) projectDomainNodes(ctx context.Context, summary *sp
 				return err
 			}
 			_, err = c.client.CoreV1().Nodes().Update(ctx, projected, metav1.UpdateOptions{})
+			c.observer.APIWrite("node", "update", writeResult(err))
 			return err
 		})
 		if err != nil {
@@ -325,6 +354,16 @@ func (c *resourceController) projectDomainNodes(ctx context.Context, summary *sp
 		}
 	}
 	return nil
+}
+
+func writeResult(err error) string {
+	if apierrors.IsConflict(err) {
+		return "conflict"
+	}
+	if err != nil {
+		return "error"
+	}
+	return "success"
 }
 
 func enqueuePlacementMission(value interface{}, queue workqueue.RateLimitingInterface) {

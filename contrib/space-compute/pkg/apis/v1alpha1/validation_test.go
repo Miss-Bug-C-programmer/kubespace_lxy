@@ -8,6 +8,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 )
 
 type fakeClock struct{ now time.Time }
@@ -76,6 +77,43 @@ func FuzzMissionValidation(f *testing.F) {
 	})
 }
 
+func FuzzResourceSummaryValidation(f *testing.F) {
+	now := time.Date(2026, 7, 21, 0, 0, 0, 0, time.UTC)
+	seed := SpaceDomainResourceSummary{Spec: SpaceDomainResourceSummarySpec{
+		Domain: DomainReference{Name: "leo-a", ClusterID: "leo-cluster", OrbitClass: OrbitLEO}, ObservedAt: metav1.NewTime(now), ValidUntil: metav1.NewTime(now.Add(time.Hour)),
+		Provenance: Provenance{ReporterID: "reporter", Source: "exporter", Digest: strings.Repeat("a", 64), Sequence: 1}, Devices: []DeviceCapacity{{Class: "gpu", Count: 1, ComputeMilli: 1000}},
+		EnergyHeadroomMilli: 800, ThermalHeadroomMilli: 800, ResilienceMilli: 800, MaximumSnapshotAgeSecs: 60, ExporterSnapshotDigest: strings.Repeat("b", 64),
+	}}
+	raw, _ := json.Marshal(seed)
+	f.Add(string(raw))
+	f.Fuzz(func(t *testing.T, raw string) {
+		var value SpaceDomainResourceSummary
+		if json.Unmarshal([]byte(raw), &value) == nil {
+			_ = ValidateResourceSummary(&value, fakeClock{now})
+		}
+	})
+}
+
+func FuzzPlacementValidation(f *testing.F) {
+	now := time.Date(2026, 7, 21, 0, 0, 0, 0, time.UTC)
+	mission := validMission(now)
+	mission.UID = types.UID("mission-uid")
+	seed := SpacePlacementIntent{Spec: SpacePlacementIntentSpec{
+		MissionRef: corev1.ObjectReference{Name: mission.Name, Namespace: mission.Namespace, UID: mission.UID}, PlanID: "plan-123", Attempt: 1,
+		Target: DomainReference{Name: "leo-a", ClusterID: "leo-cluster", OrbitClass: OrbitLEO}, NotBefore: metav1.NewTime(now.Add(time.Minute)),
+		ExpiresAt: metav1.NewTime(now.Add(20 * time.Minute)), ComputeStart: metav1.NewTime(now.Add(2 * time.Minute)), ComputeEnd: metav1.NewTime(now.Add(4 * time.Minute)),
+		MaterialInputDigest: strings.Repeat("c", 64), SnapshotSequences: map[string]int64{"resource/leo-a": 1},
+	}}
+	raw, _ := json.Marshal(seed)
+	f.Add(string(raw))
+	f.Fuzz(func(t *testing.T, raw string) {
+		var value SpacePlacementIntent
+		if json.Unmarshal([]byte(raw), &value) == nil {
+			_ = ValidatePlacement(&value, mission)
+		}
+	})
+}
+
 func TestMissionValidationRejectsContradictions(t *testing.T) {
 	now := time.Date(2026, 7, 21, 0, 0, 0, 0, time.UTC)
 	mission := validMission(now)
@@ -91,6 +129,27 @@ func TestMissionValidationRejectsContradictions(t *testing.T) {
 	for _, fragment := range []string{"allowMigration", "resultDestinations", "durationUncertaintySeconds"} {
 		if err == nil || !strings.Contains(err.Error(), fragment) {
 			t.Fatalf("validation error %v does not contain %q", err, fragment)
+		}
+	}
+}
+
+func TestMissionAndResourceValidationBoundPayloadAndProvenance(t *testing.T) {
+	now := time.Date(2026, 7, 21, 0, 0, 0, 0, time.UTC)
+	mission := validMission(now)
+	mission.Spec.WorkloadTemplate.Annotations = map[string]string{"oversized": strings.Repeat("x", MaxWorkloadTemplateBytes)}
+	if err := ValidateMission(mission, fakeClock{now}); err == nil || !strings.Contains(err.Error(), "serialized size") {
+		t.Fatalf("oversized workload template error = %v", err)
+	}
+
+	summary := &SpaceDomainResourceSummary{Spec: SpaceDomainResourceSummarySpec{
+		Domain: DomainReference{Name: "leo-a", ClusterID: "leo-cluster", OrbitClass: OrbitLEO}, ObservedAt: metav1.NewTime(now), ValidUntil: metav1.NewTime(now.Add(time.Hour)),
+		Provenance: Provenance{ReporterID: "reporter", Source: "exporter\nforged", Digest: strings.Repeat("a", 64), Sequence: 1}, Devices: []DeviceCapacity{{Class: "gpu", Count: 1, ComputeMilli: 1000}},
+		EnergyHeadroomMilli: 800, ThermalHeadroomMilli: 800, ResilienceMilli: 800, MaximumSnapshotAgeSecs: 60, ExporterSnapshotDigest: "not-a-digest",
+	}}
+	err := ValidateResourceSummary(summary, fakeClock{now})
+	for _, fragment := range []string{"control separators", "exporterSnapshotDigest"} {
+		if err == nil || !strings.Contains(err.Error(), fragment) {
+			t.Fatalf("resource validation error %v does not contain %q", err, fragment)
 		}
 	}
 }

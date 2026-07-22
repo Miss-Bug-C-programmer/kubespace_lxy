@@ -20,7 +20,7 @@ rules:
   verbs: [get, list, watch, update, patch]
 - apiGroups: [""]
   resources: [pods]
-  verbs: [get, list, watch, create]
+  verbs: [get, list, watch, create, delete]
 - apiGroups: ["", events.k8s.io]
   resources: [events]
   verbs: [create, patch, update]
@@ -60,6 +60,7 @@ spec:
     spec:
       serviceAccountName: space-compute-mission-planner
       priorityClassName: system-cluster-critical
+      securityContext: {seccompProfile: {type: RuntimeDefault}}
       containers:
       - name: planner
         image: space-compute-mission-planner:v1.33.7-k3s1
@@ -67,8 +68,8 @@ spec:
         ports: [{name: metrics, containerPort: 10261}]
         readinessProbe: {httpGet: {path: /readyz, port: metrics}, initialDelaySeconds: 3}
         livenessProbe: {httpGet: {path: /livez, port: metrics}, initialDelaySeconds: 10}
-        resources: {requests: {cpu: 100m, memory: 128Mi}, limits: {memory: 512Mi}}
-        securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, runAsNonRoot: true, capabilities: {drop: [ALL]}}
+        resources: {requests: {cpu: 100m, memory: 128Mi}, limits: {cpu: "1", memory: 512Mi}}
+        securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, runAsNonRoot: true, runAsUser: 65532, runAsGroup: 65532, capabilities: {drop: [ALL]}}
 ---
 apiVersion: v1
 kind: Service

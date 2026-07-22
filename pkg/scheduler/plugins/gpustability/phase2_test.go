@@ -495,7 +495,7 @@ func TestUnifiedSnapshotCarriesNodeResourceContext(t *testing.T) {
 }
 
 func BenchmarkCollectorTargetDatasets(b *testing.B) {
-	for _, count := range []int{100, 1000} {
+	for _, count := range []int{100, 1000, 5000} {
 		b.Run(strconv.Itoa(count), func(b *testing.B) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				_, _ = w.Write([]byte(iluvatarMetrics))
@@ -619,6 +619,10 @@ func phase2ScaleNodes(t phase2TB, serverURL string, count int) []*v1.Node {
 	for i := range nodes {
 		name := fmt.Sprintf("scale-node-%04d", i)
 		nodes[i] = phase2Node(t, serverURL, name, types.UID("uid-"+name), "iluvatar.com/gpu")
+		// One real HTTP fixture server serves distinct validated target URLs.
+		// This preserves the production resolver/client/parser path while also
+		// exercising the production duplicate-endpoint ownership guard.
+		nodes[i].Annotations[AnnotationExporterPath] = "/metrics/" + name
 	}
 	return nodes
 }

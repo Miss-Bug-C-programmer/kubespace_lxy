@@ -19,9 +19,10 @@ Build an image containing that executable, create the exporter TLS Secret named
 `space-compute-exporter-tls`, review the resource/profile mappings, and apply
 `manifests/space-compute-scheduler.yaml`. The manifest supplies dedicated RBAC,
 a separately scoped leader Lease, two replicas, authenticated secure serving,
-health/readiness probes, configuration, and a metrics Service. The static-Pod
-template is an operator-managed alternative; its host scheduler configuration
-must set `clientConnection.kubeconfig: /etc/rancher/k3s/k3s.yaml`.
+health/readiness probes, configuration, and a metrics Service. A static-Pod
+alternative is intentionally not shipped: mounting the K3s administrator
+kubeconfig into a host-networked static Pod violates the least-privilege
+boundary. Use the dedicated ServiceAccount Deployment.
 
 ```shell
 kubectl apply -f docs/gpu-scheduler/manifests/space-compute-scheduler.yaml
@@ -37,27 +38,27 @@ spec:
   schedulerName: space-compute-scheduler
 ```
 
-Do not add this profile to the embedded K3s scheduler configuration. The old
-in-process plugin registration remains compiled for rollback compatibility, but
-registration alone is inert.
+Do not add this profile to the embedded K3s scheduler configuration. Phase 5
+removed the in-process registration hook, so the upstream K3s default scheduler
+has no compile-time or runtime dependency on this plugin.
 
-## Upgrade and embedded-profile migration
+## Upgrade and migration
 
-Never run the embedded profile and standalone component concurrently: they
-would both consume Pods with the same scheduler name from different process
-leader-election domains. Migrate in this order:
+Older experimental deployments that configured an embedded profile must remove
+that profile before installing this release; it is no longer a supported
+rollback target. Migrate in this order:
 
 1. Save the old scheduler configuration and confirm ordinary Pods use
    `default-scheduler`.
-2. Remove only the `space-compute-scheduler` profile from embedded K3s and
+2. Remove only the `space-compute-scheduler` profile from the old K3s config and
    restart servers one at a time. Space Pods pause; ordinary scheduling does not.
 3. Deploy the version-matched standalone binary and wait for `/readyz`, informer
    synchronization, and the `space-compute-scheduler` Lease holder.
 4. Submit a canary with the explicit scheduler name, then move production work.
 
-Rollback reverses the sequence: scale the standalone Deployment to zero before
-restoring the embedded profile. Uninstalling this component never edits the
-default scheduler. Upgrade the binary and configuration together with the
+Rollback uses the preceding standalone image/config version; it does not
+restore an embedded profile. Scale the Deployment to zero before rollback.
+Uninstalling this component never edits the default scheduler. Upgrade the binary and configuration together with the
 repository's Kubernetes `v1.33.7-k3s1` replacement; other framework versions
 are unsupported.
 
@@ -74,8 +75,10 @@ Node/namespace it creates. It does not create a device or orbit simulator and
 does not require accelerator hardware.
 
 Build all binaries from the same worktree, start a disposable K3s control
-plane, apply the Phase 4 CRD/admission manifests, and provide its kubeconfig and
-both standalone component paths:
+plane and provide its kubeconfig and both standalone component paths. The e2e
+installs the production CRDs, split type-safe admission policies and controller
+RBAC itself, waits for admission activation, and uses a real planner
+ServiceAccount token:
 
 ```shell
 go build -buildvcs=false -trimpath -o /tmp/k3s-space-e2e ./cmd/k3s
@@ -145,6 +148,15 @@ and `Score` read local immutable snapshots only; a cache miss may enqueue a
 non-blocking refresh. Queue size, workers, cache entries, timeout, retry backoff,
 and circuit breaking are bounded. The exporter observation time determines
 freshness; reading a snapshot never extends it.
+
+Background discovery scrapes only Nodes that advertise a configured positive
+extended resource or explicit exporter metadata. Thus ordinary K3s agents and a
+schedulable server/master add no exporter queue/cache load. Every accelerator
+Node resolves its own watched address and endpoint generation; duplicate
+endpoints claimed by different Node identities fail closed. `maxDevicesPerNode`
+(default 256, maximum 4096), `cacheMaxEntries`, worker and queue limits must be
+sized for the intended accelerator-node population. Adding more nodes requires
+no scheduler restart and no hard-coded IP address.
 
 The state policy is selected by `gpustability.k3s.io/state-policy` or the typed
 default:
