@@ -21,6 +21,7 @@ jobs:
           REPOSITORY: ${{ github.repository }}
           COMMIT_SHA: ${{ github.sha }}
           RUN_ID: ${{ github.run_id }}
+          SERVER_URL: ${{ github.server_url }}
         shell: bash
         run: |
           set -euo pipefail
@@ -30,7 +31,7 @@ jobs:
             -H "Accept: application/vnd.github+json" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
             "https://api.github.com/repos/${REPOSITORY}/statuses/${COMMIT_SHA}" \
-            -d "{\"state\":\"pending\",\"context\":\"sandbox/phase1-source-export\",\"description\":\"run_id=${RUN_ID}\"}"
+            -d "{\"state\":\"pending\",\"context\":\"sandbox/phase1-source-export-${RUN_ID}\",\"target_url\":\"${SERVER_URL}/${REPOSITORY}/actions/runs/${RUN_ID}\"}"
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
@@ -54,6 +55,7 @@ jobs:
           REPOSITORY: ${{ github.repository }}
           COMMIT_SHA: ${{ github.sha }}
           RUN_ID: ${{ github.run_id }}
+          SERVER_URL: ${{ github.server_url }}
         shell: bash
         run: |
           set -euo pipefail
@@ -63,4 +65,4 @@ jobs:
             -H "Accept: application/vnd.github+json" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
             "https://api.github.com/repos/${REPOSITORY}/statuses/${COMMIT_SHA}" \
-            -d "{\"state\":\"success\",\"context\":\"sandbox/phase1-source-export\",\"description\":\"run_id=${RUN_ID}\"}"
+            -d "{\"state\":\"success\",\"context\":\"sandbox/phase1-source-export-${RUN_ID}\",\"target_url\":\"${SERVER_URL}/${REPOSITORY}/actions/runs/${RUN_ID}\"}"
