@@ -1,7 +1,7 @@
 name: stage4-finalize-reporter-authenticity
 on:
   issues:
-    types: [opened]
+    types: [opened, reopened]
 permissions:
   contents: write
 jobs:
