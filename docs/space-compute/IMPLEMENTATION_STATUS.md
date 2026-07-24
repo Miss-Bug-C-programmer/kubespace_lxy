@@ -828,3 +828,21 @@ Compatibility evidence:
 Decisions/ADRs:
 Next permitted phase or task:
 ```
+
+
+## Phase 5 focused exporter hot-path hardening (2026-07-24)
+
+Root cause: scheduler `Filter`/`PreScore` reached `snapshotForNode()`, which called `ensureTarget()` and therefore `resolveTarget()`. An annotation-only observational Pod could turn ordinary candidate Nodes into exporter targets and consume target, snapshot and queue capacity even though Node informer discovery excludes those Nodes. Direct HTTP remained worker-only, but target admission had leaked into the scheduling hot path.
+
+Production fix: Node informer reconciliation is the only production target-creation path. Scheduler callbacks use `lookupSnapshotForNodeInfo()` to read an already discovered target and local snapshot state. Missing/stale state may call `requestRefreshExisting(nodeName, generation)`, which verifies the exact existing generation and uses the bounded non-blocking queue. It never resolves an endpoint or creates a target. Cycle-local requested-resource accounting is not written into the shared snapshot store by scheduler callbacks. Annotation-only observational Filter exits without collector work, and its Node queue hint skips ordinary Nodes.
+
+Regression coverage includes a 1,000-ordinary-Node annotation-only cycle with zero targets/cache/queue/HTTP calls; an undiscovered accelerator candidate proving callbacks cannot create targets or issue HTTP; an existing accelerator target cache miss proving non-blocking asynchronous refresh; and queue-full/backoff/circuit-open scheduling-cycle checks. The prior slow-exporter callback regression now explicitly pre-discovers its target.
+
+### Focused fix commands and results
+
+- Focused gpustability hot-path regression set: PASS in GitHub Actions run `30061847961` from main snapshot `a461c8ae66e812478e828323ea15f7ac1eea4e99`.
+- `env GOCACHE=$RUNNER_TEMP/space-compute-hotpath-gocache scripts/space-compute all`: PASS in the same run before commit.
+- `go test ./pkg/executor/embed -count=1`: PASS; default K3s embed boundary remains independent of the plugin.
+- Hot-path source audit, gofmt check and `go vet ./pkg/scheduler/plugins/gpustability`: PASS.
+
+The interactive execution container could not download the repository-pinned Go 1.25.12 toolchain because external DNS is disabled, so authoritative validation ran on the repository GitHub Actions runner against the exact triggering main snapshot. The workflow uses a normal non-force `HEAD:main` push; concurrent updates fail rather than being overwritten. Phase 5 remains active and existing release blockers are unchanged.

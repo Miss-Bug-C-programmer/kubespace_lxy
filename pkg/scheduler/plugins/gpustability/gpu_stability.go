@@ -209,10 +209,13 @@ func (p *Plugin) Filter(_ context.Context, state *framework.CycleState, pod *v1.
 		observeFilterDecision(requirement.Policy, "node_label_incompatible")
 		return framework.NewStatus(framework.UnschedulableAndUnresolvable, reason)
 	}
-	snapshot := p.collector.snapshotForNodeInfo(nodeInfo)
 	if requirement.Observational {
 		observeFilterDecision(requirement.Policy, "observational")
 		return nil
+	}
+	snapshot := p.collector.lookupSnapshotForNodeInfo(nodeInfo)
+	if snapshot.State != snapshotFresh && snapshot.TargetGeneration != 0 {
+		p.collector.requestRefreshExisting(nodeName, snapshot.TargetGeneration)
 	}
 	if snapshot.State != snapshotFresh {
 		if requirement.Policy == StatePolicyStrict {
@@ -284,7 +287,10 @@ func (p *Plugin) PreScore(_ context.Context, state *framework.CycleState, _ *v1.
 			continue
 		}
 		node := nodeInfo.Node()
-		snapshot := p.collector.snapshotForNodeInfo(nodeInfo)
+		snapshot := p.collector.lookupSnapshotForNodeInfo(nodeInfo)
+		if snapshot.State != snapshotFresh && snapshot.TargetGeneration != 0 {
+			p.collector.requestRefreshExisting(node.Name, snapshot.TargetGeneration)
+		}
 		input := nodeScoreInput{State: snapshot.State, Reason: snapshot.Reason, Space: spacepolicy.Evaluate(requirement.Space, node, p.clock)}
 		if snapshot.State == snapshotFresh {
 			input.Evaluation = p.evaluateFreshSnapshot(requirement, snapshot.Metrics, snapshot.Resources, node.Labels)

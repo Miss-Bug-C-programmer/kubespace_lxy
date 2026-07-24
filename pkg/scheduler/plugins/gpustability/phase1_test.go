@@ -192,6 +192,9 @@ func TestSchedulerCallbacksNeverWaitForExporterIO(t *testing.T) {
 	node := nodeInfoWithEndpoint("http://slow-node:32021/metrics")
 	node.Node().Status.Addresses[0].Address = "slow-node"
 	state := cycleStateForPod(t, plugin, pod)
+	if _, _, err := collector.ensureTarget(node.Node()); err != nil {
+		t.Fatalf("discover existing target: %v", err)
+	}
 
 	start := time.Now()
 	status := plugin.Filter(context.Background(), state, pod, node)

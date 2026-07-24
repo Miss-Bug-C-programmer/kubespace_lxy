@@ -228,10 +228,9 @@ func (c *collector) observeNode(node *v1.Node) {
 	if node == nil {
 		return
 	}
-	// Background collection is limited to Nodes that advertise a configured
-	// physical resource or explicit exporter metadata. This keeps ordinary
-	// agents and control-plane Nodes out of the scrape/cache budget. An
-	// annotation-only workload can still resolve a target on demand.
+	// Background target admission is owned exclusively by the Node informer.
+	// Only Nodes that advertise a configured physical resource or explicit
+	// exporter metadata may consume target, queue, worker, or snapshot capacity.
 	if !c.isBackgroundTarget(node) {
 		c.deleteNode(identityForNode(node))
 		return
@@ -310,16 +309,49 @@ func (c *collector) snapshotForNode(node *v1.Node) snapshotResult {
 	if node == nil {
 		return snapshotResult{State: snapshotMissing, Confidence: confidenceMissing, Reason: "node information is unavailable"}
 	}
-	target, _, err := c.ensureTarget(node)
-	if err != nil {
-		c.recordTargetError(node.Name, err)
-		return snapshotResult{State: snapshotFailed, Confidence: confidenceFailed, Reason: err.Error()}
+	nodeInfo := framework.NewNodeInfo()
+	nodeInfo.SetNode(node)
+	result := c.lookupSnapshotForNodeInfo(nodeInfo)
+	if result.State != snapshotFresh && result.TargetGeneration != 0 {
+		c.requestRefreshExisting(node.Name, result.TargetGeneration)
 	}
+	return result
+}
+
+// lookupSnapshotForNodeInfo is the scheduler hot-path snapshot accessor. It may
+// only read a target that the Node informer has already admitted; it never
+// resolves endpoints, creates target generations, mutates the snapshot store,
+// or waits for exporter I/O.
+func (c *collector) lookupSnapshotForNodeInfo(nodeInfo *framework.NodeInfo) snapshotResult {
+	if nodeInfo == nil || nodeInfo.Node() == nil {
+		result := snapshotResult{State: snapshotMissing, Confidence: confidenceMissing, Reason: "node information is unavailable"}
+		observeSnapshotRead(result.State)
+		return result
+	}
+	node := nodeInfo.Node()
+	resources := resourceContextForNodeInfo(nodeInfo, c.config.ResourceMappings)
+	identity := identityForNode(node)
+
+	c.mu.RLock()
+	target, exists := c.targets[node.Name]
+	c.mu.RUnlock()
+	if !exists || (identity.UID != "" && target.Identity.UID != "" && identity.UID != target.Identity.UID) {
+		result := snapshotResult{
+			State: snapshotMissing, Confidence: confidenceMissing, Resources: resources,
+			Reason: "exporter target has not been discovered for node",
+		}
+		observeSnapshotRead(result.State)
+		return result
+	}
+
 	now := c.now()
 	result := c.store.lookup(target, now)
-	if result.State != snapshotFresh {
-		c.enqueue(target)
-	}
+	// A store miss still carries the already-discovered target generation so the
+	// caller may request a non-blocking refresh without resolving or creating it.
+	result.TargetGeneration = target.Generation
+	// Requested resources are cycle-local scheduler state. Do not write them back
+	// into the shared snapshot store from a scheduling callback.
+	result.Resources = resources
 	if result.State == snapshotFresh {
 		observeSnapshotAge(now.Sub(result.ObservedAt))
 	}
@@ -327,21 +359,32 @@ func (c *collector) snapshotForNode(node *v1.Node) snapshotResult {
 	return result
 }
 
+// snapshotForNodeInfo is retained for collector-facing callers and tests. Like
+// the scheduler accessor it never creates or resolves a target; a miss may only
+// request a non-blocking refresh for an already discovered generation.
 func (c *collector) snapshotForNodeInfo(nodeInfo *framework.NodeInfo) snapshotResult {
-	if nodeInfo == nil || nodeInfo.Node() == nil {
-		return snapshotResult{State: snapshotMissing, Confidence: confidenceMissing, Reason: "node information is unavailable"}
+	result := c.lookupSnapshotForNodeInfo(nodeInfo)
+	if nodeInfo != nil && nodeInfo.Node() != nil && result.State != snapshotFresh && result.TargetGeneration != 0 {
+		c.requestRefreshExisting(nodeInfo.Node().Name, result.TargetGeneration)
 	}
-	result := c.snapshotForNode(nodeInfo.Node())
-	c.mu.RLock()
-	target, exists := c.targets[nodeInfo.Node().Name]
-	c.mu.RUnlock()
-	if !exists {
-		return result
-	}
-	resources := resourceContextForNodeInfo(nodeInfo, c.config.ResourceMappings)
-	c.store.updateResources(target, resources)
-	result.Resources = resources
 	return result
+}
+
+// requestRefreshExisting queues a refresh only for the exact generation that
+// was already discovered by the Node informer. enqueue is bounded and
+// non-blocking, including when the queue is full, the target is in backoff, or
+// its circuit is open.
+func (c *collector) requestRefreshExisting(nodeName string, generation uint64) bool {
+	if nodeName == "" || generation == 0 {
+		return false
+	}
+	c.mu.RLock()
+	target, exists := c.targets[nodeName]
+	c.mu.RUnlock()
+	if !exists || target.Generation != generation {
+		return false
+	}
+	return c.enqueue(target)
 }
 
 func (c *collector) enqueue(target scrapeTarget) bool {

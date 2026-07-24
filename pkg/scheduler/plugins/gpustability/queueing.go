@@ -199,6 +199,11 @@ func (p *Plugin) queueOnNodeChange(_ klog.Logger, pod *v1.Pod, oldObj, newObj in
 	if !newOK || newNode == nil {
 		return framework.QueueSkip, nil
 	}
+	// Observational Pods must not turn ordinary Node events into exporter work.
+	// Only informer-eligible accelerator/exporter Nodes can affect their score.
+	if requirement.Observational && (p.collector == nil || !p.collector.isBackgroundTarget(newNode)) {
+		return framework.QueueSkip, nil
+	}
 	oldNode, oldOK := oldObj.(*v1.Node)
 	if !oldOK || oldNode == nil {
 		if nodeCouldSupply(newNode, requirement) {
