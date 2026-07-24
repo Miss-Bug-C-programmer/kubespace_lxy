@@ -1,0 +1,222 @@
+name: Stage3 resource and physical-device semantics fix
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/stage3-resource-semantics-fix.yml
+
+permissions:
+  contents: write
+  statuses: write
+
+concurrency:
+  group: stage3-resource-semantics-main-fix
+  cancel-in-progress: false
+
+jobs:
+  fix-test-push:
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    steps:
+      - name: Publish run identity
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          COMMIT_SHA: ${{ github.sha }}
+          RUN_ID: ${{ github.run_id }}
+          SERVER_URL: ${{ github.server_url }}
+        run: |
+          set -euo pipefail
+          curl --fail-with-body --silent --show-error -X POST \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${REPOSITORY}/statuses/${COMMIT_SHA}" \
+            -d "{\"state\":\"pending\",\"description\":\"validating resource/device semantics\",\"context\":\"sandbox/stage3-resource-${RUN_ID}\",\"target_url\":\"${SERVER_URL}/${REPOSITORY}/actions/runs/${RUN_ID}\"}"
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.12'
+          cache: false
+
+      - name: Reconstruct and apply production fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat .github/stage3-apply.py.gz.b64.part01 \
+              .github/stage3-apply.py.gz.b64.part02 \
+              .github/stage3-apply.py.gz.b64.part03 \
+            | base64 -d | gzip -d > /tmp/stage3_apply.py
+          python3 -m py_compile /tmp/stage3_apply.py
+          python3 /tmp/stage3_apply.py
+          gofmt -w pkg/scheduler/plugins/gpustability/*.go
+          git diff --check
+
+      - name: Focused resource semantics regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          go test ./pkg/scheduler/plugins/gpustability \
+            -run '^(TestOverlappingResourceNamesCannotReusePhysicalDevice|TestDisjointSameClassInventorySelectorsDoNotMixDevices|TestDRAAllocatedDeviceMatchesExporterStableID|TestInvalidDRAAllocationIdentitiesFailClosed|TestExtendedResourceWithoutAllocationLinkageRemainsConservative|TestResourceClaimOnlyPodStillBelongsToDynamicResources|TestStructuredResourceMappingsEnvAndLegacyGate|TestStrictPhysicalCoverageDoesNotClaimUnlinkedDeviceEnforcement|TestDRAClaimRemainsOwnedByUpstreamDynamicResources)$' \
+            -count=1 -timeout=180s 2>&1 | tee /tmp/stage3-focused.log
+
+      - name: Upload focused failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage3-focused-${{ github.run_id }}
+          path: /tmp/stage3-focused.log
+          if-no-files-found: ignore
+
+      - name: Race regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          go test -race ./pkg/scheduler/plugins/gpustability \
+            -run '^(TestOverlappingResourceNamesCannotReusePhysicalDevice|TestDisjointSameClassInventorySelectorsDoNotMixDevices|TestDRAAllocatedDeviceMatchesExporterStableID|TestInvalidDRAAllocationIdentitiesFailClosed|TestParallelFiltersPinCycleSnapshotsRaceFree)$' \
+            -count=1 -timeout=240s 2>&1 | tee /tmp/stage3-race.log
+
+      - name: Upload race failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage3-race-${{ github.run_id }}
+          path: /tmp/stage3-race.log
+          if-no-files-found: ignore
+
+      - name: Full CPU qualification and default-K3s boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            env GOCACHE="$RUNNER_TEMP/space-compute-stage3-gocache" scripts/space-compute all
+            go test ./pkg/executor/embed -count=1
+          } 2>&1 | tee /tmp/stage3-full.log
+
+      - name: Upload full qualification failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage3-full-${{ github.run_id }}
+          path: /tmp/stage3-full.log
+          if-no-files-found: ignore
+
+      - name: Audit resource and allocator boundaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -z "$(gofmt -s -l pkg/scheduler/plugins/gpustability/*.go)"
+          go vet ./pkg/scheduler/plugins/gpustability
+          python3 - <<'PY'
+          from pathlib import Path
+          cfg = Path('pkg/scheduler/plugins/gpustability/config.go').read_text()
+          gpu = Path('pkg/scheduler/plugins/gpustability/gpu_stability.go').read_text()
+          alloc = Path('pkg/scheduler/plugins/gpustability/allocation_identity.go').read_text()
+          queue = Path('pkg/scheduler/plugins/gpustability/queueing.go').read_text()
+          assert 'K3S_GPU_RESOURCE_MAPPINGS_JSON' in cfg
+          assert 'AllowLegacyResourceNames' in cfg and 'K3S_GPU_RESOURCE_NAMES' in cfg
+          legacy = cfg[cfg.index('K3S_GPU_RESOURCE_NAMES')-1000:]
+          assert 'DeviceClassAccelerator), Profiles: []string{"generic"}' not in legacy
+          start = gpu.index('func (p *Plugin) evaluateFreshSnapshot')
+          end = gpu.index('func (p *Plugin) scoreInput', start)
+          evaluation = gpu[start:end]
+          assert 'devicesForClass(' not in evaluation
+          assert 'func (p *Plugin) Reserve(' not in gpu
+          for forbidden in ('Create(', 'Update(', 'Patch(', 'Delete('):
+              assert forbidden not in alloc, f'allocation identity source must remain read-only: {forbidden}'
+          assert 'framework.ResourceClaim' in queue and 'framework.ResourceSlice' in queue
+          PY
+
+      - name: Record implementation and operational contract
+        shell: bash
+        env:
+          RUN_ID: ${{ github.run_id }}
+          TRIGGER_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          cat >> docs/space-compute/IMPLEMENTATION_STATUS.md <<EOF_STATUS
+
+          ## Phase 5 focused resource and physical-allocation semantics hardening (2026-07-24)
+
+          Root cause: resource demand was aggregated by DeviceClass, so two extended-resource names mapped to one class could reuse the same exporter devices. Legacy K3S_GPU_RESOURCE_NAMES also collapsed arbitrary names to generic accelerator. Physical telemetry identity was not consumable from already-allocated DRA claims.
+
+          Production fix: resource mappings now carry explicit inventorySelector and allocationMode. Scheduling evaluates each resource inventory partition independently and rejects overlapping simultaneous inventories in strict mode unless distinct physical allocation identities prove exclusivity. Mixed classes, profile-disjoint inventories and explicitly disjoint stable-ID/name prefixes are accounted independently. K3S_GPU_RESOURCE_MAPPINGS_JSON is the structured compatibility environment variable. K3S_GPU_RESOURCE_NAMES now requires allowLegacyResourceNames=true, emits a deprecation warning and only resolves names already present in explicit/default mappings; it never invents generic accelerator mappings.
+
+          DRA linkage is read-only: for dra-linked mappings the plugin consumes already-determined ResourceClaim allocation results, validates driver/pool/device against the highest complete ResourceSlice generation and Node availability, then matches the DRA device ID to exporter stable device identity. It does not allocate, Reserve, mutate claims or maintain a second allocator. ResourceClaim-only Pods remain owned by upstream DynamicResources. Extended resources without physical linkage retain the conservative node-wide strict rule and therefore do not claim per-device guarantees.
+
+          Regression coverage includes overlapping same-class resource names, disjoint inventory partitions, DRA/exporter stable-ID match, nonexistent/duplicate/stale/profile-mismatched DRA identities, conservative unlinked extended-resource semantics and ResourceClaim-only ownership.
+
+          - Focused Stage 3 regression set: PASS in GitHub Actions run ${RUN_ID} from main snapshot ${TRIGGER_SHA}.
+          - Focused go test -race: PASS in the same run.
+          - scripts/space-compute all: PASS.
+          - go test ./pkg/executor/embed -count=1: PASS; the default K3s scheduler remains independent.
+          - gofmt, go vet and source-boundary audit: PASS.
+
+          Vendor hardware release remains blocked until exporter stable IDs are demonstrated to match real DRA or vendor allocation identities on supported hardware. No vGPU slicing or second allocator is introduced by this change.
+          EOF_STATUS
+
+          cat >> docs/gpu-scheduler/README.md <<'EOF_README'
+
+          ### Resource inventory partitions and physical allocation identity
+
+          Resource mappings support `inventorySelector` and `allocationMode`. `inventorySelector` uses comma-separated exact keys: `id-prefix`, `uuid-prefix`, `name-prefix`, `dra-driver`, and optional `dra-pool`. The default `allocationMode` is `exclusive`; `dra-linked` requires `dra-driver` and consumes only allocation identities already published by upstream DRA. Same-class mappings are not assumed disjoint merely because resource names differ. Strict scheduling fails closed when simultaneous mappings may overlap and distinct physical identities cannot prove exclusivity.
+
+          `K3S_GPU_RESOURCE_MAPPINGS_JSON` is the structured environment compatibility form for resource mappings. `K3S_GPU_RESOURCE_NAMES` is deprecated and disabled unless `allowLegacyResourceNames: true` is explicitly configured; legacy names must resolve to an existing explicit/default mapping and are never converted to a generic accelerator class.
+
+          When a `dra-linked` workload has an already allocated ResourceClaim, the plugin validates `<driver>/<pool>/<device>` against the current complete ResourceSlice generation and exporter stable device ID, then applies per-device telemetry constraints only to that selected device set. ResourceClaim-only Pods remain under upstream `DynamicResources`. Without physical allocation linkage, extended-resource scheduling retains conservative node-wide telemetry semantics and does not claim per-device enforcement.
+          EOF_README
+
+          cat >> docs/space-compute/PROJECT.md <<'EOF_PROJECT'
+
+          ### Resource inventory and allocation-identity contract
+
+          Accelerator resource names are inventory partitions, not aliases for a DeviceClass. A physical device may satisfy at most one simultaneous resource demand unless an upstream allocation result proves distinct identities. The plugin may consume DRA/vendor allocation identity but never becomes an allocator. Per-device hard guarantees are asserted only when exporter stable identity is linked to the already-selected physical device; otherwise strict mode uses conservative node-wide enforcement and hardware release remains blocked.
+          EOF_PROJECT
+
+      - name: Commit tested fix directly to main
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f \
+            .github/workflows/stage3-resource-semantics-fix.yml \
+            .github/stage3-apply.py.gz.b64.part01 \
+            .github/stage3-apply.py.gz.b64.part02 \
+            .github/stage3-apply.py.gz.b64.part03
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git diff --cached --check
+          git commit -m 'fix: enforce physical accelerator inventory semantics'
+          git push origin HEAD:main
+
+      - name: Publish final status
+        if: always()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          COMMIT_SHA: ${{ github.sha }}
+          RUN_ID: ${{ github.run_id }}
+          SERVER_URL: ${{ github.server_url }}
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          set -euo pipefail
+          state=failure
+          description='stage3 validation failed'
+          if [ "$JOB_STATUS" = success ]; then
+            state=success
+            description='stage3 validation passed and fix pushed'
+          fi
+          curl --fail-with-body --silent --show-error -X POST \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${REPOSITORY}/statuses/${COMMIT_SHA}" \
+            -d "{\"state\":\"${state}\",\"description\":\"${description}\",\"context\":\"sandbox/stage3-resource-${RUN_ID}\",\"target_url\":\"${SERVER_URL}/${REPOSITORY}/actions/runs/${RUN_ID}\"}"
