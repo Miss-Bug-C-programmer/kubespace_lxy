@@ -1,7 +1,14 @@
-trigger_sha=f47d9e3b8a26feb554b5441fe67140bb9ff847b9
-run_id=30081327398
+run_id=30082134265
+base_sha=be86f44169e12afbe980b6579a5f0b5af35d2ab6
 --- last gate output ---
-  File ".github/stage4-recovered.py", line 260
-    append_once("docs/space-compute/PHASE4_API_AND_OPERATIONS.md", "Trusted reporter-domain admission", "## Trusted reporter-domain admission\n\nPhase 4 reporter data has an explicit cryptographic admission boundary.\n\n1. Create one administrator-owned `SpaceDomainReporterBinding` per reporter principal. The binding name is `reporter-<first-32-hex-of-SHA256(trimmed-principal))>`. The binding declares the exact domain, allowed kinds, exact peer domains, and a key in `kube-system/space-compute-reporter-public-keys`.\n2. Provision the webhook serving Secret `kube-system/space-compute-reporter-webhook-tls` for `space-compute-reporter-webhook.kube-system.svc`, apply `reporter-admission-webhook.yaml`, and inject the issuing CA into `ValidatingWebhookConfiguration/space-compute-reporter-truth`. Do not grant reporter writes until `/readyz` is healthy and the CA bundle is correct.\n3. Reporter object names are deterministic: summary `domain-<hash>`, directed link `link-<hash>`, transfer receipt `transfer-<hash>`, result receipt `result-<hash>`. The hash is the first 16 bytes of SHA-256 over the normalized identity used by the exported Go helpers in `contrib/space-compute/pkg/apis/v1alpha1`.\n4. Canonical provenance uses `spacecompute-canonical-v1`. Timestamps are UTC RFC3339Nano, field order is fixed, set/map-like values are sorted explicitly, and `provenance.digest` plus `provenance.signature` are excluded from the canonical payload. Reporters calculate lowercase SHA-256 and sign the decoded 32-byte digest with Ed25519; `signature` is standard base64.\n5. Initial objects 
-                                                                                                        ^
-SyntaxError: unterminated string literal (detected at line 260)
+=== apply ===
+=== focused ===
+ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/apis/v1alpha1	0.004s
+--- FAIL: TestValidatorAcceptsTrustedSignedLinkAndRejectsForgery (0.00s)
+    validator_test.go:78: valid signed link rejected: spec.provenance.digest mismatch: canonical payload digest is 1b245e76b61c4a6a3027992ac0cd1c61c39dac78d48539fcbffde2630a48a114
+--- FAIL: TestValidatorEnforcesExactDigestChainIdentityAndStabilityUpdate (0.00s)
+    --- FAIL: TestValidatorEnforcesExactDigestChainIdentityAndStabilityUpdate/destination-switch (0.00s)
+        validator_test.go:167: error=destination domain is not an explicitly allowed peer, want fragment "stable identity"
+FAIL
+FAIL	github.com/k3s-io/k3s/contrib/space-compute/pkg/admission	0.016s
+FAIL
