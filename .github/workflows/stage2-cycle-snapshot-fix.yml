@@ -5,14 +5,31 @@ on:
     paths: [.github/workflows/stage2-cycle-snapshot-fix.yml]
 permissions:
   contents: write
+  statuses: write
 concurrency:
   group: stage2-cycle-snapshot-main-fix
   cancel-in-progress: false
 jobs:
   fix-test-push:
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 45
     steps:
+    - name: Publish run identity
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        REPOSITORY: ${{ github.repository }}
+        COMMIT_SHA: ${{ github.sha }}
+        RUN_ID: ${{ github.run_id }}
+        SERVER_URL: ${{ github.server_url }}
+      run: |
+        set -euo pipefail
+        curl --fail-with-body --silent --show-error -X POST \
+          -H "Authorization: Bearer ${GH_TOKEN}" \
+          -H "Accept: application/vnd.github+json" \
+          -H "X-GitHub-Api-Version: 2022-11-28" \
+          "https://api.github.com/repos/${REPOSITORY}/statuses/${COMMIT_SHA}" \
+          -d "{\"state\":\"pending\",\"description\":\"validating focused/race/full gates\",\"context\":\"sandbox/stage2-cycle-${RUN_ID}\",\"target_url\":\"${SERVER_URL}/${REPOSITORY}/actions/runs/${RUN_ID}\"}"
     - uses: actions/checkout@v4
       with:
         ref: ${{ github.sha }}
@@ -38,12 +55,16 @@ jobs:
       run: go test ./pkg/scheduler/plugins/gpustability -run '^(TestCycleSnapshotPinsGenerationAcrossPreScore|TestCycleSnapshotExpiryAppliesNextCycleOnly|TestCycleSnapshotSurvivesCollectorFailureAfterFilter|TestPreScoreRequiresCompleteFilterPinnedSnapshot|TestCycleSnapshotCloneDeepCopiesMutableFields|TestRequestedResourcesRemainCycleLocal|TestParallelFiltersPinCycleSnapshotsRaceFree|TestPreScoreAndScorePreferTightFitGPUNode|TestPreScoreAggregatesThreeExporterNodes|TestScoringBreakdownGoldenAndFixedNormalization)$' -count=1 -timeout=120s
     - name: Race regressions
       run: go test -race ./pkg/scheduler/plugins/gpustability -run '^(TestParallelFiltersPinCycleSnapshotsRaceFree|TestCycleSnapshotCloneDeepCopiesMutableFields|TestCycleSnapshotPinsGenerationAcrossPreScore|TestCycleSnapshotExpiryAppliesNextCycleOnly|TestCycleSnapshotSurvivesCollectorFailureAfterFilter)$' -count=1 -timeout=180s
-    - name: Full CPU qualification and audits
+    - name: Full CPU qualification
       shell: bash
       run: |
         set -euo pipefail
         env GOCACHE="$RUNNER_TEMP/space-compute-stage2-gocache" scripts/space-compute all
         go test ./pkg/executor/embed -count=1
+    - name: Audit source boundary
+      shell: bash
+      run: |
+        set -euo pipefail
         test -z "$(gofmt -s -l pkg/scheduler/plugins/gpustability/*.go)"
         go vet ./pkg/scheduler/plugins/gpustability
         python3 - <<'PY'
@@ -88,3 +109,27 @@ jobs:
         git diff --cached --check
         git commit -m 'fix: pin exporter snapshots per scheduling cycle'
         git push origin HEAD:main
+    - name: Publish final status
+      if: always()
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        REPOSITORY: ${{ github.repository }}
+        COMMIT_SHA: ${{ github.sha }}
+        RUN_ID: ${{ github.run_id }}
+        SERVER_URL: ${{ github.server_url }}
+        JOB_STATUS: ${{ job.status }}
+      run: |
+        set -euo pipefail
+        state=failure
+        description='stage2 validation failed'
+        if [ "$JOB_STATUS" = success ]; then
+          state=success
+          description='stage2 validation passed and fix pushed'
+        fi
+        curl --fail-with-body --silent --show-error -X POST \
+          -H "Authorization: Bearer ${GH_TOKEN}" \
+          -H "Accept: application/vnd.github+json" \
+          -H "X-GitHub-Api-Version: 2022-11-28" \
+          "https://api.github.com/repos/${REPOSITORY}/statuses/${COMMIT_SHA}" \
+          -d "{\"state\":\"${state}\",\"description\":\"${description}\",\"context\":\"sandbox/stage2-cycle-${RUN_ID}\",\"target_url\":\"${SERVER_URL}/${REPOSITORY}/actions/runs/${RUN_ID}\"}"
