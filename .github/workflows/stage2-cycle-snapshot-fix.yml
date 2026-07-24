@@ -79,8 +79,17 @@ jobs:
       shell: bash
       run: |
         set -euo pipefail
-        env GOCACHE="$RUNNER_TEMP/space-compute-stage2-gocache" scripts/space-compute all
-        go test ./pkg/executor/embed -count=1
+        {
+          env GOCACHE="$RUNNER_TEMP/space-compute-stage2-gocache" scripts/space-compute all
+          go test ./pkg/executor/embed -count=1
+        } 2>&1 | tee /tmp/stage2-full.log
+    - name: Upload full qualification failure diagnostics
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: stage2-full-${{ github.run_id }}
+        path: /tmp/stage2-full.log
+        if-no-files-found: error
     - name: Audit source boundary
       shell: bash
       run: |
