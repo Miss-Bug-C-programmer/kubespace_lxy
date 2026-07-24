@@ -15,7 +15,7 @@ on_error() {
       echo '--- last gate output ---'
       tail -n 600 "$LOG" 2>/dev/null || true
       echo '--- planner stability test ---'
-      sed -n '250,340p' contrib/space-compute/pkg/planner/planner_test.go 2>/dev/null || true
+      sed -n '240,340p' contrib/space-compute/pkg/planner/planner_test.go 2>/dev/null || true
       echo '--- planner material input ---'
       grep -R -n 'MaterialInput\|materialInput\|contactWindowsDigest' contrib/space-compute/pkg/planner contrib/space-compute/pkg/apis/v1alpha1 2>/dev/null | head -120 || true
       echo '--- validator.go ---'
@@ -38,6 +38,27 @@ trap on_error ERR
   echo '=== apply ==='
   python3 -m py_compile .github/stage4-complete.py
   python3 .github/stage4-complete.py
+  python3 - <<'PY'
+from pathlib import Path
+path = Path('contrib/space-compute/pkg/planner/planner_test.go')
+text = path.read_text()
+old = '''\tupdated.Spec.Provenance.Sequence++
+\tupdated.Spec.Provenance.PreviousDigest = updated.Spec.Provenance.Digest
+'''
+new = '''\tupdated.Spec.Provenance.Sequence++
+\tupdated.Status.ObservedGeneration = updated.Generation
+\tupdated.Status.AcceptedSequence = updated.Spec.Provenance.Sequence
+\tupdated.Status.Conditions = []metav1.Condition{{
+\t\tType: ConditionLinkValidated, Status: metav1.ConditionTrue,
+\t\tObservedGeneration: updated.Generation, LastTransitionTime: metav1.NewTime(updatedNow),
+\t\tReason: "Validated", Message: "updated stability snapshot accepted by resource controller",
+\t}}
+\tupdated.Spec.Provenance.PreviousDigest = updated.Spec.Provenance.Digest
+'''
+if old not in text:
+    raise SystemExit('planner stability update marker not found')
+path.write_text(text.replace(old, new, 1))
+PY
   gofmt -w \
     contrib/space-compute/pkg/apis/v1alpha1/*.go \
     contrib/space-compute/pkg/admission/*.go \
