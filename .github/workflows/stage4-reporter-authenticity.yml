@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
     paths:
-    - .github/stage4-apply.py.gz.b64
+    - .github/stage4-payload/**
     - .github/workflows/stage4-reporter-authenticity.yml
 
 permissions:
@@ -43,7 +43,11 @@ jobs:
           python3 - <<'PY'
         from pathlib import Path
         import base64, gzip
-        raw = base64.b64decode(Path('.github/stage4-apply.py.gz.b64').read_text().strip())
+        parts = sorted(Path('.github/stage4-payload').glob('chunk*'))
+        if not parts:
+            raise SystemExit('stage4 payload chunks are missing')
+        encoded = ''.join(part.read_text().strip() for part in parts)
+        raw = base64.b64decode(encoded, validate=True)
         Path('/tmp/stage4_apply.py').write_bytes(gzip.decompress(raw))
         PY
           python3 /tmp/stage4_apply.py
@@ -143,6 +147,7 @@ jobs:
           echo '=== final push ==='
           git fetch origin main
           test "$(git rev-parse origin/main)" = "${GITHUB_SHA}"
+          rm -rf .github/stage4-payload
           rm -f .github/stage4-apply.py.gz.b64 .github/workflows/stage4-reporter-authenticity.yml .github/stage4-failure.txt
           git add -A
           git diff --cached --check
