@@ -1,5 +1,5 @@
-run_id=30082239796
-base_sha=6b545eb56dd20b386fdbdaebe34bc6b90f2049cf
+run_id=30082399763
+base_sha=f92f00bcb73687a9c1db385e88b69b286aadefea
 --- last gate output ---
 === apply ===
 === focused ===
@@ -373,6 +373,57 @@ func expectedObjectName(value *reporterEnvelope) string {
 	switch object := value.digestObject.(type) {
 	case *spacev1.SpaceLinkSnapshot:
 		return spacev1.LinkSnapshotName(object.Spec.Source, object.Spec.Destination)
+	case *spacev1.SpaceDomainResourceSummary:
+		return spacev1.DomainResourceSummaryName(object.Spec.Domain)
+	case *spacev1.SpaceTransferReceipt:
+		return spacev1.TransferReceiptName(object.Spec.Source, object.Spec.Destination, object.Spec.MissionUID, object.Spec.PlanID, object.Spec.TransferID)
+	case *spacev1.SpaceResultReceipt:
+		return spacev1.ResultReceiptName(object.Spec.Source, object.Spec.Destination, object.Spec.MissionUID, object.Spec.PlanID, object.Spec.ResultID)
+	default:
+		return ""
+	}
+}
+
+func normalizedEnvelopeIdentity(source spacev1.DomainReference, destination *spacev1.DomainReference, id string) string {
+	value := string(source.OrbitClass) + "|" + source.ClusterID + "|" + source.Name
+	if destination != nil {
+		value += "->" + string(destination.OrbitClass) + "|" + destination.ClusterID + "|" + destination.Name
+	}
+	if id != "" {
+		value += "|" + id
+	}
+	return strings.ToLower(value)
+}
+
+func kindAllowed(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
+}
+
+func peerAllowed(values []spacev1.DomainReference, target spacev1.DomainReference) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
+}
+
+func decodeRaw(raw []byte, out interface{}) error {
+	if len(raw) == 0 {
+		return fmt.Errorf("object payload is empty")
+	}
+	decoder := json.NewDecoder(strings.NewReader(string(raw)))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(out); err != nil {
+		return err
+	}
+	return nil
+}
 --- validator_test.go ---
 package admission
 
@@ -634,3 +685,375 @@ func TestAdmissionHTTPHandlerFailsClosed(t *testing.T) {
 	}
 	if response.Response == nil || !response.Response.Allowed || response.Response.UID != review.Request.UID {
 		t.Fatalf("unexpected admission response: %+v", response.Response)
+	}
+
+	forged := link.DeepCopy()
+	forged.Spec.Windows[0].StabilityMilli--
+	review.Request = admissionRequest(t, admissionv1.Create, "spacelinksnapshots", principal, forged, nil)
+	raw, _ = json.Marshal(review)
+	req = httptest.NewRequest(http.MethodPost, "/validate", bytes.NewReader(raw))
+	req.Header.Set("Content-Type", "application/json")
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Response == nil || response.Response.Allowed || !strings.Contains(response.Response.Result.Message, "digest mismatch") {
+		t.Fatalf("forged payload was not denied: %+v", response.Response)
+	}
+}
+
+func FuzzAdmissionReview(f *testing.F) {
+	publicKey, _, _ := ed25519.GenerateKey(rand.Reader)
+	principal := "system:serviceaccount:reporters:fuzz"
+	domain := spacev1.DomainReference{Name: "ground-fuzz", ClusterID: "ground-fuzz-cluster", OrbitClass: spacev1.OrbitGround}
+	ref := spacev1.SecretReference{Namespace: "kube-system", Name: "space-compute-reporter-public-keys", Key: "fuzz"}
+	binding := &spacev1.SpaceDomainReporterBinding{
+		ObjectMeta: metav1.ObjectMeta{Name: spacev1.ReporterBindingName(principal)},
+		Spec:       spacev1.SpaceDomainReporterBindingSpec{ReporterPrincipal: principal, Domain: domain, AllowedKinds: []string{"SpaceDomainResourceSummary"}, PublicKeyRef: ref},
+	}
+	validator, _ := NewValidator(&fakeTrustSource{bindings: map[string]*spacev1.SpaceDomainReporterBinding{principal: binding}, keys: map[string]ed25519.PublicKey{ref.Key: publicKey}}, fixedClock{time.Date(2026, 7, 24, 6, 0, 0, 0, time.UTC)})
+	handler, _ := NewHandler(validator, 64<<10)
+	f.Add([]byte(`{}`))
+	f.Fuzz(func(t *testing.T, raw []byte) {
+		if len(raw) > 64<<10 {
+			return
+		}
+		request := httptest.NewRequest(http.MethodPost, "/validate", bytes.NewReader(raw))
+		request.Header.Set("Content-Type", "application/json")
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if response.Code < 200 || response.Code > 599 {
+			t.Fatalf("invalid HTTP status %d", response.Code)
+		}
+	})
+}
+
+func signedLink(t *testing.T, now time.Time, principal string, source, destination spacev1.DomainReference, privateKey ed25519.PrivateKey) *spacev1.SpaceLinkSnapshot {
+	t.Helper()
+	value := &spacev1.SpaceLinkSnapshot{
+		ObjectMeta: metav1.ObjectMeta{},
+		Spec: spacev1.SpaceLinkSnapshotSpec{
+			Source: source, Destination: destination, ObservedAt: metav1.NewTime(now), ValidUntil: metav1.NewTime(now.Add(time.Hour)),
+			MaximumClockSkewSeconds: 5, MinimumUpdateSeconds: 10, HistoryLimit: 8,
+			Provenance: spacev1.Provenance{ReporterID: principal, Source: "signed-contact-product", Sequence: 1},
+			Windows:    []spacev1.ContactWindow{{ID: "contact-a", Start: metav1.NewTime(now.Add(time.Minute)), End: metav1.NewTime(now.Add(10 * time.Minute)), BandwidthBitsPerSec: 100_000_000, RTTMicroseconds: 20_000, LossPartsPerMillion: 100, ErrorPartsPerMillion: 10, StabilityMilli: 950, ConfidenceMilli: 900, Predicted: true}},
+		},
+	}
+	value.Name = spacev1.LinkSnapshotName(source, destination)
+	signReporterObject(t, value, privateKey)
+	return value
+}
+
+func signReporterObject(t *testing.T, object runtime.Object, privateKey ed25519.PrivateKey) {
+	t.Helper()
+	provenance := objectProvenance(t, object)
+	provenance.Digest = ""
+	provenance.Signature = ""
+	digest, err := spacev1.ReporterDigest(object)
+	if err != nil {
+		t.Fatal(err)
+	}
+	provenance.Digest = digest
+	raw, _ := hex.DecodeString(digest)
+	provenance.Signature = base64.StdEncoding.EncodeToString(ed25519.Sign(privateKey, raw))
+}
+
+func objectProvenance(t *testing.T, object runtime.Object) *spacev1.Provenance {
+	t.Helper()
+	switch value := object.(type) {
+	case *spacev1.SpaceLinkSnapshot:
+		return &value.Spec.Provenance
+	case *spacev1.SpaceDomainResourceSummary:
+		return &value.Spec.Provenance
+	case *spacev1.SpaceTransferReceipt:
+		return &value.Spec.Provenance
+	case *spacev1.SpaceResultReceipt:
+		return &value.Spec.Provenance
+	default:
+		t.Fatalf("unsupported reporter object %T", object)
+		return nil
+	}
+}
+
+func admissionRequest(t *testing.T, operation admissionv1.Operation, resource, principal string, current, previous runtime.Object) *admissionv1.AdmissionRequest {
+	t.Helper()
+	raw, err := json.Marshal(current)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := &admissionv1.AdmissionRequest{
+		UID: types.UID("admission-test"), Operation: operation,
+		Resource: metav1.GroupVersionResource{Group: spacev1.GroupName, Version: "v1alpha1", Resource: resource},
+		UserInfo: authenticationUser(principal), Object: runtime.RawExtension{Raw: raw},
+	}
+	if previous != nil {
+		oldRaw, err := json.Marshal(previous)
+		if err != nil {
+			t.Fatal(err)
+		}
+		request.OldObject = runtime.RawExtension{Raw: oldRaw}
+	}
+	return request
+}
+
+func authenticationUser(principal string) authenticationv1.UserInfo {
+	return authenticationv1.UserInfo{Username: principal}
+}
+--- canonical.go ---
+package v1alpha1
+
+import (
+	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
+	"sort"
+	"strconv"
+	"strings"
+	"time"
+
+	"k8s.io/apimachinery/pkg/runtime"
+)
+
+const canonicalReporterFormat = "spacecompute-canonical-v1"
+
+type canonicalWriter struct {
+	buffer bytes.Buffer
+}
+
+func newCanonicalWriter(kind, name string) *canonicalWriter {
+	w := &canonicalWriter{}
+	w.string("format", canonicalReporterFormat)
+	w.string("apiVersion", SchemeGroupVersion.String())
+	w.string("kind", kind)
+	w.string("name", name)
+	return w
+}
+
+func (w *canonicalWriter) string(key, value string) {
+	fmt.Fprintf(&w.buffer, "%s=s:%s\n", key, strconv.Quote(value))
+}
+
+func (w *canonicalWriter) integer(key string, value int64) {
+	fmt.Fprintf(&w.buffer, "%s=i:%d\n", key, value)
+}
+
+func (w *canonicalWriter) boolean(key string, value bool) {
+	fmt.Fprintf(&w.buffer, "%s=b:%t\n", key, value)
+}
+
+func (w *canonicalWriter) timestamp(key string, value time.Time) {
+	w.string(key, value.UTC().Format(time.RFC3339Nano))
+}
+
+func (w *canonicalWriter) domain(prefix string, value DomainReference) {
+	w.string(prefix+".name", strings.ToLower(strings.TrimSpace(value.Name)))
+	w.string(prefix+".clusterID", strings.ToLower(strings.TrimSpace(value.ClusterID)))
+	w.string(prefix+".orbitClass", strings.ToLower(strings.TrimSpace(string(value.OrbitClass))))
+}
+
+func (w *canonicalWriter) provenance(value Provenance) {
+	w.string("provenance.reporterID", value.ReporterID)
+	w.string("provenance.source", value.Source)
+	w.integer("provenance.sequence", value.Sequence)
+	w.string("provenance.previousDigest", value.PreviousDigest)
+	// Digest and Signature are intentionally excluded. The digest would be
+	// self-referential and the signature authenticates the resulting digest.
+}
+
+func (w *canonicalWriter) bytes() []byte {
+	return append([]byte(nil), w.buffer.Bytes()...)
+}
+
+// CanonicalReporterBytes returns the versioned, deterministic serialization used
+// by reporter digests. It deliberately accepts only signed reporter-owned API
+// objects; adding a new kind requires an explicit canonical field order here.
+func CanonicalReporterBytes(value runtime.Object) ([]byte, error) {
+	switch object := value.(type) {
+	case *SpaceLinkSnapshot:
+		return canonicalLinkSnapshot(object)
+	case *SpaceDomainResourceSummary:
+		return canonicalResourceSummary(object)
+	case *SpaceTransferReceipt:
+		return canonicalTransferReceipt(object)
+	case *SpaceResultReceipt:
+		return canonicalResultReceipt(object)
+	default:
+		return nil, fmt.Errorf("unsupported canonical reporter object %T", value)
+	}
+}
+
+// ReporterDigest calculates lowercase SHA-256 over CanonicalReporterBytes.
+func ReporterDigest(value runtime.Object) (string, error) {
+	raw, err := CanonicalReporterBytes(value)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(raw)
+	return hex.EncodeToString(sum[:]), nil
+}
+
+func canonicalLinkSnapshot(snapshot *SpaceLinkSnapshot) ([]byte, error) {
+	if snapshot == nil {
+		return nil, fmt.Errorf("link snapshot is required")
+	}
+	w := newCanonicalWriter("SpaceLinkSnapshot", snapshot.Name)
+	w.domain("source", snapshot.Spec.Source)
+	w.domain("destination", snapshot.Spec.Destination)
+	w.timestamp("observedAt", snapshot.Spec.ObservedAt.Time)
+	w.timestamp("validUntil", snapshot.Spec.ValidUntil.Time)
+	w.integer("maximumClockSkewSeconds", snapshot.Spec.MaximumClockSkewSeconds)
+	w.integer("minimumUpdateSeconds", snapshot.Spec.MinimumUpdateSeconds)
+	w.integer("historyLimit", int64(snapshot.Spec.HistoryLimit))
+	w.provenance(snapshot.Spec.Provenance)
+
+	windows := append([]ContactWindow(nil), snapshot.Spec.Windows...)
+	sort.Slice(windows, func(i, j int) bool { return windows[i].ID < windows[j].ID })
+	w.integer("windows.count", int64(len(windows)))
+	for index, window := range windows {
+		prefix := fmt.Sprintf("windows.%d", index)
+		w.string(prefix+".id", window.ID)
+		w.timestamp(prefix+".start", window.Start.Time)
+		w.timestamp(prefix+".end", window.End.Time)
+		w.integer(prefix+".bandwidthBitsPerSecond", window.BandwidthBitsPerSec)
+		w.integer(prefix+".rttMicroseconds", window.RTTMicroseconds)
+		w.integer(prefix+".lossPartsPerMillion", int64(window.LossPartsPerMillion))
+		w.integer(prefix+".errorPartsPerMillion", int64(window.ErrorPartsPerMillion))
+		w.integer(prefix+".stabilityMilli", int64(window.StabilityMilli))
+		w.integer(prefix+".confidenceMilli", int64(window.ConfidenceMilli))
+		w.boolean(prefix+".predicted", window.Predicted)
+	}
+	return w.bytes(), nil
+}
+
+func canonicalResourceSummary(summary *SpaceDomainResourceSummary) ([]byte, error) {
+	if summary == nil {
+		return nil, fmt.Errorf("resource summary is required")
+	}
+	w := newCanonicalWriter("SpaceDomainResourceSummary", summary.Name)
+	w.domain("domain", summary.Spec.Domain)
+	w.timestamp("observedAt", summary.Spec.ObservedAt.Time)
+	w.timestamp("validUntil", summary.Spec.ValidUntil.Time)
+	w.provenance(summary.Spec.Provenance)
+
+	devices := append([]DeviceCapacity(nil), summary.Spec.Devices...)
+	sort.Slice(devices, func(i, j int) bool { return devices[i].Class < devices[j].Class })
+	w.integer("devices.count", int64(len(devices)))
+	for index, device := range devices {
+		prefix := fmt.Sprintf("devices.%d", index)
+		w.string(prefix+".class", device.Class)
+		w.integer(prefix+".count", device.Count)
+		writeSortedStrings(w, prefix+".architectures", device.Architectures)
+		writeSortedStrings(w, prefix+".models", device.Models)
+		writeSortedStrings(w, prefix+".precision", device.Precision)
+		w.integer(prefix+".computeMilli", device.ComputeMilli)
+		w.integer(prefix+".fragmentationMilli", int64(device.FragmentationMilli))
+	}
+
+	keys := make([]string, 0, len(summary.Spec.Software))
+	for key := range summary.Spec.Software {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	w.integer("software.count", int64(len(keys)))
+	for index, key := range keys {
+		prefix := fmt.Sprintf("software.%d", index)
+		w.string(prefix+".key", key)
+		w.string(prefix+".value", summary.Spec.Software[key])
+	}
+	writeSortedStrings(w, "dataLocations", summary.Spec.DataLocations)
+	w.integer("queueDelaySeconds", summary.Spec.QueueDelaySeconds)
+	w.integer("energyHeadroomMilli", int64(summary.Spec.EnergyHeadroomMilli))
+	w.integer("thermalHeadroomMilli", int64(summary.Spec.ThermalHeadroomMilli))
+	w.integer("resilienceMilli", int64(summary.Spec.ResilienceMilli))
+	w.integer("minimumEnergyMilli", int64(summary.Spec.MinimumEnergyMilli))
+	w.integer("minimumThermalMilli", int64(summary.Spec.MinimumThermalMilli))
+	w.integer("maximumSnapshotAgeSeconds", summary.Spec.MaximumSnapshotAgeSecs)
+	w.string("exporterSnapshotDigest", summary.Spec.ExporterSnapshotDigest)
+	return w.bytes(), nil
+}
+
+func canonicalTransferReceipt(receipt *SpaceTransferReceipt) ([]byte, error) {
+	if receipt == nil {
+		return nil, fmt.Errorf("transfer receipt is required")
+	}
+	w := newCanonicalWriter("SpaceTransferReceipt", receipt.Name)
+	w.string("transferID", receipt.Spec.TransferID)
+	w.string("missionUID", receipt.Spec.MissionUID)
+	w.string("planID", receipt.Spec.PlanID)
+	w.integer("attempt", int64(receipt.Spec.Attempt))
+	w.domain("source", receipt.Spec.Source)
+	w.domain("destination", receipt.Spec.Destination)
+	w.string("dataID", receipt.Spec.DataID)
+	w.integer("bytes", receipt.Spec.Bytes)
+	w.string("payloadDigest", receipt.Spec.PayloadDigest)
+	w.timestamp("startedAt", receipt.Spec.StartedAt.Time)
+	w.timestamp("completedAt", receipt.Spec.CompletedAt.Time)
+	w.provenance(receipt.Spec.Provenance)
+	return w.bytes(), nil
+}
+
+func canonicalResultReceipt(receipt *SpaceResultReceipt) ([]byte, error) {
+	if receipt == nil {
+		return nil, fmt.Errorf("result receipt is required")
+	}
+	w := newCanonicalWriter("SpaceResultReceipt", receipt.Name)
+	w.string("resultID", receipt.Spec.ResultID)
+	w.string("missionUID", receipt.Spec.MissionUID)
+	w.string("planID", receipt.Spec.PlanID)
+	w.integer("attempt", int64(receipt.Spec.Attempt))
+	w.domain("source", receipt.Spec.Source)
+	w.domain("destination", receipt.Spec.Destination)
+	w.integer("bytes", receipt.Spec.Bytes)
+	w.string("payloadDigest", receipt.Spec.PayloadDigest)
+	w.timestamp("completedAt", receipt.Spec.CompletedAt.Time)
+	w.provenance(receipt.Spec.Provenance)
+	return w.bytes(), nil
+}
+
+func writeSortedStrings(w *canonicalWriter, key string, values []string) {
+	sorted := append([]string(nil), values...)
+	sort.Strings(sorted)
+	w.integer(key+".count", int64(len(sorted)))
+	for index, value := range sorted {
+		w.string(fmt.Sprintf("%s.%d", key, index), value)
+	}
+}
+
+func normalizedDomainIdentity(value DomainReference) string {
+	return strings.ToLower(strings.TrimSpace(string(value.OrbitClass))) + "|" +
+		strings.ToLower(strings.TrimSpace(value.ClusterID)) + "|" +
+		strings.ToLower(strings.TrimSpace(value.Name))
+}
+
+func derivedObjectName(prefix, identity string) string {
+	sum := sha256.Sum256([]byte(identity))
+	return prefix + "-" + hex.EncodeToString(sum[:16])
+}
+
+// ReporterBindingName is deterministic so admission can fetch one binding with a
+// single GET instead of granting list access to all cluster-scoped bindings.
+func ReporterBindingName(principal string) string {
+	return derivedObjectName("reporter", strings.TrimSpace(principal))
+}
+
+func DomainResourceSummaryName(domain DomainReference) string {
+	return derivedObjectName("domain", normalizedDomainIdentity(domain))
+}
+
+func LinkSnapshotName(source, destination DomainReference) string {
+	return derivedObjectName("link", normalizedDomainIdentity(source)+"->"+normalizedDomainIdentity(destination))
+}
+
+func TransferReceiptName(source, destination DomainReference, missionUID, planID, transferID string) string {
+	identity := normalizedDomainIdentity(source) + "->" + normalizedDomainIdentity(destination) + "|" +
+		strings.TrimSpace(missionUID) + "|" + strings.ToLower(strings.TrimSpace(planID)) + "|" + strings.ToLower(strings.TrimSpace(transferID))
+	return derivedObjectName("transfer", identity)
+}
+
+func ResultReceiptName(source, destination DomainReference, missionUID, planID, resultID string) string {
+	identity := normalizedDomainIdentity(source) + "->" + normalizedDomainIdentity(destination) + "|" +
+		strings.TrimSpace(missionUID) + "|" + strings.ToLower(strings.TrimSpace(planID)) + "|" + strings.ToLower(strings.TrimSpace(resultID))
+	return derivedObjectName("result", identity)
+}
