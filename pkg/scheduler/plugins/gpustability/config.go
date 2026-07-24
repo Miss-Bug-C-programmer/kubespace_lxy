@@ -14,6 +14,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilvalidation "k8s.io/apimachinery/pkg/util/validation"
+	"k8s.io/klog/v2"
 	"sigs.k8s.io/yaml"
 )
 
@@ -41,9 +42,11 @@ const (
 )
 
 type ResourceMappingArgs struct {
-	Name     string   `json:"name"`
-	Class    string   `json:"class"`
-	Profiles []string `json:"profiles,omitempty"`
+	Name              string   `json:"name"`
+	Class             string   `json:"class"`
+	Profiles          []string `json:"profiles,omitempty"`
+	InventorySelector string   `json:"inventorySelector,omitempty"`
+	AllocationMode    string   `json:"allocationMode,omitempty"`
 }
 
 type ExporterArgs struct {
@@ -126,15 +129,16 @@ type QueueingArgs struct {
 // GPUStabilityArgs is the versioned scheduler plugin configuration accepted in
 // KubeSchedulerConfiguration profiles[].pluginConfig[].args.
 type GPUStabilityArgs struct {
-	metav1.TypeMeta    `json:",inline"`
-	Resources          []ResourceMappingArgs `json:"resources"`
-	Exporter           ExporterArgs          `json:"exporter"`
-	Collector          CollectorArgs         `json:"collector"`
-	Discovery          DiscoveryArgs         `json:"discovery"`
-	ProfileSource      ProfileSourceArgs     `json:"profileSource"`
-	Policy             PolicyArgs            `json:"policy"`
-	Queueing           QueueingArgs          `json:"queueing"`
-	MetricProfilesFile string                `json:"metricProfilesFile,omitempty"`
+	metav1.TypeMeta          `json:",inline"`
+	Resources                []ResourceMappingArgs `json:"resources"`
+	Exporter                 ExporterArgs          `json:"exporter"`
+	Collector                CollectorArgs         `json:"collector"`
+	Discovery                DiscoveryArgs         `json:"discovery"`
+	ProfileSource            ProfileSourceArgs     `json:"profileSource"`
+	Policy                   PolicyArgs            `json:"policy"`
+	Queueing                 QueueingArgs          `json:"queueing"`
+	MetricProfilesFile       string                `json:"metricProfilesFile,omitempty"`
+	AllowLegacyResourceNames bool                  `json:"allowLegacyResourceNames,omitempty"`
 }
 
 func (in *GPUStabilityArgs) DeepCopyObject() runtime.Object {
@@ -151,8 +155,10 @@ func (in *GPUStabilityArgs) DeepCopyObject() runtime.Object {
 }
 
 type resourceMapping struct {
-	Class    DeviceClass
-	Profiles map[string]struct{}
+	Class          DeviceClass
+	Profiles       map[string]struct{}
+	Selector       inventorySelector
+	AllocationMode allocationMode
 }
 
 type Config struct {
@@ -277,6 +283,14 @@ func defaultArgs() GPUStabilityArgs {
 
 func configFromArgs(obj runtime.Object) (Config, error) {
 	args := defaultArgs()
+	// Decode once into a preview so the explicit typed compatibility gate can
+	// authorize the deprecated resource-name environment variable while typed
+	// args continue to take precedence over all compatibility environment values.
+	preview := args
+	if err := decodeArgs(obj, &preview); err != nil {
+		return Config{}, err
+	}
+	args.AllowLegacyResourceNames = preview.AllowLegacyResourceNames
 	if err := applyLegacyEnv(&args); err != nil {
 		return Config{}, err
 	}
@@ -376,7 +390,24 @@ func validateAndConvertArgs(args GPUStabilityArgs) (Config, error) {
 			}
 			profiles[profile] = struct{}{}
 		}
-		mappings[name] = resourceMapping{Class: class, Profiles: profiles}
+		selector, err := parseInventorySelector(item.InventorySelector)
+		if err != nil {
+			return Config{}, fmt.Errorf("resources[%d].inventorySelector: %w", i, err)
+		}
+		mode, err := parseAllocationMode(item.AllocationMode)
+		if err != nil {
+			return Config{}, fmt.Errorf("resources[%d].allocationMode: %w", i, err)
+		}
+		if selector.DRAPool != "" && selector.DRADriver == "" {
+			return Config{}, fmt.Errorf("resources[%d].inventorySelector dra-pool requires dra-driver", i)
+		}
+		if mode == allocationModeDRALinked && selector.DRADriver == "" {
+			return Config{}, fmt.Errorf("resources[%d] allocationMode dra-linked requires inventorySelector dra-driver", i)
+		}
+		if mode != allocationModeDRALinked && selector.DRADriver != "" {
+			return Config{}, fmt.Errorf("resources[%d] inventorySelector dra-driver requires allocationMode dra-linked", i)
+		}
+		mappings[name] = resourceMapping{Class: class, Profiles: profiles, Selector: selector, AllocationMode: mode}
 	}
 
 	timeout, err := positiveDuration("exporter.timeout", args.Exporter.Timeout)
@@ -602,6 +633,26 @@ func validateAddressTypes(raw []string, allowExternalIP bool) ([]v1.NodeAddressT
 	return result, nil
 }
 
+func resourceMappingsFromJSON(raw string) ([]ResourceMappingArgs, error) {
+	decoder := json.NewDecoder(strings.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	var mappings []ResourceMappingArgs
+	if err := decoder.Decode(&mappings); err != nil {
+		return nil, fmt.Errorf("decode K3S_GPU_RESOURCE_MAPPINGS_JSON: %w", err)
+	}
+	var trailing interface{}
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		if err == nil {
+			return nil, fmt.Errorf("decode K3S_GPU_RESOURCE_MAPPINGS_JSON: multiple JSON values")
+		}
+		return nil, fmt.Errorf("decode K3S_GPU_RESOURCE_MAPPINGS_JSON trailing data: %w", err)
+	}
+	if len(mappings) == 0 {
+		return nil, fmt.Errorf("K3S_GPU_RESOURCE_MAPPINGS_JSON must contain at least one mapping")
+	}
+	return mappings, nil
+}
+
 func applyLegacyEnv(args *GPUStabilityArgs) error {
 	setString := func(name string, target *string) {
 		if value, ok := os.LookupEnv(name); ok {
@@ -617,15 +668,42 @@ func applyLegacyEnv(args *GPUStabilityArgs) error {
 	setString("K3S_GPU_EXPORTER_CACHE_CLEANUP_INTERVAL", &args.Collector.RefreshInterval)
 	setString("K3S_GPU_METRIC_PROFILES_FILE", &args.MetricProfilesFile)
 
-	if value, ok := os.LookupEnv("K3S_GPU_RESOURCE_NAMES"); ok {
+	structuredRaw, structuredSet := os.LookupEnv("K3S_GPU_RESOURCE_MAPPINGS_JSON")
+	legacyRaw, legacySet := os.LookupEnv("K3S_GPU_RESOURCE_NAMES")
+	if structuredSet && legacySet {
+		return fmt.Errorf("K3S_GPU_RESOURCE_MAPPINGS_JSON and deprecated K3S_GPU_RESOURCE_NAMES cannot both be set")
+	}
+	if structuredSet {
+		resources, err := resourceMappingsFromJSON(structuredRaw)
+		if err != nil {
+			return err
+		}
+		args.Resources = resources
+	}
+	if legacySet {
+		if !args.AllowLegacyResourceNames {
+			return fmt.Errorf("K3S_GPU_RESOURCE_NAMES is disabled; set typed arg allowLegacyResourceNames=true temporarily or migrate to K3S_GPU_RESOURCE_MAPPINGS_JSON")
+		}
+		known := map[string]ResourceMappingArgs{}
+		for _, mapping := range defaultArgs().Resources {
+			known[mapping.Name] = mapping
+		}
 		var resources []ResourceMappingArgs
-		for _, name := range strings.Split(value, ",") {
+		for _, name := range strings.Split(legacyRaw, ",") {
 			name = strings.TrimSpace(name)
 			if name == "" {
 				continue
 			}
-			resources = append(resources, ResourceMappingArgs{Name: name, Class: string(DeviceClassAccelerator), Profiles: []string{"generic"}})
+			mapping, ok := known[name]
+			if !ok {
+				return fmt.Errorf("K3S_GPU_RESOURCE_NAMES cannot safely infer class/profile for %q; use K3S_GPU_RESOURCE_MAPPINGS_JSON", name)
+			}
+			resources = append(resources, mapping)
 		}
+		if len(resources) == 0 {
+			return fmt.Errorf("K3S_GPU_RESOURCE_NAMES did not contain any resource names")
+		}
+		klog.Warning("K3S_GPU_RESOURCE_NAMES is deprecated and enabled only by allowLegacyResourceNames=true; migrate to K3S_GPU_RESOURCE_MAPPINGS_JSON")
 		args.Resources = resources
 	}
 	if err := envBoolStrict("K3S_GPU_ALLOW_INSECURE_HTTP", &args.Exporter.AllowInsecureHTTP); err != nil {

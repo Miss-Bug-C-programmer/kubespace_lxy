@@ -323,3 +323,11 @@ retry periods, no Lease renewal within its duration, sustained queue depth over
 Framework-generated FailedScheduling Events carry the deterministic rejection
 text. The plugin does not write Events from callbacks because API writes would
 violate the hot-path I/O boundary.
+
+### Resource inventory partitions and physical allocation identity
+
+Resource mappings support `inventorySelector` and `allocationMode`. `inventorySelector` uses comma-separated exact keys: `id-prefix`, `uuid-prefix`, `name-prefix`, `dra-driver`, and optional `dra-pool`. The default `allocationMode` is `exclusive`; `dra-linked` requires `dra-driver` and consumes only allocation identities already published by upstream DRA. Same-class mappings are not assumed disjoint merely because resource names differ. Strict scheduling fails closed when simultaneous mappings may overlap and distinct physical identities cannot prove exclusivity.
+
+`K3S_GPU_RESOURCE_MAPPINGS_JSON` is the structured environment compatibility form for resource mappings. `K3S_GPU_RESOURCE_NAMES` is deprecated and disabled unless `allowLegacyResourceNames: true` is explicitly configured; legacy names must resolve to an existing explicit/default mapping and are never converted to a generic accelerator class.
+
+When a `dra-linked` workload has an already allocated ResourceClaim, the plugin validates `<driver>/<pool>/<device>` against the current complete ResourceSlice generation and exporter stable device ID, then applies per-device telemetry constraints only to that selected device set. ResourceClaim-only Pods remain under upstream `DynamicResources`. Without physical allocation linkage, extended-resource scheduling retains conservative node-wide telemetry semantics and does not claim per-device enforcement.

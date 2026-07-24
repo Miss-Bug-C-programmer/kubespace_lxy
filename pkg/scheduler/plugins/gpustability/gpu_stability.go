@@ -61,11 +61,12 @@ const (
 )
 
 type Plugin struct {
-	config    Config
-	collector *collector
-	handle    framework.Handle
-	blocked   *blockedPodIndex
-	clock     spacev1.Clock
+	config           Config
+	collector        *collector
+	handle           framework.Handle
+	blocked          *blockedPodIndex
+	clock            spacev1.Clock
+	allocationSource allocationIdentitySource
 }
 
 type nodeMetrics struct {
@@ -124,6 +125,7 @@ func New(ctx context.Context, obj runtime.Object, handle framework.Handle) (fram
 		config: cfg, collector: collector, handle: handle,
 		blocked: newBlockedPodIndex(cfg.MaxTrackedPods, cfg.BlockedPodTTL), clock: spacev1.RealClock{},
 	}
+	plugin.allocationSource = newAllocationIdentitySource(handle, cfg)
 	collector.setSnapshotListener(plugin.activateForSnapshot)
 	if err := collector.registerNodeInformer(handle); err != nil {
 		collector.Close()
@@ -157,6 +159,8 @@ type workloadRequirement struct {
 	RequiredNodeLabels  map[string]string
 	PreferredNodeLabels map[string]string
 	Space               *spacepolicy.Requirement
+	PhysicalAllocations map[v1.ResourceName][]physicalAllocationIdentity
+	AllocationIssues    map[v1.ResourceName]string
 }
 
 func (w *workloadRequirement) Clone() framework.StateData {
@@ -170,6 +174,8 @@ func (w *workloadRequirement) Clone() framework.StateData {
 	clone.RequiredNodeLabels = copyStringMap(w.RequiredNodeLabels)
 	clone.PreferredNodeLabels = copyStringMap(w.PreferredNodeLabels)
 	clone.Space = w.Space.Clone()
+	clone.PhysicalAllocations = clonePhysicalAllocations(w.PhysicalAllocations)
+	clone.AllocationIssues = cloneAllocationIssues(w.AllocationIssues)
 	return &clone
 }
 
@@ -280,6 +286,9 @@ func (p *Plugin) PreFilter(_ context.Context, state *framework.CycleState, pod *
 	if err != nil {
 		return nil, framework.NewStatus(framework.UnschedulableAndUnresolvable, err.Error())
 	}
+	if requirement.Required && len(requirement.Resources) > 0 {
+		p.resolvePhysicalAllocations(pod, requirement)
+	}
 	state.Write(workloadStateKey, requirement)
 	state.Write(cycleSnapshotStateKey, newCycleNodeSnapshotState())
 	if !requirement.Required {
@@ -337,7 +346,7 @@ func (p *Plugin) Filter(_ context.Context, state *framework.CycleState, pod *v1.
 		observeFilterDecision(requirement.Policy, "static_fallback")
 		return nil
 	}
-	evaluation := p.evaluateFreshSnapshot(requirement, snapshot.Metrics, pinned.NodeResource, node.Labels)
+	evaluation := p.evaluateFreshSnapshot(requirement, snapshot.Metrics, pinned.NodeResource, node)
 	if !evaluation.Compatible {
 		p.trackBlocked(nodeName, pod)
 		observeFilterDecision(requirement.Policy, evaluation.ReasonCode)
@@ -442,7 +451,7 @@ func (p *Plugin) PreScore(_ context.Context, state *framework.CycleState, _ *v1.
 		snapshot := pinned.Snapshot
 		input := nodeScoreInput{State: snapshot.State, Reason: snapshot.Reason, Space: spacepolicy.Evaluate(requirement.Space, node, p.clock)}
 		if snapshot.State == snapshotFresh {
-			input.Evaluation = p.evaluateFreshSnapshot(requirement, snapshot.Metrics, pinned.NodeResource, node.Labels)
+			input.Evaluation = p.evaluateFreshSnapshot(requirement, snapshot.Metrics, pinned.NodeResource, node)
 			input.Evaluation.applySpace(input.Space)
 		}
 		result.Nodes[node.Name] = input
@@ -720,7 +729,11 @@ func (e *nodeEvaluation) applySpace(space spacepolicy.Evaluation) {
 	}
 }
 
-func (p *Plugin) evaluateFreshSnapshot(requirement *workloadRequirement, metrics nodeMetrics, resources nodeResourceContext, nodeLabels map[string]string) nodeEvaluation {
+func (p *Plugin) evaluateFreshSnapshot(requirement *workloadRequirement, metrics nodeMetrics, resources nodeResourceContext, node *v1.Node) nodeEvaluation {
+	var nodeLabels map[string]string
+	if node != nil {
+		nodeLabels = node.Labels
+	}
 	evaluation := nodeEvaluation{Compatible: true, DynamicEligible: true, ReasonCode: "accepted"}
 	if len(requirement.RequiredProfiles) > 0 {
 		if _, accepted := requirement.RequiredProfiles[strings.ToLower(metrics.Profile)]; !accepted {
@@ -738,70 +751,9 @@ func (p *Plugin) evaluateFreshSnapshot(requirement *workloadRequirement, metrics
 		return evaluation
 	}
 
-	classes := sortedClassNames(requirement.Classes)
-	for _, class := range classes {
-		demand := requirement.Classes[class]
-		classDevices := devicesForClass(metrics.Devices, class)
-		if int64(len(classDevices)) < demand {
-			evaluation.Compatible = false
-			evaluation.DynamicEligible = false
-			evaluation.ReasonCode = "wrong_or_insufficient_class"
-			evaluation.Reason = fmt.Sprintf("exporter reported %d %s device(s), workload requires %d", len(classDevices), class, demand)
-			return evaluation
-		}
-		eligible := make([]deviceMetrics, 0, len(classDevices))
-		ineligibleReasons := map[string]int{}
-		for _, device := range classDevices {
-			if reasonCode := device.ineligibilityReason(requirement.MaxTemperatureC, requirement.MinFreeMemoryMiB, p.config.MinSMClockMHz, p.config.MinMemClockMHz); reasonCode != "" {
-				ineligibleReasons[reasonCode]++
-				continue
-			}
-			eligible = append(eligible, device)
-		}
-		if int64(len(eligible)) < demand || len(eligible) != len(classDevices) {
-			evaluation.DynamicEligible = false
-			reasonCodes := make([]string, 0, len(ineligibleReasons))
-			for reasonCode := range ineligibleReasons {
-				reasonCodes = append(reasonCodes, reasonCode)
-			}
-			sort.Strings(reasonCodes)
-			primary := "dynamic_threshold"
-			if len(reasonCodes) > 0 {
-				primary = reasonCodes[0]
-			}
-			evaluation.ReasonCode = primary
-			evaluation.Reason = fmt.Sprintf("only %d of %d %s device(s) satisfy telemetry thresholds (%s)", len(eligible), len(classDevices), class, formatReasonCounts(reasonCodes, ineligibleReasons))
-		}
-		evaluation.Devices = append(evaluation.Devices, eligible...)
-	}
-	// Extended resources do not identify the device that a vendor plugin will
-	// allocate. Strict per-device thresholds are therefore honest only when the
-	// exporter covers every allocatable device of each requested resource and
-	// every covered device is eligible.
-	for resourceName := range requirement.Resources {
-		mapping := p.config.ResourceMappings[resourceName]
-		allocatable, known := resources.Allocatable[resourceName]
-		observed := int64(len(devicesForClass(metrics.Devices, mapping.Class)))
-		if !known || allocatable <= 0 || observed != allocatable {
-			evaluation.DynamicEligible = false
-			evaluation.ReasonCode = "allocation_identity_unlinked"
-			evaluation.Reason = fmt.Sprintf("strict telemetry coverage for %q is %d device(s), Kubernetes allocatable is %d; physical allocation identity is not linked", resourceName, observed, allocatable)
-		}
-	}
-	for resourceName := range requirement.Resources {
-		mapping := p.config.ResourceMappings[resourceName]
-		if len(mapping.Profiles) > 0 {
-			if _, ok := mapping.Profiles[strings.ToLower(metrics.Profile)]; !ok {
-				evaluation.Compatible = false
-				evaluation.DynamicEligible = false
-				evaluation.ReasonCode = "profile_incompatible"
-				evaluation.Reason = fmt.Sprintf("exporter profile %q is not compatible with resource %q", metrics.Profile, resourceName)
-				return evaluation
-			}
-		}
-	}
-	evaluation.finishScores(p.config, requirement, nodeLabels)
-	return evaluation
+	resourceEvaluation := p.evaluateRequestedResources(requirement, metrics, resources, node)
+	resourceEvaluation.finishScores(p.config, requirement, nodeLabels)
+	return resourceEvaluation
 }
 
 func (e *nodeEvaluation) finishScores(cfg Config, requirement *workloadRequirement, nodeLabels map[string]string) {

@@ -363,3 +363,7 @@ No phase may redefine the final architecture downward merely because a later
 component is not yet implemented. Temporary limitations must be explicit,
 backward-compatible, and accompanied by the next-phase interface or migration
 plan.
+
+### Resource inventory and allocation-identity contract
+
+Accelerator resource names are inventory partitions, not aliases for a DeviceClass. A physical device may satisfy at most one simultaneous resource demand unless an upstream allocation result proves distinct identities. The plugin may consume DRA/vendor allocation identity but never becomes an allocator. Per-device hard guarantees are asserted only when exporter stable identity is linked to the already-selected physical device; otherwise strict mode uses conservative node-wide enforcement and hardware release remains blocked.

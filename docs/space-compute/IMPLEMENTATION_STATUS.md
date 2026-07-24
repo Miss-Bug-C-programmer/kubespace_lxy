@@ -862,3 +862,21 @@ Regression coverage includes generation update after Filter, expiry after Filter
 - gofmt, go vet and source-boundary audit: PASS.
 
 The local interactive container cannot download Go 1.25.12 because external DNS is disabled; authoritative validation therefore ran in GitHub Actions. The final push is normal/non-force and Phase 5 release blockers remain unchanged.
+
+## Phase 5 focused resource and physical-allocation semantics hardening (2026-07-24)
+
+Root cause: resource demand was aggregated by DeviceClass, so two extended-resource names mapped to one class could reuse the same exporter devices. Legacy K3S_GPU_RESOURCE_NAMES also collapsed arbitrary names to generic accelerator. Physical telemetry identity was not consumable from already-allocated DRA claims.
+
+Production fix: resource mappings now carry explicit inventorySelector and allocationMode. Scheduling evaluates each resource inventory partition independently and rejects overlapping simultaneous inventories in strict mode unless distinct physical allocation identities prove exclusivity. Mixed classes, profile-disjoint inventories and explicitly disjoint stable-ID/name prefixes are accounted independently. K3S_GPU_RESOURCE_MAPPINGS_JSON is the structured compatibility environment variable. K3S_GPU_RESOURCE_NAMES now requires allowLegacyResourceNames=true, emits a deprecation warning and only resolves names already present in explicit/default mappings; it never invents generic accelerator mappings.
+
+DRA linkage is read-only: for dra-linked mappings the plugin consumes already-determined ResourceClaim allocation results, validates driver/pool/device against the highest complete ResourceSlice generation and Node availability, then matches the DRA device ID to exporter stable device identity. It does not allocate, Reserve, mutate claims or maintain a second allocator. ResourceClaim-only Pods remain owned by upstream DynamicResources. Extended resources without physical linkage retain the conservative node-wide strict rule and therefore do not claim per-device guarantees.
+
+Regression coverage includes overlapping same-class resource names, disjoint inventory partitions, DRA/exporter stable-ID match, nonexistent/duplicate/stale/profile-mismatched DRA identities, conservative unlinked extended-resource semantics and ResourceClaim-only ownership.
+
+- Focused Stage 3 regression set: PASS in GitHub Actions run 30070983763 from main snapshot e79d1ffa6e0eb50680d6330a3c676b818137b3a4.
+- Focused go test -race: PASS in the same run.
+- scripts/space-compute all: PASS.
+- go test ./pkg/executor/embed -count=1: PASS; the default K3s scheduler remains independent.
+- gofmt, go vet and source-boundary audit: PASS.
+
+Vendor hardware release remains blocked until exporter stable IDs are demonstrated to match real DRA or vendor allocation identities on supported hardware. No vGPU slicing or second allocator is introduced by this change.

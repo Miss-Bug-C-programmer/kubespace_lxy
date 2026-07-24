@@ -9,7 +9,9 @@ import (
 
 	spacev1 "github.com/k3s-io/k3s/contrib/space-compute/pkg/apis/v1alpha1"
 	v1 "k8s.io/api/core/v1"
+	resourceapi "k8s.io/api/resource/v1beta1"
 	"k8s.io/apimachinery/pkg/api/equality"
+	"k8s.io/dynamic-resource-allocation/resourceclaim"
 	"k8s.io/klog/v2"
 	"k8s.io/kubernetes/pkg/scheduler/framework"
 )
@@ -177,14 +179,69 @@ func (p *Plugin) activateForSnapshot(nodeName string, _ uint64) {
 }
 
 func (p *Plugin) EventsToRegister(context.Context) ([]framework.ClusterEventWithHint, error) {
-	return []framework.ClusterEventWithHint{{
+	events := []framework.ClusterEventWithHint{{
 		Event: framework.ClusterEvent{
 			Resource: framework.Node,
 			ActionType: framework.Add | framework.UpdateNodeAllocatable |
 				framework.UpdateNodeLabel | framework.UpdateNodeAnnotation,
 		},
 		QueueingHintFn: p.queueOnNodeChange,
-	}}, nil
+	}}
+	if configUsesDRALinkage(p.config) {
+		events = append(events,
+			framework.ClusterEventWithHint{Event: framework.ClusterEvent{Resource: framework.ResourceClaim, ActionType: framework.Add | framework.Update | framework.Delete}, QueueingHintFn: p.queueOnResourceClaimChange},
+			framework.ClusterEventWithHint{Event: framework.ClusterEvent{Resource: framework.ResourceSlice, ActionType: framework.Add | framework.Update | framework.Delete}, QueueingHintFn: p.queueOnResourceSliceChange},
+		)
+	}
+	return events, nil
+}
+
+func (p *Plugin) queueOnResourceClaimChange(_ klog.Logger, pod *v1.Pod, oldObj, newObj interface{}) (framework.QueueingHint, error) {
+	requirement, err := p.schedulingRequirement(pod)
+	if err != nil {
+		return framework.Queue, err
+	}
+	if !requirement.Required || len(requirement.Resources) == 0 || len(pod.Spec.ResourceClaims) == 0 {
+		return framework.QueueSkip, nil
+	}
+	claim, _ := newObj.(*resourceapi.ResourceClaim)
+	if claim == nil {
+		claim, _ = oldObj.(*resourceapi.ResourceClaim)
+	}
+	if claim == nil || claim.Namespace != pod.Namespace {
+		return framework.QueueSkip, nil
+	}
+	for i := range pod.Spec.ResourceClaims {
+		claimName, _, nameErr := resourceclaim.Name(pod, &pod.Spec.ResourceClaims[i])
+		if nameErr == nil && claimName != nil && *claimName == claim.Name {
+			return framework.Queue, nil
+		}
+	}
+	return framework.QueueSkip, nil
+}
+
+func (p *Plugin) queueOnResourceSliceChange(_ klog.Logger, pod *v1.Pod, oldObj, newObj interface{}) (framework.QueueingHint, error) {
+	requirement, err := p.schedulingRequirement(pod)
+	if err != nil {
+		return framework.Queue, err
+	}
+	if !requirement.Required || len(requirement.Resources) == 0 || len(pod.Spec.ResourceClaims) == 0 {
+		return framework.QueueSkip, nil
+	}
+	slice, _ := newObj.(*resourceapi.ResourceSlice)
+	if slice == nil {
+		slice, _ = oldObj.(*resourceapi.ResourceSlice)
+	}
+	if slice == nil {
+		return framework.QueueSkip, nil
+	}
+	for name := range requirement.Resources {
+		mapping := p.config.ResourceMappings[name]
+		if mapping.AllocationMode == allocationModeDRALinked && mapping.Selector.matchesDRA(slice.Spec.Driver, slice.Spec.Pool.Name) {
+			return framework.Queue, nil
+		}
+	}
+	return framework.QueueSkip, nil
 }
 
 func (p *Plugin) queueOnNodeChange(_ klog.Logger, pod *v1.Pod, oldObj, newObj interface{}) (framework.QueueingHint, error) {
