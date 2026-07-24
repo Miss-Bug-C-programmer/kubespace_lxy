@@ -43,7 +43,7 @@ type unifiedSnapshot struct {
 	Profile          string
 	Endpoint         string
 	Metrics          nodeMetrics
-	Resources        nodeResourceContext
+	Allocatable      map[v1.ResourceName]int64
 	ObservedAt       time.Time
 	ValidUntil       time.Time
 	CollectionError  string
@@ -66,14 +66,14 @@ func (s *snapshotStore) transition(target scrapeTarget, resources nodeResourceCo
 	defer s.mu.Unlock()
 	record, exists := s.records[target.NodeName]
 	if exists && record.Identity == target.Identity && record.TargetGeneration == target.Generation && record.TargetKey == target.Key {
-		record.Resources = cloneResourceContext(resources)
+		record.Allocatable = cloneResourceMap(resources.Allocatable)
 		record.LastAccess = now
 		s.records[target.NodeName] = record
 		return
 	}
 	s.records[target.NodeName] = unifiedSnapshot{
 		Identity: target.Identity, TargetKey: target.Key, TargetGeneration: target.Generation,
-		Profile: target.Profile, Endpoint: target.Endpoint, Resources: cloneResourceContext(resources),
+		Profile: target.Profile, Endpoint: target.Endpoint, Allocatable: cloneResourceMap(resources.Allocatable),
 		Confidence: confidenceMissing, LastAccess: now,
 	}
 	s.pruneLocked()
@@ -121,7 +121,7 @@ func (s *snapshotStore) lookup(target scrapeTarget, now time.Time) snapshotResul
 		return snapshotResult{State: snapshotMissing, Confidence: confidenceMissing, Reason: "telemetry snapshot is not available"}
 	}
 	result := snapshotResult{
-		Metrics: cloneNodeMetrics(record.Metrics), Resources: cloneResourceContext(record.Resources),
+		Metrics: cloneNodeMetrics(record.Metrics), Resources: nodeResourceContext{Allocatable: cloneResourceMap(record.Allocatable)},
 		ObservedAt: record.ObservedAt, ValidUntil: record.ValidUntil, Profile: record.Profile,
 		TargetGeneration: record.TargetGeneration, Confidence: record.Confidence,
 	}
@@ -163,7 +163,7 @@ func (s *snapshotStore) updateResources(target scrapeTarget, resources nodeResou
 	if !exists || record.Identity != target.Identity || record.TargetGeneration != target.Generation || record.TargetKey != target.Key {
 		return
 	}
-	record.Resources = cloneResourceContext(resources)
+	record.Allocatable = cloneResourceMap(resources.Allocatable)
 	s.records[target.NodeName] = record
 }
 
@@ -239,19 +239,55 @@ func cloneResourceMap(in map[v1.ResourceName]int64) map[v1.ResourceName]int64 {
 	return out
 }
 
+func cloneSnapshotResult(in snapshotResult) snapshotResult {
+	out := in
+	out.Metrics = cloneNodeMetrics(in.Metrics)
+	out.Resources = cloneResourceContext(in.Resources)
+	return out
+}
+
 func cloneNodeMetrics(in nodeMetrics) nodeMetrics {
 	out := in
-	out.Fields = make(map[deviceMetricField]struct{}, len(in.Fields))
-	for field := range in.Fields {
-		out.Fields[field] = struct{}{}
+	out.Fields = cloneDeviceFieldSet(in.Fields)
+	out.Devices = cloneDeviceMetricsSlice(in.Devices)
+	return out
+}
+
+func cloneDeviceMetricsSlice(in []deviceMetrics) []deviceMetrics {
+	if in == nil {
+		return nil
 	}
-	out.Devices = make([]deviceMetrics, len(in.Devices))
-	for i, device := range in.Devices {
-		out.Devices[i] = device
-		out.Devices[i].Fields = make(map[deviceMetricField]struct{}, len(device.Fields))
-		for field := range device.Fields {
-			out.Devices[i].Fields[field] = struct{}{}
-		}
+	out := make([]deviceMetrics, len(in))
+	for i, device := range in {
+		out[i] = device
+		out[i].Fields = cloneDeviceFieldSet(device.Fields)
 	}
 	return out
+}
+
+func cloneDeviceFieldSet(in map[deviceMetricField]struct{}) map[deviceMetricField]struct{} {
+	if in == nil {
+		return nil
+	}
+	out := make(map[deviceMetricField]struct{}, len(in))
+	for field := range in {
+		out[field] = struct{}{}
+	}
+	return out
+}
+
+func resourceContextsEqual(left, right nodeResourceContext) bool {
+	return resourceMapsEqual(left.Allocatable, right.Allocatable) && resourceMapsEqual(left.Requested, right.Requested)
+}
+
+func resourceMapsEqual(left, right map[v1.ResourceName]int64) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for name, value := range left {
+		if right[name] != value {
+			return false
+		}
+	}
+	return true
 }

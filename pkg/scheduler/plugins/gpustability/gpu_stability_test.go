@@ -392,6 +392,11 @@ func TestPreScoreAndScorePreferTightFitGPUNode(t *testing.T) {
 	warmNode(t, plugin, singleNode)
 	warmNode(t, plugin, richNode)
 	state := cycleStateForPod(t, plugin, pod)
+	for _, nodeInfo := range []*framework.NodeInfo{singleNode, richNode} {
+		if status := plugin.Filter(context.Background(), state, pod, nodeInfo); !status.IsSuccess() {
+			t.Fatalf("Filter(%s) status = %v, want success", nodeInfo.Node().Name, status)
+		}
+	}
 
 	status := plugin.PreScore(context.Background(), state, pod, []*framework.NodeInfo{singleNode, richNode})
 	if !status.IsSuccess() {
@@ -425,6 +430,11 @@ func TestPreScoreAggregatesThreeExporterNodes(t *testing.T) {
 	warmNode(t, plugin, dualNode)
 	warmNode(t, plugin, richNode)
 	state := cycleStateForPod(t, plugin, pod)
+	for _, nodeInfo := range []*framework.NodeInfo{singleNode, dualNode, richNode} {
+		if status := plugin.Filter(context.Background(), state, pod, nodeInfo); !status.IsSuccess() {
+			t.Fatalf("Filter(%s) status = %v, want success", nodeInfo.Node().Name, status)
+		}
+	}
 
 	status := plugin.PreScore(context.Background(), state, pod, []*framework.NodeInfo{singleNode, dualNode, richNode})
 	if !status.IsSuccess() {

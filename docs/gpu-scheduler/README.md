@@ -143,11 +143,15 @@ Exporter collection runs in bounded background workers. Node informer
 add/update/delete events reconcile stable Node UID/name identities to endpoint
 generations. Address, profile, port, path, scheme, or UID changes immediately
 invalidate the old generation; a late old-endpoint response cannot overwrite the
-replacement. `Filter`, `PreScore`,
-and `Score` read local immutable snapshots only; a cache miss may enqueue a
-non-blocking refresh. Queue size, workers, cache entries, timeout, retry backoff,
-and circuit breaking are bounded. The exporter observation time determines
-freshness; reading a snapshot never extends it.
+replacement. `Filter` reads the local snapshot once per Node and pins a deep,
+immutable copy into scheduler cycle state. `PreScore` and `Score` consume only
+that Filter-pinned generation, freshness, profile, confidence, timestamps and
+resource context; they never re-read the collector. A cache miss may enqueue a
+non-blocking refresh for the already discovered generation. Global snapshots
+persist allocatable capacity but never cycle-specific `NodeInfo.Requested` data.
+Queue size, workers, cache entries, timeout, retry backoff, and circuit breaking
+are bounded. The exporter observation time determines freshness; reading or
+pinning a snapshot never extends it.
 
 Background discovery scrapes only Nodes that advertise a configured positive
 extended resource or explicit exporter metadata. Thus ordinary K3s agents and a

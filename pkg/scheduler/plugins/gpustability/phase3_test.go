@@ -187,6 +187,9 @@ func TestScoringBreakdownGoldenAndFixedNormalization(t *testing.T) {
 	node.Node().Labels = map[string]string{"topology.kubernetes.io/zone": "orbit-a"}
 	warmNode(t, plugin, node)
 	state := cycleStateForPod(t, plugin, pod)
+	if status := plugin.Filter(context.Background(), state, pod, node); !status.IsSuccess() {
+		t.Fatal(status)
+	}
 	if status := plugin.PreScore(context.Background(), state, pod, []*framework.NodeInfo{node}); !status.IsSuccess() {
 		t.Fatal(status)
 	}

@@ -81,9 +81,10 @@ The architecture has these cooperating layers:
 2. **Asynchronous scrape and normalization manager** — uses bounded workers,
    jitter, per-target timeouts, backoff and profile adapters to scrape TianShu
    ZhiXin/Iluvatar and other exporters outside the scheduling cycle.
-3. **Unified snapshot store** — combines Kubernetes Node allocatable/requested
-   resources with normalized exporter telemetry and retains observation time,
-   expiry, source profile and failure state.
+3. **Unified snapshot store** — combines Kubernetes Node allocatable resources
+   with normalized exporter telemetry and retains observation time, expiry, source
+   profile and failure state. Per-cycle `NodeInfo` requested resources remain
+   scheduler cycle-local and are never persisted into the global snapshot store.
 4. **Space compute scheduler** — performs in-cluster Pod-to-Node feasibility and
    ranking using only local informer/cache snapshots.
 5. **Optional global mission planner** — later chooses cluster/orbit domain and

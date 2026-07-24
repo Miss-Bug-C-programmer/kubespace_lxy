@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	spacev1 "github.com/k3s-io/k3s/contrib/space-compute/pkg/apis/v1alpha1"
@@ -54,8 +55,9 @@ var (
 )
 
 const (
-	workloadStateKey framework.StateKey = "K3SGPUStabilityWorkload"
-	preScoreStateKey framework.StateKey = "K3SGPUStabilityPreScore"
+	workloadStateKey      framework.StateKey = "K3SGPUStabilityWorkload"
+	cycleSnapshotStateKey framework.StateKey = "K3SGPUStabilityNodeSnapshots"
+	preScoreStateKey      framework.StateKey = "K3SGPUStabilityPreScore"
 )
 
 type Plugin struct {
@@ -171,12 +173,115 @@ func (w *workloadRequirement) Clone() framework.StateData {
 	return &clone
 }
 
+type cycleNodeSnapshotState struct {
+	mu    sync.RWMutex
+	nodes map[string]nodeCycleSnapshot
+}
+
+type nodeCycleSnapshot struct {
+	Snapshot         snapshotResult
+	TargetGeneration uint64
+	NodeResource     nodeResourceContext
+}
+
+func newCycleNodeSnapshotState() *cycleNodeSnapshotState {
+	return &cycleNodeSnapshotState{nodes: make(map[string]nodeCycleSnapshot)}
+}
+
+func (s *cycleNodeSnapshotState) Clone() framework.StateData {
+	if s == nil {
+		return (*cycleNodeSnapshotState)(nil)
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	clone := newCycleNodeSnapshotState()
+	for name, snapshot := range s.nodes {
+		clone.nodes[name] = cloneNodeCycleSnapshot(snapshot)
+	}
+	return clone
+}
+
+func (s *cycleNodeSnapshotState) load(nodeName string) (nodeCycleSnapshot, bool) {
+	if s == nil {
+		return nodeCycleSnapshot{}, false
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	snapshot, ok := s.nodes[nodeName]
+	if !ok {
+		return nodeCycleSnapshot{}, false
+	}
+	return cloneNodeCycleSnapshot(snapshot), true
+}
+
+func (s *cycleNodeSnapshotState) pin(nodeName string, snapshot nodeCycleSnapshot) nodeCycleSnapshot {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if existing, ok := s.nodes[nodeName]; ok {
+		return cloneNodeCycleSnapshot(existing)
+	}
+	stored := cloneNodeCycleSnapshot(snapshot)
+	s.nodes[nodeName] = stored
+	return cloneNodeCycleSnapshot(stored)
+}
+
+func cloneNodeCycleSnapshot(in nodeCycleSnapshot) nodeCycleSnapshot {
+	out := in
+	out.Snapshot = cloneSnapshotResult(in.Snapshot)
+	out.NodeResource = cloneResourceContext(in.NodeResource)
+	return out
+}
+
+func validateNodeCycleSnapshot(nodeName string, snapshot nodeCycleSnapshot) error {
+	if strings.TrimSpace(nodeName) == "" {
+		return fmt.Errorf("cycle snapshot node identity is unavailable")
+	}
+	if snapshot.TargetGeneration != snapshot.Snapshot.TargetGeneration {
+		return fmt.Errorf("cycle snapshot target generation is inconsistent for node %q", nodeName)
+	}
+	if !resourceContextsEqual(snapshot.Snapshot.Resources, snapshot.NodeResource) {
+		return fmt.Errorf("cycle snapshot resource context is inconsistent for node %q", nodeName)
+	}
+	result := snapshot.Snapshot
+	switch result.State {
+	case snapshotFresh:
+		if result.ObservedAt.IsZero() || result.ValidUntil.IsZero() || result.ValidUntil.Before(result.ObservedAt) {
+			return fmt.Errorf("cycle snapshot freshness timestamps are incomplete for node %q", nodeName)
+		}
+		if result.TargetGeneration == 0 {
+			return fmt.Errorf("cycle snapshot target generation is missing for node %q", nodeName)
+		}
+		if result.Confidence != confidenceValidated && result.Confidence != confidenceDegraded {
+			return fmt.Errorf("cycle snapshot confidence is inconsistent with fresh state for node %q", nodeName)
+		}
+	case snapshotStale:
+		if result.ObservedAt.IsZero() || result.ValidUntil.IsZero() || result.ValidUntil.Before(result.ObservedAt) {
+			return fmt.Errorf("cycle snapshot freshness timestamps are incomplete for node %q", nodeName)
+		}
+		if result.TargetGeneration == 0 || result.Confidence != confidenceStale {
+			return fmt.Errorf("cycle snapshot stale state is incomplete for node %q", nodeName)
+		}
+	case snapshotMissing:
+		if result.Confidence != confidenceMissing {
+			return fmt.Errorf("cycle snapshot confidence is inconsistent with missing state for node %q", nodeName)
+		}
+	case snapshotFailed:
+		if result.TargetGeneration == 0 || result.Confidence != confidenceFailed {
+			return fmt.Errorf("cycle snapshot failed state is incomplete for node %q", nodeName)
+		}
+	default:
+		return fmt.Errorf("cycle snapshot state is incomplete for node %q", nodeName)
+	}
+	return nil
+}
+
 func (p *Plugin) PreFilter(_ context.Context, state *framework.CycleState, pod *v1.Pod) (*framework.PreFilterResult, *framework.Status) {
 	requirement, err := p.schedulingRequirement(pod)
 	if err != nil {
 		return nil, framework.NewStatus(framework.UnschedulableAndUnresolvable, err.Error())
 	}
 	state.Write(workloadStateKey, requirement)
+	state.Write(cycleSnapshotStateKey, newCycleNodeSnapshotState())
 	if !requirement.Required {
 		return nil, framework.NewStatus(framework.Skip)
 	}
@@ -197,14 +302,23 @@ func (p *Plugin) Filter(_ context.Context, state *framework.CycleState, pod *v1.
 		observeFilterDecision(requirement.Policy, "node_missing")
 		return framework.NewStatus(framework.Unschedulable, "node information is unavailable")
 	}
-	nodeName := nodeInfo.Node().Name
-	spaceEvaluation := spacepolicy.Evaluate(requirement.Space, nodeInfo.Node(), p.clock)
+	node := nodeInfo.Node()
+	nodeName := node.Name
+	pinned, status := p.snapshotForFilter(state, nodeInfo)
+	if !status.IsSuccess() {
+		return status
+	}
+	if pinned.Snapshot.State != snapshotFresh && pinned.TargetGeneration != 0 && p.collector != nil {
+		p.collector.requestRefreshExisting(nodeName, pinned.TargetGeneration)
+	}
+
+	spaceEvaluation := spacepolicy.Evaluate(requirement.Space, node, p.clock)
 	if !spaceEvaluation.Feasible {
 		p.trackBlocked(nodeName, pod)
 		observeFilterDecision(requirement.Policy, spaceEvaluation.ReasonCode)
 		return framework.NewStatus(framework.Unschedulable, structuredSpaceReason(spaceEvaluation))
 	}
-	if reason := labelMismatchReason(nodeInfo.Node().Labels, requirement.RequiredNodeLabels); reason != "" {
+	if reason := labelMismatchReason(node.Labels, requirement.RequiredNodeLabels); reason != "" {
 		p.trackBlocked(nodeName, pod)
 		observeFilterDecision(requirement.Policy, "node_label_incompatible")
 		return framework.NewStatus(framework.UnschedulableAndUnresolvable, reason)
@@ -213,10 +327,7 @@ func (p *Plugin) Filter(_ context.Context, state *framework.CycleState, pod *v1.
 		observeFilterDecision(requirement.Policy, "observational")
 		return nil
 	}
-	snapshot := p.collector.lookupSnapshotForNodeInfo(nodeInfo)
-	if snapshot.State != snapshotFresh && snapshot.TargetGeneration != 0 {
-		p.collector.requestRefreshExisting(nodeName, snapshot.TargetGeneration)
-	}
+	snapshot := pinned.Snapshot
 	if snapshot.State != snapshotFresh {
 		if requirement.Policy == StatePolicyStrict {
 			p.trackBlocked(nodeName, pod)
@@ -226,7 +337,7 @@ func (p *Plugin) Filter(_ context.Context, state *framework.CycleState, pod *v1.
 		observeFilterDecision(requirement.Policy, "static_fallback")
 		return nil
 	}
-	evaluation := p.evaluateFreshSnapshot(requirement, snapshot.Metrics, snapshot.Resources, nodeInfo.Node().Labels)
+	evaluation := p.evaluateFreshSnapshot(requirement, snapshot.Metrics, pinned.NodeResource, node.Labels)
 	if !evaluation.Compatible {
 		p.trackBlocked(nodeName, pod)
 		observeFilterDecision(requirement.Policy, evaluation.ReasonCode)
@@ -242,6 +353,36 @@ func (p *Plugin) Filter(_ context.Context, state *framework.CycleState, pod *v1.
 		p.blocked.remove(nodeName, pod)
 	}
 	return nil
+}
+
+func (p *Plugin) snapshotForFilter(state *framework.CycleState, nodeInfo *framework.NodeInfo) (nodeCycleSnapshot, *framework.Status) {
+	cycleSnapshots, status := cycleSnapshotsFromState(state)
+	if !status.IsSuccess() {
+		return nodeCycleSnapshot{}, status
+	}
+	nodeName := nodeInfo.Node().Name
+	if pinned, ok := cycleSnapshots.load(nodeName); ok {
+		if err := validateNodeCycleSnapshot(nodeName, pinned); err != nil {
+			return nodeCycleSnapshot{}, framework.NewStatus(framework.Error, err.Error())
+		}
+		return pinned, nil
+	}
+	if p.collector == nil {
+		return nodeCycleSnapshot{}, framework.NewStatus(framework.Error, "exporter collector is unavailable")
+	}
+	result := p.collector.lookupSnapshotForNodeInfo(nodeInfo)
+	resources := cloneResourceContext(result.Resources)
+	candidate := nodeCycleSnapshot{
+		Snapshot:         cloneSnapshotResult(result),
+		TargetGeneration: result.TargetGeneration,
+		NodeResource:     resources,
+	}
+	candidate.Snapshot.Resources = cloneResourceContext(resources)
+	pinned := cycleSnapshots.pin(nodeName, candidate)
+	if err := validateNodeCycleSnapshot(nodeName, pinned); err != nil {
+		return nodeCycleSnapshot{}, framework.NewStatus(framework.Error, err.Error())
+	}
+	return pinned, nil
 }
 
 func (p *Plugin) trackBlocked(nodeName string, pod *v1.Pod) {
@@ -260,7 +401,7 @@ func (s *preScoreState) Clone() framework.StateData {
 	}
 	clone := &preScoreState{Nodes: make(map[string]nodeScoreInput, len(s.Nodes))}
 	for name, input := range s.Nodes {
-		input.Evaluation.Devices = append([]deviceMetrics(nil), input.Evaluation.Devices...)
+		input.Evaluation.Devices = cloneDeviceMetricsSlice(input.Evaluation.Devices)
 		clone.Nodes[name] = input
 	}
 	return clone
@@ -281,19 +422,27 @@ func (p *Plugin) PreScore(_ context.Context, state *framework.CycleState, _ *v1.
 	if !requirement.Required {
 		return framework.NewStatus(framework.Skip)
 	}
+	cycleSnapshots, status := cycleSnapshotsFromState(state)
+	if !status.IsSuccess() {
+		return status
+	}
 	result := &preScoreState{Nodes: make(map[string]nodeScoreInput, len(nodes))}
 	for _, nodeInfo := range nodes {
 		if nodeInfo == nil || nodeInfo.Node() == nil {
-			continue
+			return framework.NewStatus(framework.Error, "PreScore received node information that was not evaluated during Filter")
 		}
 		node := nodeInfo.Node()
-		snapshot := p.collector.lookupSnapshotForNodeInfo(nodeInfo)
-		if snapshot.State != snapshotFresh && snapshot.TargetGeneration != 0 {
-			p.collector.requestRefreshExisting(node.Name, snapshot.TargetGeneration)
+		pinned, ok := cycleSnapshots.load(node.Name)
+		if !ok {
+			return framework.NewStatus(framework.Error, fmt.Sprintf("node %q was not evaluated during Filter", node.Name))
 		}
+		if err := validateNodeCycleSnapshot(node.Name, pinned); err != nil {
+			return framework.NewStatus(framework.Error, err.Error())
+		}
+		snapshot := pinned.Snapshot
 		input := nodeScoreInput{State: snapshot.State, Reason: snapshot.Reason, Space: spacepolicy.Evaluate(requirement.Space, node, p.clock)}
 		if snapshot.State == snapshotFresh {
-			input.Evaluation = p.evaluateFreshSnapshot(requirement, snapshot.Metrics, snapshot.Resources, node.Labels)
+			input.Evaluation = p.evaluateFreshSnapshot(requirement, snapshot.Metrics, pinned.NodeResource, node.Labels)
 			input.Evaluation.applySpace(input.Space)
 		}
 		result.Nodes[node.Name] = input
@@ -312,6 +461,17 @@ func (p *Plugin) Score(ctx context.Context, state *framework.CycleState, pod *v1
 	}
 	if nodeInfo == nil || nodeInfo.Node() == nil {
 		return framework.MinNodeScore, framework.NewStatus(framework.Error, "node information is unavailable")
+	}
+	cycleSnapshots, status := cycleSnapshotsFromState(state)
+	if !status.IsSuccess() {
+		return framework.MinNodeScore, status
+	}
+	pinned, ok := cycleSnapshots.load(nodeInfo.Node().Name)
+	if !ok {
+		return framework.MinNodeScore, framework.NewStatus(framework.Error, fmt.Sprintf("node %q was not evaluated during Filter", nodeInfo.Node().Name))
+	}
+	if err := validateNodeCycleSnapshot(nodeInfo.Node().Name, pinned); err != nil {
+		return framework.MinNodeScore, framework.NewStatus(framework.Error, err.Error())
 	}
 	preScore, status := scoreState(state)
 	if !status.IsSuccess() {
@@ -349,6 +509,21 @@ func workloadFromState(state *framework.CycleState) (*workloadRequirement, *fram
 		return nil, framework.NewStatus(framework.Error, "invalid K3SGPUStability workload cycle state")
 	}
 	return requirement, nil
+}
+
+func cycleSnapshotsFromState(state *framework.CycleState) (*cycleNodeSnapshotState, *framework.Status) {
+	if state == nil {
+		return nil, framework.NewStatus(framework.Error, "PreFilter cycle state is unavailable")
+	}
+	data, err := state.Read(cycleSnapshotStateKey)
+	if err != nil {
+		return nil, framework.NewStatus(framework.Error, "PreFilter must initialize K3SGPUStability node snapshot cycle state")
+	}
+	result, ok := data.(*cycleNodeSnapshotState)
+	if !ok || result == nil || result.nodes == nil {
+		return nil, framework.NewStatus(framework.Error, "invalid K3SGPUStability node snapshot cycle state")
+	}
+	return result, nil
 }
 
 func scoreState(state *framework.CycleState) (*preScoreState, *framework.Status) {

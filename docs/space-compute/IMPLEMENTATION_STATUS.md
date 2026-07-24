@@ -846,3 +846,19 @@ Regression coverage includes a 1,000-ordinary-Node annotation-only cycle with ze
 - Hot-path source audit, gofmt check and `go vet ./pkg/scheduler/plugins/gpustability`: PASS.
 
 The interactive execution container could not download the repository-pinned Go 1.25.12 toolchain because external DNS is disabled, so authoritative validation ran on the repository GitHub Actions runner against the exact triggering main snapshot. The workflow uses a normal non-force `HEAD:main` push; concurrent updates fail rather than being overwritten. Phase 5 remains active and existing release blockers are unchanged.
+
+## Phase 5 focused scheduling-cycle snapshot consistency hardening (2026-07-24)
+
+Root cause: Filter and PreScore independently read the collector, so one scheduling cycle could cross target generations, TTL freshness transitions or post-Filter collection failures. The global snapshot shape also still retained cycle-specific Requested state.
+
+Production fix: PreFilter initializes a concurrency-safe cycleNodeSnapshotState; each Node's first Filter read deep-copies and pins metrics/device fields, state, ObservedAt, ValidUntil, profile, confidence, target generation, reason and Node resource context. PreScore and Score require Filter-pinned state and return framework.Error for missing/incomplete state; neither re-reads the collector. Global snapshots now persist allocatable resources only; NodeInfo.Requested exists only in the cycle-local snapshot. Clone logic deep-copies maps, slices and device field maps.
+
+Regression coverage includes generation update after Filter, expiry after Filter with next-cycle stale transition, post-Filter collector failure, missing/incomplete Filter state, cycle-local Requested ownership, deep-clone isolation and 64 parallel Filter writes under the race detector.
+
+- Focused regression set: PASS in GitHub Actions run 30068022519 from main snapshot a5d58923226b2bfea009084ea240c07c620a3bca.
+- Focused go test -race: PASS in the same run.
+- scripts/space-compute all: PASS.
+- go test ./pkg/executor/embed -count=1: PASS; default K3s remains independent.
+- gofmt, go vet and source-boundary audit: PASS.
+
+The local interactive container cannot download Go 1.25.12 because external DNS is disabled; authoritative validation therefore ran in GitHub Actions. The final push is normal/non-force and Phase 5 release blockers remain unchanged.
