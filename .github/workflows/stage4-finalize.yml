@@ -1,19 +1,18 @@
 name: stage4-finalize-reporter-authenticity
 on:
-  push:
-    branches: [main]
-    paths:
-      - .github/stage4-trigger
+  issues:
+    types: [opened]
 permissions:
   contents: write
 jobs:
   finalize:
+    if: github.event.issue.title == 'stage4-reporter-authenticity-finalize'
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.sha }}
+          ref: main
           fetch-depth: 0
       - uses: actions/setup-go@v5
         with:
@@ -92,10 +91,10 @@ Provision the webhook TLS Secret and CA bundle before granting reporter writes. 
         run: |
           set -euo pipefail
           for file in docs/space-compute/IMPLEMENTATION_STATUS.md docs/space-compute/PHASE5_TEST_REPORT.md; do
-            sed -i "s/__RUN_ID__/${GITHUB_RUN_ID}/g; s/__BASE_SHA__/${GITHUB_SHA}/g" "$file"
+            sed -i "s/__RUN_ID__/${GITHUB_RUN_ID}/g; s/__BASE_SHA__/$(git rev-parse HEAD)/g" "$file"
           done
           git fetch origin main
-          test "$(git rev-parse origin/main)" = "${GITHUB_SHA}"
+          test "$(git rev-parse origin/main)" = "$(git rev-parse HEAD)"
           rm -rf .github/stage4-payload
           rm -f .github/stage4-trigger .github/stage4-apply.py.gz.b64 .github/stage4-apply.py.gz.b64.part* .github/stage4-recovered.py .github/stage4-failure.txt
           rm -f .github/workflows/stage4-reporter-authenticity.yml .github/workflows/stage4-finalize.yml
@@ -111,10 +110,10 @@ Provision the webhook TLS Secret and CA bundle before granting reporter writes. 
         run: |
           set -euo pipefail
           git fetch origin main
-          [ "$(git rev-parse origin/main)" = "${GITHUB_SHA}" ] || exit 0
+          [ "$(git rev-parse origin/main)" = "$(git rev-parse HEAD)" ] || exit 0
           {
-            echo "trigger_sha=${GITHUB_SHA}"
             echo "run_id=${GITHUB_RUN_ID}"
+            echo "base_sha=$(git rev-parse HEAD)"
             echo '--- last gate output ---'
             tail -n 600 /tmp/stage4-finalize.log 2>/dev/null || true
           } > .github/stage4-failure.txt
