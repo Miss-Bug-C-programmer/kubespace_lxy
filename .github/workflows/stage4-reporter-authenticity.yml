@@ -55,6 +55,8 @@ Provision the webhook TLS Secret and CA bundle before granting reporter writes. 
         set -o pipefail
         {
           set -euo pipefail
+          sed -n '250,330p' contrib/space-compute/pkg/planner/planner_test.go
+          grep -R -n 'MaterialInput\|materialInput\|contactWindowsDigest' contrib/space-compute/pkg/planner contrib/space-compute/pkg/apis/v1alpha1 | head -80
           go test ./contrib/space-compute/pkg/apis/v1alpha1 -run '^(TestCanonicalReporterDigestIsStableAndCoversSchedulingFields|TestCanonicalResourceSummarySortsMapAndSetLikeFields|TestDerivedReporterObjectNamesBindFullDomainIdentity|TestReporterBindingValidationUsesPrincipalDerivedNameAndImmutableDomain|TestLinkValidationRejectsOverlapSkewStaleAndFastUnchangedUpdate)$' -count=1 -timeout=90s
           go test ./contrib/space-compute/pkg/admission -run '^(TestValidatorAcceptsTrustedSignedLinkAndRejectsForgery|TestValidatorEnforcesExactDigestChainIdentityAndStabilityUpdate|TestValidatorCoversSummaryAndReceiptKinds|TestAdmissionHTTPHandlerFailsClosed|TestKubernetesTrustSourceUsesDerivedBindingAndSingleSecret)$' -count=1 -timeout=90s
           go test ./contrib/space-compute/pkg/planner -run '^TestStabilityOnlyChangeChangesDigestMaterialInputAndTriggersReplan$' -count=1 -timeout=90s
