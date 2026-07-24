@@ -31,7 +31,20 @@ jobs:
           cache: true
       - name: Apply, validate and publish
         shell: bash
-        run: bash .github/stage4-finalize.sh
+        run: |
+          set -euo pipefail
+          python3 .github/stage4-hardening.py
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('.github/stage4-finalize.sh')
+          text = path.read_text()
+          old = '    .github/stage4-failure.txt \\\n'
+          new = '    .github/stage4-failure.txt \\\n    .github/stage4-hardening.py \\\n'
+          if old not in text:
+              raise SystemExit('stage4 cleanup marker not found')
+          path.write_text(text.replace(old, new, 1))
+          PY
+          bash .github/stage4-finalize.sh
       - name: Publish success
         if: success()
         env:
