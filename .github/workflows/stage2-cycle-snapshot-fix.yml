@@ -52,7 +52,17 @@ jobs:
         git apply /tmp/stage2.patch
         gofmt -w pkg/scheduler/plugins/gpustability/gpu_stability.go pkg/scheduler/plugins/gpustability/snapshot_store.go pkg/scheduler/plugins/gpustability/gpu_stability_test.go pkg/scheduler/plugins/gpustability/phase3_test.go pkg/scheduler/plugins/gpustability/phase5_cycle_snapshot_test.go
     - name: Focused regressions
-      run: go test ./pkg/scheduler/plugins/gpustability -run '^(TestCycleSnapshotPinsGenerationAcrossPreScore|TestCycleSnapshotExpiryAppliesNextCycleOnly|TestCycleSnapshotSurvivesCollectorFailureAfterFilter|TestPreScoreRequiresCompleteFilterPinnedSnapshot|TestCycleSnapshotCloneDeepCopiesMutableFields|TestRequestedResourcesRemainCycleLocal|TestParallelFiltersPinCycleSnapshotsRaceFree|TestPreScoreAndScorePreferTightFitGPUNode|TestPreScoreAggregatesThreeExporterNodes|TestScoringBreakdownGoldenAndFixedNormalization)$' -count=1 -timeout=120s
+      shell: bash
+      run: |
+        set -euo pipefail
+        go test ./pkg/scheduler/plugins/gpustability -run '^(TestCycleSnapshotPinsGenerationAcrossPreScore|TestCycleSnapshotExpiryAppliesNextCycleOnly|TestCycleSnapshotSurvivesCollectorFailureAfterFilter|TestPreScoreRequiresCompleteFilterPinnedSnapshot|TestCycleSnapshotCloneDeepCopiesMutableFields|TestRequestedResourcesRemainCycleLocal|TestParallelFiltersPinCycleSnapshotsRaceFree|TestPreScoreAndScorePreferTightFitGPUNode|TestPreScoreAggregatesThreeExporterNodes|TestScoringBreakdownGoldenAndFixedNormalization)$' -count=1 -timeout=120s 2>&1 | tee /tmp/stage2-focused.log
+    - name: Upload focused failure diagnostics
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: stage2-focused-${{ github.run_id }}
+        path: /tmp/stage2-focused.log
+        if-no-files-found: error
     - name: Race regressions
       run: go test -race ./pkg/scheduler/plugins/gpustability -run '^(TestParallelFiltersPinCycleSnapshotsRaceFree|TestCycleSnapshotCloneDeepCopiesMutableFields|TestCycleSnapshotPinsGenerationAcrossPreScore|TestCycleSnapshotExpiryAppliesNextCycleOnly|TestCycleSnapshotSurvivesCollectorFailureAfterFilter)$' -count=1 -timeout=180s
     - name: Full CPU qualification
