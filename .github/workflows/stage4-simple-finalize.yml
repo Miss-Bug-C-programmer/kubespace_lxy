@@ -1,0 +1,24 @@
+name: stage4-simple-finalize
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/stage4-trigger-v2
+permissions:
+  contents: write
+jobs:
+  finalize:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Apply, validate and publish
+        shell: bash
+        run: bash .github/stage4-finalize.sh
