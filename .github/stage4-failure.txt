@@ -1,10 +1,9 @@
-trigger_sha=c8f4f390913aa27386f7f5b52bd30c5005685b87
-run_id=30075267444
+trigger_sha=2b34e0f34da5ea1d7e0766c995087b5d6429b4a4
+run_id=30081104902
 --- last gate output ---
 === reconstruct ===
 Traceback (most recent call last):
-  File "<stdin>", line 3, in <module>
-  File "/usr/lib/python3.12/base64.py", line 88, in b64decode
-    return binascii.a2b_base64(s, strict_mode=validate)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-binascii.Error: Invalid base64-encoded string: number of data characters (25393) cannot be 1 more than a multiple of 4
+  File "<stdin>", line 8, in <module>
+  File "/usr/lib/python3.12/gzip.py", line 634, in decompress
+    raise EOFError("Compressed file ended before the end-of-stream "
+EOFError: Compressed file ended before the end-of-stream marker was reached
