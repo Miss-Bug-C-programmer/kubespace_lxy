@@ -1,16 +1,14 @@
-run_id=30082399763
-base_sha=f92f00bcb73687a9c1db385e88b69b286aadefea
+run_id=30082544280
+base_sha=414624af7fa3f334fb0ff4dedbd68ff24114719d
 --- last gate output ---
 === apply ===
 === focused ===
-ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/apis/v1alpha1	0.004s
---- FAIL: TestValidatorAcceptsTrustedSignedLinkAndRejectsForgery (0.00s)
-    validator_test.go:78: valid signed link rejected: spec.provenance.digest mismatch: canonical payload digest is 1b245e76b61c4a6a3027992ac0cd1c61c39dac78d48539fcbffde2630a48a114
---- FAIL: TestValidatorEnforcesExactDigestChainIdentityAndStabilityUpdate (0.00s)
-    --- FAIL: TestValidatorEnforcesExactDigestChainIdentityAndStabilityUpdate/destination-switch (0.00s)
-        validator_test.go:167: error=destination domain is not an explicitly allowed peer, want fragment "stable identity"
+ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/apis/v1alpha1	0.003s
+ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/admission	0.013s
+--- FAIL: TestStabilityOnlyChangeChangesDigestMaterialInputAndTriggersReplan (0.00s)
+    planner_test.go:280: no feasible domain: leo-a[input_transfer_window_missing]
 FAIL
-FAIL	github.com/k3s-io/k3s/contrib/space-compute/pkg/admission	0.015s
+FAIL	github.com/k3s-io/k3s/contrib/space-compute/pkg/planner	0.006s
 FAIL
 --- validator.go ---
 package admission
@@ -183,6 +181,22 @@ func (v *Validator) validateReporterRequest(ctx context.Context, request *admiss
 	if err != nil {
 		return err
 	}
+	var previous *reporterEnvelope
+	if request.Operation == admissionv1.Update {
+		previous, err = v.decodeReporterEnvelope(request.Resource.Resource, request.OldObject.Raw)
+		if err != nil {
+			return fmt.Errorf("decode previous reporter object: %w", err)
+		}
+		// Stable identity and the exact provenance chain are checked before
+		// current binding/peer policy so an update can never masquerade as a
+		// create in another domain or directed link.
+		if err := validateImmutableAndChain(current, previous); err != nil {
+			return err
+		}
+		if err := validateUpdateStructural(current, previous, v.clock); err != nil {
+			return err
+		}
+	}
 	principal := request.UserInfo.Username
 	if principal == "" || current.provenance.ReporterID != principal {
 		return fmt.Errorf("spec.provenance.reporterID must equal authenticated principal")
@@ -207,19 +221,7 @@ func (v *Validator) validateReporterRequest(ctx context.Context, request *admiss
 		return fmt.Errorf("metadata.name %q is not derived from normalized reporter object identity; expected %q", current.name, expectedObjectName(current))
 	}
 
-	var previous *reporterEnvelope
-	if request.Operation == admissionv1.Update {
-		previous, err = v.decodeReporterEnvelope(request.Resource.Resource, request.OldObject.Raw)
-		if err != nil {
-			return fmt.Errorf("decode previous reporter object: %w", err)
-		}
-		if err := validateUpdateStructural(current, previous, v.clock); err != nil {
-			return err
-		}
-		if err := validateImmutableAndChain(current, previous); err != nil {
-			return err
-		}
-	} else {
+	if request.Operation != admissionv1.Update {
 		if current.provenance.Sequence != 1 {
 			return fmt.Errorf("new reporter object sequence must be exactly 1")
 		}
@@ -844,7 +846,10 @@ func (w *canonicalWriter) boolean(key string, value bool) {
 }
 
 func (w *canonicalWriter) timestamp(key string, value time.Time) {
-	w.string(key, value.UTC().Format(time.RFC3339Nano))
+	// metav1.Time is persisted by the Kubernetes JSON codec at whole-second
+	// precision. Normalize before formatting so a reporter signs exactly the
+	// canonical value that admission will reconstruct from the stored object.
+	w.string(key, value.UTC().Truncate(time.Second).Format(time.RFC3339Nano))
 }
 
 func (w *canonicalWriter) domain(prefix string, value DomainReference) {
