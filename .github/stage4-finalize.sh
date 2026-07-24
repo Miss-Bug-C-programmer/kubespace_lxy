@@ -14,6 +14,10 @@ on_error() {
       echo "base_sha=$(git rev-parse HEAD)"
       echo '--- last gate output ---'
       tail -n 600 "$LOG" 2>/dev/null || true
+      echo '--- planner stability test ---'
+      sed -n '250,340p' contrib/space-compute/pkg/planner/planner_test.go 2>/dev/null || true
+      echo '--- planner material input ---'
+      grep -R -n 'MaterialInput\|materialInput\|contactWindowsDigest' contrib/space-compute/pkg/planner contrib/space-compute/pkg/apis/v1alpha1 2>/dev/null | head -120 || true
       echo '--- validator.go ---'
       sed -n '1,520p' contrib/space-compute/pkg/admission/validator.go 2>/dev/null || true
       echo '--- validator_test.go ---'
