@@ -1,16 +1,144 @@
-run_id=30087216723
-base_sha=edc6e9a3b871e27c4854c9810116023d45fd49c8
+run_id=30087788060
+base_sha=3aa590556b051f0ae7f1e4d7168a6cb9fffb0fe7
 --- last gate output ---
 === apply ===
 === focused ===
 ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/apis/v1alpha1	0.004s
+ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/admission	0.012s
+ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/planner	0.007s
+ok  	github.com/k3s-io/k3s/cmd/space-compute-mission-planner	0.015s
+?   	github.com/k3s-io/k3s/cmd/space-compute-reporter-webhook	[no test files]
+=== race ===
+ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/apis/v1alpha1	1.020s
+ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/admission	1.089s
+ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/planner	1.027s
+=== full ===
+go: downloading github.com/spf13/cobra v1.9.1
+go: downloading github.com/k3s-io/kubernetes v1.33.7-k3s1
+go: downloading github.com/k3s-io/kubernetes/staging/src/k8s.io/component-helpers v1.33.7-k3s1
+go: downloading github.com/k3s-io/kubernetes/staging/src/k8s.io/dynamic-resource-allocation v1.33.7-k3s1
+go: downloading github.com/k3s-io/kubernetes/staging/src/k8s.io/kube-scheduler v1.33.7-k3s1
+go: downloading github.com/go-logr/zapr v1.3.0
+go: downloading github.com/google/cel-go v0.23.2
+go: downloading github.com/fsnotify/fsnotify v1.9.0
+go: downloading sigs.k8s.io/apiserver-network-proxy/konnectivity-client v0.31.2
+go: downloading github.com/NYTimes/gziphandler v1.1.1
+go: downloading github.com/moby/term v0.5.2
+go: downloading github.com/k3s-io/kubernetes/staging/src/k8s.io/apiextensions-apiserver v1.33.7-k3s1
+go: downloading github.com/k3s-io/kubernetes/staging/src/k8s.io/controller-manager v1.33.7-k3s1
+go: downloading github.com/k3s-io/kubernetes/staging/src/k8s.io/kubelet v1.33.7-k3s1
+go: downloading cel.dev/expr v0.25.1
+go: downloading github.com/stoewer/go-strcase v1.3.0
+go: downloading github.com/k3s-io/kubernetes/staging/src/k8s.io/csi-translation-lib v1.33.7-k3s1
+go: downloading github.com/asaskevich/govalidator v0.0.0-20230301143203-a9d515a09cc2
+go: downloading github.com/antlr4-go/antlr/v4 v4.13.0
+go: downloading github.com/k3s-io/kubernetes/staging/src/k8s.io/kms v1.33.7-k3s1
+go: downloading github.com/distribution/reference v0.5.0
+go: downloading k8s.io/cri-client v0.33.7
+go: downloading github.com/kylelemons/godebug v1.1.0
+go: downloading golang.org/x/exp v0.0.0-20250911091902-df9299821621
+go: downloading github.com/k3s-io/kubernetes/staging/src/k8s.io/cri-api v1.33.7-k3s1
+ok  	github.com/k3s-io/k3s/pkg/scheduler/plugins/gpustability	1.548s
+ok  	github.com/k3s-io/k3s/cmd/space-compute-scheduler	0.040s
+ok  	github.com/k3s-io/k3s/cmd/space-compute-mission-planner	0.029s
+?   	github.com/k3s-io/k3s/cmd/space-compute-reporter-webhook	[no test files]
 ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/admission	0.018s
---- FAIL: TestStabilityOnlyChangeChangesDigestMaterialInputAndTriggersReplan (0.00s)
-    planner_test.go:280: no feasible domain: leo-a[input_transfer_window_missing]
+ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/apis/v1alpha1	0.009s
+ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/kube	0.018s
+ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/planner	0.136s
+ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/policy	0.007s
+ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/workload	0.006s
+ok  	github.com/k3s-io/k3s/tests/integration/spacecomputescheduler	0.011s
+ok  	github.com/k3s-io/k3s/pkg/scheduler/plugins/gpustability	4.321s
+ok  	github.com/k3s-io/k3s/cmd/space-compute-scheduler	1.146s
+ok  	github.com/k3s-io/k3s/cmd/space-compute-mission-planner	1.112s
+?   	github.com/k3s-io/k3s/cmd/space-compute-reporter-webhook	[no test files]
+ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/admission	1.094s
+ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/apis/v1alpha1	1.022s
+ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/kube	1.062s
+ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/planner	2.136s
+ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/policy	1.028s
+ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/workload	1.035s
+ok  	github.com/k3s-io/k3s/tests/integration/spacecomputescheduler	1.041s
+ok  	github.com/k3s-io/k3s/pkg/scheduler/plugins/gpustability	1.003s
+ok  	github.com/k3s-io/k3s/cmd/space-compute-scheduler	0.024s
+ok  	github.com/k3s-io/k3s/cmd/space-compute-mission-planner	0.023s
+?   	github.com/k3s-io/k3s/cmd/space-compute-reporter-webhook	[no test files]
+ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/admission	0.024s
+ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/apis/v1alpha1	0.008s
+ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/kube	0.016s
+ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/planner	0.100s
+ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/policy	0.008s
+ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/workload	0.009s
+ok  	github.com/k3s-io/k3s/tests/integration/spacecomputescheduler	0.011s
+ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/admission	0.012s [no tests to run]
+ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/apis/v1alpha1	0.007s
+ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/kube	0.020s
+ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/planner	0.010s
+ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/policy	0.004s
+ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/workload	0.006s
+ok  	github.com/k3s-io/k3s/pkg/scheduler/plugins/gpustability	0.181s
+fuzz: elapsed: 0s, gathering baseline coverage: 0/3 completed
+fuzz: elapsed: 0s, gathering baseline coverage: 3/3 completed, now fuzzing with 4 workers
+fuzz: elapsed: 3s, execs: 3483 (1160/sec), new interesting: 3 (total: 6)
+fuzz: elapsed: 4s, execs: 7752 (3065/sec), new interesting: 3 (total: 6)
+--- FAIL: FuzzParseMetricsRejectsUntrustedInput (4.40s)
+    --- FAIL: FuzzParseMetricsRejectsUntrustedInput (0.00s)
+        testing.go:1825: panic: runtime error: invalid memory address or nil pointer dereference
+            goroutine 4279 [running]:
+            runtime/debug.Stack()
+            	/opt/hostedtoolcache/go/1.25.12/x64/src/runtime/debug/stack.go:26 +0x9b
+            testing.tRunner.func1()
+            	/opt/hostedtoolcache/go/1.25.12/x64/src/testing/testing.go:1825 +0x1d0
+            panic({0x3e092c0?, 0x641b810?})
+            	/opt/hostedtoolcache/go/1.25.12/x64/src/runtime/panic.go:783 +0x132
+            github.com/prometheus/common/expfmt.(*TextParser).startLabelName(0xc00c1592c0)
+            	/home/runner/go/pkg/mod/github.com/prometheus/common@v0.62.0/expfmt/text_parse.go:288 +0xf2
+            github.com/prometheus/common/expfmt.(*TextParser).TextToMetricFamilies(0xc00c1592c0, {0x475d180?, 0xc00c15f640?})
+            	/home/runner/go/pkg/mod/github.com/prometheus/common@v0.62.0/expfmt/text_parse.go:108 +0x7c
+            github.com/k3s-io/k3s/pkg/scheduler/plugins/gpustability.parsePrometheusMetricsWithLimits({0x475d180, 0xc00c15f640}, {0x7f5ab41c7c80?, 0xc00c0e0c88?, 0x422531?, 0x2000?})
+            	/home/runner/work/kubespace_lxy/kubespace_lxy/pkg/scheduler/plugins/gpustability/metrics_profiles.go:217 +0x88
+            github.com/k3s-io/k3s/pkg/scheduler/plugins/gpustability.parseMetricsWithAdapters({0x475d180?, 0xc00c15f640?}, {_, _}, {_, _, _}, {0x2710, 0x186a0, 0x40, ...})
+            	/home/runner/work/kubespace_lxy/kubespace_lxy/pkg/scheduler/plugins/gpustability/metrics_profiles.go:172 +0xbe
+            github.com/k3s-io/k3s/pkg/scheduler/plugins/gpustability.parseMetricsWithProfilesAndLimits({0x475d180, 0xc00c15f640}, {_, _}, {_, _, _}, {0x2710, 0x186a0, 0x40, ...})
+            	/home/runner/work/kubespace_lxy/kubespace_lxy/pkg/scheduler/plugins/gpustability/metrics_profiles.go:168 +0x3e5
+            github.com/k3s-io/k3s/pkg/scheduler/plugins/gpustability.parseMetricsWithProfiles({0x475d180?, 0xc00c15f640?}, {0x42d7254?, 0x47d1a40?}, {0xc00c215408?, 0x54fc4f?, _})
+            	/home/runner/work/kubespace_lxy/kubespace_lxy/pkg/scheduler/plugins/gpustability/metrics_profiles.go:160 +0xc5
+            github.com/k3s-io/k3s/pkg/scheduler/plugins/gpustability.parseMetricsForProfile({0x475d180, 0xc00c15f640}, {0x42d7254, 0x4})
+            	/home/runner/work/kubespace_lxy/kubespace_lxy/pkg/scheduler/plugins/gpustability/metrics_profiles.go:156 +0xc6
+            github.com/k3s-io/k3s/pkg/scheduler/plugins/gpustability.parseMetrics(...)
+            	/home/runner/work/kubespace_lxy/kubespace_lxy/pkg/scheduler/plugins/gpustability/gpu_stability.go:1061
+            github.com/k3s-io/k3s/pkg/scheduler/plugins/gpustability.FuzzParseMetricsRejectsUntrustedInput.func1(0x0?, {0xc00c11ce60, 0xd})
+            	/home/runner/work/kubespace_lxy/kubespace_lxy/pkg/scheduler/plugins/gpustability/phase1_test.go:658 +0xce
+            reflect.Value.call({0x3cfa4a0?, 0x4479b38?, 0x13?}, {0x42d73fc, 0x4}, {0xc00c234d50, 0x2, 0x2?})
+            	/opt/hostedtoolcache/go/1.25.12/x64/src/reflect/value.go:581 +0xcca
+            reflect.Value.Call({0x3cfa4a0?, 0x4479b38?, 0x5e7de0?}, {0xc00c234d50?, 0x42d49a0?, 0xc00c2644b0?})
+            	/opt/hostedtoolcache/go/1.25.12/x64/src/reflect/value.go:365 +0xb9
+            testing.(*F).Fuzz.func1.1(0xc00c220c40?)
+            	/opt/hostedtoolcache/go/1.25.12/x64/src/testing/fuzz.go:341 +0x367
+            testing.tRunner(0xc00c220c40, 0xc00c20dd40)
+            	/opt/hostedtoolcache/go/1.25.12/x64/src/testing/testing.go:1934 +0xea
+            created by testing.(*F).Fuzz.func1 in goroutine 34
+            	/opt/hostedtoolcache/go/1.25.12/x64/src/testing/fuzz.go:328 +0x637
+            
+    
+    Failing input written to testdata/fuzz/FuzzParseMetricsRejectsUntrustedInput/df94379ee29082eb
+    To re-run:
+    go test -run=FuzzParseMetricsRejectsUntrustedInput/df94379ee29082eb
 FAIL
-FAIL	github.com/k3s-io/k3s/contrib/space-compute/pkg/planner	0.008s
-FAIL
+exit status 1
+FAIL	github.com/k3s-io/k3s/pkg/scheduler/plugins/gpustability	4.420s
 --- planner stability test ---
+	if repository.applyCount != 1 || repository.placement.Status.Phase != spacev1.PlacementReplanning {
+		t.Fatalf("running attempt was duplicated: apply=%d phase=%s", repository.applyCount, repository.placement.Status.Phase)
+	}
+}
+
+func TestStabilityOnlyChangeChangesDigestMaterialInputAndTriggersReplan(t *testing.T) {
+	now, mission, summaries, links := scenario()
+	initial, err := Plan(mission, summaries[:1], links[:2], testClock{now})
+	if err != nil {
+		t.Fatal(err)
 	}
 	beforeWindowDigest := spacev1.ContactWindowsDigest(links[0].Spec.Windows)
 	beforeMaterialDigest := initial.Placement.Spec.MaterialInputDigest
@@ -29,6 +157,13 @@ FAIL
 	updated := links[0].DeepCopy()
 	updated.Generation++
 	updated.Spec.Provenance.Sequence++
+	updated.Status.ObservedGeneration = updated.Generation
+	updated.Status.AcceptedSequence = updated.Spec.Provenance.Sequence
+	updated.Status.Conditions = []metav1.Condition{{
+		Type: ConditionLinkValidated, Status: metav1.ConditionTrue,
+		ObservedGeneration: updated.Generation, LastTransitionTime: metav1.NewTime(updatedNow),
+		Reason: "Validated", Message: "updated stability snapshot accepted by resource controller",
+	}}
 	updated.Spec.Provenance.PreviousDigest = updated.Spec.Provenance.Digest
 	updated.Spec.Provenance.Digest = strings.Repeat("c", 64)
 	updated.Spec.ObservedAt = metav1.NewTime(updatedNow)
@@ -95,13 +230,6 @@ func reverseSummaries(in []*spacev1.SpaceDomainResourceSummary) []*spacev1.Space
 	out := append([]*spacev1.SpaceDomainResourceSummary(nil), in...)
 	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
 		out[i], out[j] = out[j], out[i]
-	}
-	return out
-}
-func reverseLinks(in []*spacev1.SpaceLinkSnapshot) []*spacev1.SpaceLinkSnapshot {
-	out := append([]*spacev1.SpaceLinkSnapshot(nil), in...)
-	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
-		out[i], out[j] = out[j], out[i]
 --- planner material input ---
 contrib/space-compute/pkg/planner/controller.go:124:		if existing.Spec.MaterialInputDigest == decision.Placement.Spec.MaterialInputDigest && existing.Spec.ExpiresAt.After(c.clock().Now()) {
 contrib/space-compute/pkg/planner/controller.go:128:			mission.Status.LastDecisionDigest = existing.Spec.MaterialInputDigest
@@ -110,7 +238,7 @@ contrib/space-compute/pkg/planner/controller.go:183:	mission.Status.LastDecision
 contrib/space-compute/pkg/planner/planner_test.go:40:	if first.Placement.Spec.MaterialInputDigest != second.Placement.Spec.MaterialInputDigest || first.Placement.Spec.PlanID != second.Placement.Spec.PlanID || first.Placement.Spec.Score != second.Placement.Spec.Score {
 contrib/space-compute/pkg/planner/planner_test.go:245:func TestStabilityOnlyChangeChangesDigestMaterialInputAndTriggersReplan(t *testing.T) {
 contrib/space-compute/pkg/planner/planner_test.go:252:	beforeMaterialDigest := initial.Placement.Spec.MaterialInputDigest
-contrib/space-compute/pkg/planner/planner_test.go:282:	if replanned.Placement.Spec.MaterialInputDigest == beforeMaterialDigest {
+contrib/space-compute/pkg/planner/planner_test.go:289:	if replanned.Placement.Spec.MaterialInputDigest == beforeMaterialDigest {
 contrib/space-compute/pkg/planner/planner.go:115:			MaterialInputDigest: digest, SnapshotSequences: selected.sequences, Score: selected.score,
 contrib/space-compute/pkg/apis/v1alpha1/types.go:390:	MaterialInputDigest string                  `json:"materialInputDigest"`
 contrib/space-compute/pkg/apis/v1alpha1/validation_test.go:105:		MaterialInputDigest: strings.Repeat("c", 64), SnapshotSequences: map[string]int64{"resource/leo-a": 1},
