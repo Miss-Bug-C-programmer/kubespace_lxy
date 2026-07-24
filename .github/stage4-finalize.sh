@@ -15,9 +15,11 @@ on_error() {
       echo '--- last gate output ---'
       tail -n 600 "$LOG" 2>/dev/null || true
       echo '--- validator.go ---'
-      sed -n '1,360p' contrib/space-compute/pkg/admission/validator.go 2>/dev/null || true
+      sed -n '1,520p' contrib/space-compute/pkg/admission/validator.go 2>/dev/null || true
       echo '--- validator_test.go ---'
-      sed -n '1,260p' contrib/space-compute/pkg/admission/validator_test.go 2>/dev/null || true
+      sed -n '1,520p' contrib/space-compute/pkg/admission/validator_test.go 2>/dev/null || true
+      echo '--- canonical.go ---'
+      sed -n '1,360p' contrib/space-compute/pkg/apis/v1alpha1/canonical.go 2>/dev/null || true
     } > .github/stage4-failure.txt
     git add .github/stage4-failure.txt
     git config user.name space-compute-stage4-bot
