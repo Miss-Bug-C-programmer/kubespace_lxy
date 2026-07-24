@@ -50,8 +50,18 @@ jobs:
         PY
         git apply --check /tmp/stage2.patch
         git apply /tmp/stage2.patch
+        python3 - <<'PY'
+        from pathlib import Path
+        path = Path('pkg/scheduler/plugins/gpustability/phase5_cycle_snapshot_test.go')
+        text = path.read_text()
+        old = 'func TestRequestedResourcesRemainCycleLocal(t *testing.T) {\n\tplugin := newTestPlugin(t, iluvatarMetrics)'
+        new = 'func TestRequestedResourcesRemainCycleLocal(t *testing.T) {\n\tplugin := newTestPlugin(t, readPhase2Fixture(t, "iluvatar-2gpu.prom"))'
+        if text.count(old) != 1:
+            raise SystemExit(f'expected one Requested fixture replacement, found {text.count(old)}')
+        path.write_text(text.replace(old, new, 1))
+        PY
         gofmt -w pkg/scheduler/plugins/gpustability/gpu_stability.go pkg/scheduler/plugins/gpustability/snapshot_store.go pkg/scheduler/plugins/gpustability/gpu_stability_test.go pkg/scheduler/plugins/gpustability/phase3_test.go pkg/scheduler/plugins/gpustability/phase5_cycle_snapshot_test.go
-    - name: Focused regressions
+    - name: Focused regressions after fixture correction
       shell: bash
       run: |
         set -euo pipefail
