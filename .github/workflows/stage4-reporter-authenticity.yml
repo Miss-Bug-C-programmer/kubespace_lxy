@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
     paths:
+    - .github/stage4-apply.py.gz.b64.part*
     - .github/stage4-payload/**
     - .github/workflows/stage4-reporter-authenticity.yml
 
@@ -19,18 +20,14 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     steps:
-    - name: Checkout exact triggering main snapshot
-      uses: actions/checkout@v4
+    - uses: actions/checkout@v4
       with:
         ref: ${{ github.sha }}
         fetch-depth: 0
-
-    - name: Set up pinned Go
-      uses: actions/setup-go@v5
+    - uses: actions/setup-go@v5
       with:
         go-version-file: go.mod
         cache: true
-
     - name: Reconstruct and apply Stage 4 fix
       shell: bash
       run: |
@@ -38,81 +35,52 @@ jobs:
         : > /tmp/stage4-gates.log
         {
           set -euo pipefail
-          echo '=== reconstruct ==='
           test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
           python3 - <<'PY'
         from pathlib import Path
         import base64, gzip
-        parts = sorted(Path('.github/stage4-payload').glob('chunk*'))
+        parts = sorted(Path('.github').glob('stage4-apply.py.gz.b64.part*'))
         if not parts:
-            raise SystemExit('stage4 payload chunks are missing')
-        encoded = ''.join(part.read_text().strip() for part in parts)
+            parts = sorted(Path('.github/stage4-payload').glob('chunk*'))
+        if not parts:
+            raise SystemExit('stage4 payload parts are missing')
+        encoded = ''.join(p.read_text().strip() for p in parts)
         raw = base64.b64decode(encoded, validate=True)
         Path('/tmp/stage4_apply.py').write_bytes(gzip.decompress(raw))
         PY
           python3 /tmp/stage4_apply.py
-          gofmt -w \
-            contrib/space-compute/pkg/apis/v1alpha1/*.go \
-            contrib/space-compute/pkg/admission/*.go \
-            contrib/space-compute/pkg/planner/*.go \
-            cmd/space-compute-mission-planner/*.go \
-            cmd/space-compute-reporter-webhook/*.go
+          gofmt -w contrib/space-compute/pkg/apis/v1alpha1/*.go contrib/space-compute/pkg/admission/*.go contrib/space-compute/pkg/planner/*.go cmd/space-compute-mission-planner/*.go cmd/space-compute-reporter-webhook/*.go
           git diff --check
         } 2>&1 | tee -a /tmp/stage4-gates.log
-
     - name: Focused reporter truth regressions
       shell: bash
       run: |
         set -o pipefail
         {
           set -euo pipefail
-          echo '=== focused ==='
-          go test ./contrib/space-compute/pkg/apis/v1alpha1 \
-            -run '^(TestCanonicalReporterDigestIsStableAndCoversSchedulingFields|TestCanonicalResourceSummarySortsMapAndSetLikeFields|TestDerivedReporterObjectNamesBindFullDomainIdentity|TestReporterBindingValidationUsesPrincipalDerivedNameAndImmutableDomain|TestLinkValidationRejectsOverlapSkewStaleAndFastUnchangedUpdate)$' \
-            -count=1 -timeout=90s
-          go test ./contrib/space-compute/pkg/admission \
-            -run '^(TestValidatorAcceptsTrustedSignedLinkAndRejectsForgery|TestValidatorEnforcesExactDigestChainIdentityAndStabilityUpdate|TestValidatorCoversSummaryAndReceiptKinds|TestAdmissionHTTPHandlerFailsClosed|TestKubernetesTrustSourceUsesDerivedBindingAndSingleSecret)$' \
-            -count=1 -timeout=90s
-          go test ./contrib/space-compute/pkg/planner \
-            -run '^TestStabilityOnlyChangeChangesDigestMaterialInputAndTriggersReplan$' \
-            -count=1 -timeout=90s
-          go test ./cmd/space-compute-mission-planner \
-            -run '^TestPhase4ManifestsHaveCRDsAdmissionIsolationAndLeastPrivilege$' \
-            -count=1 -timeout=90s
+          go test ./contrib/space-compute/pkg/apis/v1alpha1 -run '^(TestCanonicalReporterDigestIsStableAndCoversSchedulingFields|TestCanonicalResourceSummarySortsMapAndSetLikeFields|TestDerivedReporterObjectNamesBindFullDomainIdentity|TestReporterBindingValidationUsesPrincipalDerivedNameAndImmutableDomain|TestLinkValidationRejectsOverlapSkewStaleAndFastUnchangedUpdate)$' -count=1 -timeout=90s
+          go test ./contrib/space-compute/pkg/admission -run '^(TestValidatorAcceptsTrustedSignedLinkAndRejectsForgery|TestValidatorEnforcesExactDigestChainIdentityAndStabilityUpdate|TestValidatorCoversSummaryAndReceiptKinds|TestAdmissionHTTPHandlerFailsClosed|TestKubernetesTrustSourceUsesDerivedBindingAndSingleSecret)$' -count=1 -timeout=90s
+          go test ./contrib/space-compute/pkg/planner -run '^TestStabilityOnlyChangeChangesDigestMaterialInputAndTriggersReplan$' -count=1 -timeout=90s
+          go test ./cmd/space-compute-mission-planner -run '^TestPhase4ManifestsHaveCRDsAdmissionIsolationAndLeastPrivilege$' -count=1 -timeout=90s
           go test ./cmd/space-compute-reporter-webhook -count=1 -timeout=90s
           go build -buildvcs=false ./cmd/space-compute-reporter-webhook
         } 2>&1 | tee -a /tmp/stage4-gates.log
-
     - name: Focused race regressions
       shell: bash
       run: |
         set -o pipefail
-        {
-          set -euo pipefail
-          echo '=== race ==='
-          go test -race ./contrib/space-compute/pkg/apis/v1alpha1 ./contrib/space-compute/pkg/admission ./contrib/space-compute/pkg/planner \
-            -run 'Test(Canonical|ReporterBinding|Validator|AdmissionHTTP|KubernetesTrustSource|StabilityOnly)' \
-            -count=1 -timeout=180s
-        } 2>&1 | tee -a /tmp/stage4-gates.log
-
+        { set -euo pipefail; go test -race ./contrib/space-compute/pkg/apis/v1alpha1 ./contrib/space-compute/pkg/admission ./contrib/space-compute/pkg/planner -run 'Test(Canonical|ReporterBinding|Validator|AdmissionHTTP|KubernetesTrustSource|StabilityOnly)' -count=1 -timeout=180s; } 2>&1 | tee -a /tmp/stage4-gates.log
     - name: Full CPU qualification and default-K3s boundary
       shell: bash
       run: |
         set -o pipefail
-        {
-          set -euo pipefail
-          echo '=== full ==='
-          env GOCACHE="$RUNNER_TEMP/space-compute-stage4-gocache" scripts/space-compute all
-          go test ./pkg/executor/embed -count=1 -timeout=120s
-        } 2>&1 | tee -a /tmp/stage4-gates.log
-
+        { set -euo pipefail; env GOCACHE="$RUNNER_TEMP/space-compute-stage4-gocache" scripts/space-compute all; go test ./pkg/executor/embed -count=1 -timeout=120s; } 2>&1 | tee -a /tmp/stage4-gates.log
     - name: Audit trust, RBAC and scheduler boundaries
       shell: bash
       run: |
         set -o pipefail
         {
           set -euo pipefail
-          echo '=== audit ==='
           test -z "$(gofmt -s -l contrib/space-compute/pkg/apis/v1alpha1/*.go contrib/space-compute/pkg/admission/*.go contrib/space-compute/pkg/planner/*.go cmd/space-compute-reporter-webhook/*.go)"
           go vet ./contrib/space-compute/pkg/apis/v1alpha1 ./contrib/space-compute/pkg/admission ./contrib/space-compute/pkg/planner ./cmd/space-compute-reporter-webhook
           grep -q 'StabilityMilli, w.ConfidenceMilli, w.Predicted' contrib/space-compute/pkg/apis/v1alpha1/validation.go
@@ -122,57 +90,34 @@ jobs:
           ! grep -R 'contrib/space-compute/pkg/admission' pkg/executor pkg/scheduler cmd/k3s 2>/dev/null
           git diff --check
         } 2>&1 | tee -a /tmp/stage4-gates.log
-
     - name: Record validation evidence
       shell: bash
       run: |
-        set -o pipefail
-        {
-          set -euo pipefail
-          echo '=== evidence ==='
-          for file in \
-            docs/space-compute/IMPLEMENTATION_STATUS.md \
-            docs/space-compute/PHASE5_TEST_REPORT.md; do
-            sed -i "s/__RUN_ID__/${GITHUB_RUN_ID}/g; s/__BASE_SHA__/${GITHUB_SHA}/g" "$file"
-          done
-          git diff --check
-        } 2>&1 | tee -a /tmp/stage4-gates.log
-
+        set -euo pipefail
+        for file in docs/space-compute/IMPLEMENTATION_STATUS.md docs/space-compute/PHASE5_TEST_REPORT.md; do sed -i "s/__RUN_ID__/${GITHUB_RUN_ID}/g; s/__BASE_SHA__/${GITHUB_SHA}/g" "$file"; done
+        git diff --check
     - name: Commit tested fix directly to main
       shell: bash
       run: |
-        set -o pipefail
-        {
-          set -euo pipefail
-          echo '=== final push ==='
-          git fetch origin main
-          test "$(git rev-parse origin/main)" = "${GITHUB_SHA}"
-          rm -rf .github/stage4-payload
-          rm -f .github/stage4-apply.py.gz.b64 .github/workflows/stage4-reporter-authenticity.yml .github/stage4-failure.txt
-          git add -A
-          git diff --cached --check
-          git config user.name "space-compute-stage4-bot"
-          git config user.email "space-compute-stage4-bot@users.noreply.github.com"
-          git commit -m "fix: enforce reporter-domain data authenticity"
-          git push origin HEAD:main
-        } 2>&1 | tee -a /tmp/stage4-gates.log
-
+        set -euo pipefail
+        git fetch origin main
+        test "$(git rev-parse origin/main)" = "${GITHUB_SHA}"
+        rm -rf .github/stage4-payload
+        rm -f .github/stage4-apply.py.gz.b64 .github/stage4-apply.py.gz.b64.part* .github/workflows/stage4-reporter-authenticity.yml .github/stage4-failure.txt
+        git add -A
+        git diff --cached --check
+        git config user.name "space-compute-stage4-bot"
+        git config user.email "space-compute-stage4-bot@users.noreply.github.com"
+        git commit -m "fix: enforce reporter-domain data authenticity"
+        git push origin HEAD:main
     - name: Publish failure diagnostics on main
       if: failure()
       shell: bash
       run: |
         set -euo pipefail
         git fetch origin main
-        if [ "$(git rev-parse origin/main)" != "${GITHUB_SHA}" ]; then
-          echo 'main moved; refusing to overwrite newer work' >&2
-          exit 0
-        fi
-        {
-          echo "trigger_sha=${GITHUB_SHA}"
-          echo "run_id=${GITHUB_RUN_ID}"
-          echo '--- last gate output ---'
-          tail -n 400 /tmp/stage4-gates.log 2>/dev/null || echo 'gate log unavailable'
-        } > .github/stage4-failure.txt
+        [ "$(git rev-parse origin/main)" = "${GITHUB_SHA}" ] || exit 0
+        { echo "trigger_sha=${GITHUB_SHA}"; echo "run_id=${GITHUB_RUN_ID}"; echo '--- last gate output ---'; tail -n 400 /tmp/stage4-gates.log 2>/dev/null || true; } > .github/stage4-failure.txt
         git add .github/stage4-failure.txt
         git config user.name "space-compute-stage4-bot"
         git config user.email "space-compute-stage4-bot@users.noreply.github.com"
