@@ -1,8 +1,8 @@
-run_id=30147371460
-base_sha=a998f833a15d5dde4dbc1797ead3808b0badb218
+run_id=30147445607
+base_sha=e418c9eaa4e724bb912091ffbbd17f0ef1a6bcc4
 --- focused output ---
 stage5 API patch applied
 stage5 runtime patch applied
 stage5 transport compile fix applied
 stage5 fence time fix applied
-contrib/space-compute/pkg/workload/controller.go: marker count 0
+stage5-tests intent marker source mismatch
