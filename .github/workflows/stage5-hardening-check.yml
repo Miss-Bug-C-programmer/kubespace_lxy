@@ -51,10 +51,18 @@ jobs:
           set -euo pipefail
           python3 -m py_compile .github/stage5-hardening-source2.py
           python3 .github/stage5-hardening-source2.py
-      - name: Format generated Go
-        run: |
-          set -euo pipefail
-          gofmt -w cmd/space-compute-domain-agent/*.go contrib/space-compute/pkg/apis/v1alpha1/*.go contrib/space-compute/pkg/admission/*.go contrib/space-compute/pkg/execution/*.go contrib/space-compute/pkg/transport/*.go contrib/space-compute/pkg/workload/*.go
+      - name: Format domain agent
+        run: gofmt -w cmd/space-compute-domain-agent/*.go
+      - name: Format phase5 API
+        run: gofmt -w contrib/space-compute/pkg/apis/v1alpha1/*.go
+      - name: Format admission
+        run: gofmt -w contrib/space-compute/pkg/admission/*.go
+      - name: Format execution
+        run: gofmt -w contrib/space-compute/pkg/execution/*.go
+      - name: Format transport
+        run: gofmt -w contrib/space-compute/pkg/transport/*.go
+      - name: Format workload
+        run: gofmt -w contrib/space-compute/pkg/workload/*.go
       - name: Diff whitespace check
         run: |
           set -euo pipefail
