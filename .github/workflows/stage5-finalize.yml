@@ -94,8 +94,15 @@ jobs:
         run: test -z "$(git diff --name-only -- pkg/scheduler/plugins/gpustability cmd/space-compute-scheduler docs/gpu-scheduler/manifests/space-compute-scheduler.yaml)"
       - name: Run complete repository gate
         run: |
-          set -euo pipefail
-          scripts/space-compute all
+          set -o pipefail
+          scripts/space-compute all 2>&1 | tee /tmp/space-compute-all.log
+      - name: Upload complete gate failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: space-compute-all-error
+          path: /tmp/space-compute-all.log
+          if-no-files-found: ignore
       - name: Fast-forward Phase 5 production source
         id: publish
         run: |
