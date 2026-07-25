@@ -1,5 +1,5 @@
-run_id=30148203011
-base_sha=9b7cd7d428f6c756031d7e6e8a117f2315966445
+run_id=30148271687
+base_sha=fbc9586c56dfe176bfb31edfa21139ef96cfa418
 --- focused output ---
 stage5 API patch applied
 stage5 runtime patch applied
@@ -11,15 +11,4 @@ stage5 workload import fix applied
 stage5 core transport/execution tests applied
 stage5 binary envelope/local observation fix applied
 stage5 domain-agent runtime library applied
-# github.com/k3s-io/k3s/contrib/space-compute/pkg/transport [github.com/k3s-io/k3s/contrib/space-compute/pkg/transport.test]
-contrib/space-compute/pkg/transport/agent.go:265:34: cannot use ctx (variable of interface type context.Context) as string value in argument to a.enqueueLeaseGrant
-contrib/space-compute/pkg/transport/agent.go:344:29: cannot use ctx (variable of interface type context.Context) as string value in argument to a.enqueueLeaseGrant
-contrib/space-compute/pkg/transport/agent.go:564:40: cannot use object (variable of interface type any) as "k8s.io/apimachinery/pkg/runtime".Object value in argument to spacev1.ReporterDigest: any does not implement "k8s.io/apimachinery/pkg/runtime".Object (missing method DeepCopyObject)
-ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/apis/v1alpha1	0.011s
-ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/execution	0.008s
-FAIL	github.com/k3s-io/k3s/contrib/space-compute/pkg/transport [build failed]
-ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/admission	0.025s
-ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/planner	0.205s
-ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/workload	0.010s
-ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/kube	0.013s
-FAIL
+signReporter marker mismatch
