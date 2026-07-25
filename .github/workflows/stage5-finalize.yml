@@ -1,0 +1,127 @@
+name: stage5-finalize
+on:
+  push:
+    branches: [main]
+    paths: [.github/stage5-finalize-trigger]
+permissions: {contents: write, statuses: write}
+jobs:
+  finalize:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with: {ref: "${{ github.sha }}", fetch-depth: 0}
+      - name: Publish pending status
+        env: {GH_TOKEN: "${{ github.token }}"}
+        run: gh api --method POST "repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=pending -f context="sandbox/stage5-finalize-${GITHUB_RUN_ID}" -f target_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" -f description="Validating complete Phase 5 implementation"
+      - uses: actions/setup-go@v5
+        with: {go-version-file: go.mod, cache: true}
+      - name: Repair staged generator marker
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('.github/stage5-hardening-source.py')
+          text = p.read_text()
+          needle = '''# Result receipts are valid even when the planned return destination is the same
+          # execution domain. Transfer receipts and transfer intents remain cross-domain.
+          replace_once(
+          '''
+          replacement = '''# Result receipts are valid even when the planned return destination is the same
+          # execution domain. Transfer receipts and transfer intents remain cross-domain.
+          replace_first(
+          '''
+          if text.count(needle) != 1:
+              raise SystemExit(f'bootstrap marker count {text.count(needle)}')
+          helper_anchor = '''def replace_between(path, start, end, new):\n'''
+          helper = '''def replace_first(path, old, new):\n    text = read(path)\n    if old not in text:\n        raise SystemExit(f"{path}: marker missing for {old[:80]!r}")\n    write(path, text.replace(old, new, 1))\n\n\n'''
+          if text.count(helper_anchor) != 1:
+              raise SystemExit('replace_between anchor mismatch')
+          text = text.replace(helper_anchor, helper + helper_anchor, 1)
+          text = text.replace(needle, replacement, 1)
+          p.write_text(text)
+          PY
+      - name: Apply reviewed Phase 5 source
+        run: |
+          set -euo pipefail
+          python3 -m py_compile .github/stage5-hardening-source.py .github/stage5-hardening-source2.py .github/stage5-hardening-tests.py .github/stage5-deploy-source.py .github/stage5-deploy-fix.py
+          python3 .github/stage5-hardening-source.py
+          python3 .github/stage5-hardening-source2.py
+          python3 .github/stage5-hardening-tests.py
+          python3 .github/stage5-deploy-source.py
+          python3 .github/stage5-deploy-fix.py
+      - name: Normalize generated Go indentation
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          paths = [
+              Path('contrib/space-compute/pkg/transport/agent.go'),
+              Path('contrib/space-compute/pkg/transport/hardening.go'),
+              Path('contrib/space-compute/pkg/transport/hardening_test.go'),
+              Path('contrib/space-compute/pkg/workload/controller.go'),
+              Path('contrib/space-compute/pkg/workload/controller_test.go'),
+          ]
+          for path in paths:
+              out = []
+              for line in path.read_text().splitlines(keepends=True):
+                  i = 0
+                  prefix = []
+                  while i < len(line):
+                      if line[i] == ' ':
+                          prefix.append(' ')
+                          i += 1
+                      elif line[i] == '\t':
+                          prefix.append('\t')
+                          i += 1
+                      elif line.startswith('\\t', i):
+                          prefix.append('\t')
+                          i += 2
+                      else:
+                          break
+                  out.append(''.join(prefix) + line[i:])
+              path.write_text(''.join(out))
+          PY
+      - name: Format generated Go
+        run: |
+          set -euo pipefail
+          gofmt -w cmd/space-compute-domain-agent/*.go contrib/space-compute/pkg/apis/v1alpha1/*.go contrib/space-compute/pkg/admission/*.go contrib/space-compute/pkg/execution/*.go contrib/space-compute/pkg/transport/*.go contrib/space-compute/pkg/workload/*.go
+      - name: Validate manifests and diff
+        run: |
+          set -euo pipefail
+          git diff --check
+          ruby -e 'require "yaml"; ARGV.each { |p| YAML.load_stream(File.read(p), aliases: true) }' docs/space-compute/manifests/*.yaml docs/gpu-scheduler/manifests/space-compute-scheduler.yaml
+          test -z "$(git diff --name-only -- pkg/scheduler/plugins/gpustability cmd/space-compute-scheduler docs/gpu-scheduler/manifests/space-compute-scheduler.yaml)"
+      - name: Run complete repository gate
+        run: |
+          set -euo pipefail
+          scripts/space-compute all
+      - name: Fast-forward Phase 5 production source
+        id: publish
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          test "$(git rev-parse origin/main)" = "$GITHUB_SHA"
+          git add Makefile scripts/space-compute cmd/space-compute-domain-agent contrib/space-compute/pkg docs/space-compute/IMPLEMENTATION_STATUS.md docs/space-compute/PHASE5_TRANSPORT_EXECUTION.md docs/space-compute/manifests/mission-planner.yaml docs/space-compute/manifests/reporter-admission-webhook.yaml docs/space-compute/manifests/phase5-transport-execution-crds.yaml docs/space-compute/manifests/domain-agent.yaml
+          git diff --cached --check
+          if git diff --cached --quiet; then
+            echo "new_sha=$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git config user.name space-compute-stage5-bot
+          git config user.email space-compute-stage5-bot@users.noreply.github.com
+          git commit -m 'fix: complete phase5 cross-domain transport and execution fencing'
+          new_sha="$(git rev-parse HEAD)"
+          git push origin HEAD:main
+          echo "new_sha=$new_sha" >> "$GITHUB_OUTPUT"
+      - name: Publish final success status
+        if: success()
+        env:
+          GH_TOKEN: "${{ github.token }}"
+          NEW_SHA: "${{ steps.publish.outputs.new_sha }}"
+        run: |
+          gh api --method POST "repos/${GITHUB_REPOSITORY}/statuses/${NEW_SHA}" -f state=success -f context="sandbox/stage5-finalized" -f target_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" -f description="Phase 5 complete gate passed and main fast-forwarded"
+      - name: Publish failure status
+        if: failure()
+        env: {GH_TOKEN: "${{ github.token }}"}
+        run: gh api --method POST "repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=failure -f context="sandbox/stage5-finalize-${GITHUB_RUN_ID}" -f target_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" -f description="Phase 5 finalization failed before production fast-forward"
