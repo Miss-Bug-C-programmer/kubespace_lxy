@@ -1,0 +1,70 @@
+name: stage5-domain-agent-validation-v3
+on:
+  push:
+    branches: [main]
+    paths: [.github/stage5-trigger-v3]
+permissions: {contents: write, statuses: write}
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with: {ref: "${{ github.sha }}", fetch-depth: 0}
+      - name: Publish run identity
+        env: {GH_TOKEN: "${{ github.token }}"}
+        run: gh api --method POST "repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=pending -f context="sandbox/stage5-domain-agent-v3-${GITHUB_RUN_ID}" -f target_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" -f description="Stage 5 domain-agent v3 validation is running"
+      - uses: actions/setup-go@v5
+        with: {go-version-file: go.mod, cache: true}
+      - name: Apply candidate and run focused compile
+        shell: bash
+        run: |
+          set +e
+          (
+            set -euo pipefail
+            scripts=(stage5-api.py stage5-runtime.py stage5-fix.py stage5-fix2.py stage5-tests-direct.py stage5-agent-core.py stage5-fix3.py stage5-core-tests.py stage5-fix4.py stage5-agent-lib.py stage5-fix5.py stage5-fix6.py stage5-command.py stage5-fix8.py)
+            for script in "${scripts[@]}"; do python3 -m py_compile ".github/$script"; done
+            python3 .github/stage5-api.py
+            python3 .github/stage5-runtime.py
+            python3 .github/stage5-fix.py
+            python3 .github/stage5-fix2.py
+            python3 .github/stage5-tests-direct.py
+            gofmt -w contrib/space-compute/pkg/apis/v1alpha1/*.go contrib/space-compute/pkg/admission/*.go contrib/space-compute/pkg/planner/*.go contrib/space-compute/pkg/workload/*.go contrib/space-compute/pkg/kube/*.go contrib/space-compute/pkg/transport/*.go contrib/space-compute/pkg/execution/*.go
+            python3 .github/stage5-agent-core.py
+            python3 .github/stage5-fix3.py
+            python3 .github/stage5-core-tests.py
+            python3 .github/stage5-fix4.py
+            gofmt -w contrib/space-compute/pkg/apis/v1alpha1/*.go contrib/space-compute/pkg/admission/*.go contrib/space-compute/pkg/planner/*.go contrib/space-compute/pkg/workload/*.go contrib/space-compute/pkg/kube/*.go contrib/space-compute/pkg/transport/*.go contrib/space-compute/pkg/execution/*.go
+            python3 .github/stage5-agent-lib.py
+            gofmt -w contrib/space-compute/pkg/transport/*.go
+            python3 .github/stage5-fix5.py
+            python3 .github/stage5-fix6.py
+            gofmt -w contrib/space-compute/pkg/transport/*.go
+            python3 .github/stage5-command.py
+            python3 .github/stage5-fix8.py
+            gofmt -w cmd/space-compute-domain-agent/*.go cmd/space-compute-mission-planner/*.go contrib/space-compute/pkg/transport/*.go
+            git diff --check
+            go test ./contrib/space-compute/pkg/apis/v1alpha1 ./contrib/space-compute/pkg/execution ./contrib/space-compute/pkg/transport ./contrib/space-compute/pkg/admission ./contrib/space-compute/pkg/planner ./contrib/space-compute/pkg/workload ./contrib/space-compute/pkg/kube -count=1 -timeout=180s
+            go test ./cmd/space-compute-mission-planner ./cmd/space-compute-domain-agent -count=1 -timeout=180s
+          ) > /tmp/stage5-v3.log 2>&1
+          status=$?
+          cat /tmp/stage5-v3.log
+          if [ "$status" -ne 0 ]; then
+            git fetch origin main
+            if [ "$(git rev-parse origin/main)" = "$GITHUB_SHA" ]; then
+              { echo "run_id=$GITHUB_RUN_ID"; echo "base_sha=$GITHUB_SHA"; echo '--- focused output ---'; tail -n 1200 /tmp/stage5-v3.log; } > .github/stage5-failure-v3.txt
+              git add .github/stage5-failure-v3.txt
+              git config user.name space-compute-stage5-bot
+              git config user.email space-compute-stage5-bot@users.noreply.github.com
+              git commit -m 'chore: capture phase5 v3 failure' && git push origin HEAD:main
+            fi
+            exit "$status"
+          fi
+      - name: Publish success
+        if: success()
+        env: {GH_TOKEN: "${{ github.token }}"}
+        run: gh api --method POST "repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=success -f context="sandbox/stage5-domain-agent-v3-${GITHUB_RUN_ID}" -f target_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" -f description="Stage 5 domain-agent v3 candidate passed"
+      - name: Publish failure
+        if: failure()
+        env: {GH_TOKEN: "${{ github.token }}"}
+        run: gh api --method POST "repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=failure -f context="sandbox/stage5-domain-agent-v3-${GITHUB_RUN_ID}" -f target_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" -f description="Stage 5 domain-agent v3 candidate failed"
