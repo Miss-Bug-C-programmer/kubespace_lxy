@@ -185,15 +185,22 @@ func (v *Validator) validateReporterRequest(ctx context.Context, request *admiss
 		}
 	}
 	principal := request.UserInfo.Username
-	if principal == "" || current.provenance.ReporterID != principal {
-		return fmt.Errorf("spec.provenance.reporterID must equal authenticated principal")
+	if principal == "" {
+		return fmt.Errorf("authenticated principal is required")
 	}
-	binding, err := v.trust.Binding(ctx, principal)
+	reporterPrincipal := current.provenance.ReporterID
+	if reporterPrincipal == "" {
+		return fmt.Errorf("spec.provenance.reporterID is required")
+	}
+	binding, err := v.trust.Binding(ctx, reporterPrincipal)
 	if err != nil {
 		return err
 	}
-	if binding.Spec.ReporterPrincipal != principal {
-		return fmt.Errorf("reporter binding principal does not match authenticated principal")
+	if binding.Spec.ReporterPrincipal != reporterPrincipal {
+		return fmt.Errorf("reporter binding principal does not match signed reporter identity")
+	}
+	if principal != reporterPrincipal && !principalAllowed(binding.Spec.AllowedGateways, principal) {
+		return fmt.Errorf("authenticated principal is neither the signed reporter nor an explicitly allowed transport gateway")
 	}
 	if binding.Spec.Domain != current.source {
 		return fmt.Errorf("reporter object source/domain does not match bound domain")
@@ -338,6 +345,34 @@ func (v *Validator) decodeReporterEnvelope(resource string, raw []byte) (*report
 			observedAtNano: value.Spec.CompletedAt.UnixNano(),
 			identity:       normalizedEnvelopeIdentity(value.Spec.Source, &value.Spec.Destination, fmt.Sprintf("%s|%s|%d|%s|%s", value.Spec.MissionUID, value.Spec.PlanID, value.Spec.Attempt, value.Spec.TransferID, value.Spec.DataID)),
 		}, nil
+	case "spaceexecutionleases":
+		value := &spacev1.SpaceExecutionLease{}
+		if err := decodeRaw(raw, value); err != nil {
+			return nil, fmt.Errorf("decode SpaceExecutionLease: %w", err)
+		}
+		if err := spacev1.ValidateExecutionLease(value, v.clock); err != nil {
+			return nil, err
+		}
+		destination := value.Spec.Destination
+		var peer *spacev1.DomainReference
+		if destination != value.Spec.Source {
+			peer = &destination
+		}
+		return &reporterEnvelope{kind: "SpaceExecutionLease", name: value.Name, provenance: &value.Spec.Provenance, source: value.Spec.Source, destination: peer, digestObject: value, observedAtNano: value.Spec.HeartbeatAt.UnixNano(), identity: normalizedEnvelopeIdentity(value.Spec.Source, &value.Spec.Destination, fmt.Sprintf("%s|%s|%d|%d", value.Spec.Fence.MissionUID, value.Spec.Fence.PlanID, value.Spec.Fence.Attempt, value.Spec.Fence.LeaseEpoch))}, nil
+	case "spaceexecutionobservations":
+		value := &spacev1.SpaceExecutionObservation{}
+		if err := decodeRaw(raw, value); err != nil {
+			return nil, fmt.Errorf("decode SpaceExecutionObservation: %w", err)
+		}
+		if err := spacev1.ValidateExecutionObservation(value, v.clock); err != nil {
+			return nil, err
+		}
+		destination := value.Spec.Destination
+		var peer *spacev1.DomainReference
+		if destination != value.Spec.Source {
+			peer = &destination
+		}
+		return &reporterEnvelope{kind: "SpaceExecutionObservation", name: value.Name, provenance: &value.Spec.Provenance, source: value.Spec.Source, destination: peer, digestObject: value, observedAtNano: value.Spec.ObservedAt.UnixNano(), identity: normalizedEnvelopeIdentity(value.Spec.Source, &value.Spec.Destination, fmt.Sprintf("%s|%s|%d|%d|%s", value.Spec.MissionUID, value.Spec.PlanID, value.Spec.Attempt, value.Spec.LeaseEpoch, value.Spec.ObservationID))}, nil
 	case "spaceresultreceipts":
 		value := &spacev1.SpaceResultReceipt{}
 		if err := decodeRaw(raw, value); err != nil {
@@ -366,6 +401,10 @@ func expectedObjectName(value *reporterEnvelope) string {
 		return spacev1.DomainResourceSummaryName(object.Spec.Domain)
 	case *spacev1.SpaceTransferReceipt:
 		return spacev1.TransferReceiptName(object.Spec.Source, object.Spec.Destination, object.Spec.MissionUID, object.Spec.PlanID, object.Spec.TransferID)
+	case *spacev1.SpaceExecutionLease:
+		return spacev1.ExecutionLeaseName(object.Spec.Fence.MissionUID, object.Spec.Fence.PlanID, object.Spec.Fence.Attempt, object.Spec.Fence.LeaseEpoch)
+	case *spacev1.SpaceExecutionObservation:
+		return spacev1.ExecutionObservationName(object.Spec.Source, object.Spec.Destination, object.Spec.MissionUID, object.Spec.PlanID, object.Spec.ObservationID)
 	case *spacev1.SpaceResultReceipt:
 		return spacev1.ResultReceiptName(object.Spec.Source, object.Spec.Destination, object.Spec.MissionUID, object.Spec.PlanID, object.Spec.ResultID)
 	default:
@@ -387,6 +426,15 @@ func normalizedEnvelopeIdentity(source spacev1.DomainReference, destination *spa
 func kindAllowed(values []string, target string) bool {
 	for _, value := range values {
 		if value == target {
+			return true
+		}
+	}
+	return false
+}
+
+func principalAllowed(values []string, target string) bool {
+	for _, value := range values {
+		if strings.TrimSpace(value) == target {
 			return true
 		}
 	}

@@ -123,6 +123,11 @@ func runControllers(ctx context.Context, dynamicClient dynamic.Interface, client
 	placements := factory.ForResource(spacekube.PlacementGVR).Informer()
 	links := factory.ForResource(spacekube.LinkGVR).Informer()
 	resources := factory.ForResource(spacekube.ResourceSummaryGVR).Informer()
+	transferIntents := factory.ForResource(spacekube.TransferIntentGVR).Informer()
+	transferReceipts := factory.ForResource(spacekube.TransferReceiptGVR).Informer()
+	executionLeases := factory.ForResource(spacekube.ExecutionLeaseGVR).Informer()
+	executionObservations := factory.ForResource(spacekube.ExecutionObservationGVR).Informer()
+	resultReceipts := factory.ForResource(spacekube.ResultReceiptGVR).Informer()
 	coreFactory := informers.NewSharedInformerFactory(client, 10*time.Minute)
 	pods := coreFactory.Core().V1().Pods().Informer()
 	queue := workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "space_compute_missions")
@@ -141,16 +146,29 @@ func runControllers(ctx context.Context, dynamicClient dynamic.Interface, client
 	resourceHandler := cache.ResourceEventHandlerFuncs{AddFunc: func(interface{}) { resourceQueue.Add("resources") }, UpdateFunc: func(_, _ interface{}) { resourceQueue.Add("resources") }, DeleteFunc: func(interface{}) { resourceQueue.Add("resources") }}
 	_, _ = links.AddEventHandler(resourceHandler)
 	_, _ = resources.AddEventHandler(resourceHandler)
+	_, _ = transferIntents.AddEventHandler(resourceHandler)
+	_, _ = transferReceipts.AddEventHandler(resourceHandler)
+	_, _ = executionLeases.AddEventHandler(resourceHandler)
+	_, _ = executionObservations.AddEventHandler(resourceHandler)
+	_, _ = resultReceipts.AddEventHandler(resourceHandler)
 	_, _ = pods.AddEventHandler(cache.ResourceEventHandlerFuncs{AddFunc: func(value interface{}) { enqueuePodMission(value, queue) }, UpdateFunc: func(_, value interface{}) { enqueuePodMission(value, queue) }, DeleteFunc: func(value interface{}) { enqueuePodMission(value, queue) }})
 	factory.Start(ctx.Done())
 	coreFactory.Start(ctx.Done())
-	if !cache.WaitForCacheSync(ctx.Done(), missions.HasSynced, placements.HasSynced, links.HasSynced, resources.HasSynced, pods.HasSynced) {
+	if !cache.WaitForCacheSync(ctx.Done(), missions.HasSynced, placements.HasSynced, links.HasSynced, resources.HasSynced, transferIntents.HasSynced, transferReceipts.HasSynced, executionLeases.HasSynced, executionObservations.HasSynced, resultReceipts.HasSynced, pods.HasSynced) {
 		return fmt.Errorf("CRD informer cache synchronization failed")
 	}
 	observer := spaceplanner.NewPrometheusObserver()
 	repository := &spacekube.Repository{Dynamic: dynamicClient, Recorder: recorder, Observer: observer}
 	plannerController := &spaceplanner.Controller{Repository: repository, Clock: spacev1.RealClock{}, Observer: observer}
-	workloadController := &spaceworkload.Controller{Store: &spacekube.WorkloadStore{Client: client, Repository: repository, Recorder: recorder}, Clock: spacev1.RealClock{}}
+	workloadStore := &spacekube.WorkloadStore{Client: client, Repository: repository, Recorder: recorder}
+	workloadController := &spaceworkload.Controller{Store: workloadStore, Evidence: workloadStore, Clock: spacev1.RealClock{}}
+	if raw := os.Getenv("SPACE_COMPUTE_LOCAL_DOMAIN_JSON"); raw != "" {
+		var localDomain spacev1.DomainReference
+		if err := json.Unmarshal([]byte(raw), &localDomain); err != nil || localDomain.Name == "" || localDomain.ClusterID == "" {
+			return fmt.Errorf("invalid SPACE_COMPUTE_LOCAL_DOMAIN_JSON")
+		}
+		workloadController.LocalDomain = &localDomain
+	}
 	resourceController := &resourceController{dynamic: dynamicClient, client: client, recorder: recorder, clock: spacev1.RealClock{}, observer: observer}
 	go wait.UntilWithContext(ctx, func(ctx context.Context) {
 		processResources(ctx, resourceQueue, queue, missions.GetStore(), resourceController, observer)
@@ -197,6 +215,13 @@ func processMission(ctx context.Context, queue workqueue.RateLimitingInterface, 
 			return
 		} else if delay > 0 && (result.RequeueAfter == 0 || delay < result.RequeueAfter) {
 			result.RequeueAfter = delay
+		}
+		placement, _ = repository.GetPlacement(ctx, spaceplanner.MissionKey{Namespace: namespace, Name: name})
+		if placement != nil {
+			if _, evidenceErr := workloadController.ReconcileTrustedEvidence(ctx, mission, placement); evidenceErr != nil {
+				retryControllerItem(queue, item, "missions", evidenceErr, observer)
+				return
+			}
 		}
 		placement, _ = repository.GetPlacement(ctx, spaceplanner.MissionKey{Namespace: namespace, Name: name})
 		if placement != nil && placement.Status.ActivePod != nil && placement.Status.ActivePod.Name != "" {

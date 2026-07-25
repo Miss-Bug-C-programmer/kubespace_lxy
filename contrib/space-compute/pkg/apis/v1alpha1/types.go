@@ -66,7 +66,11 @@ type SpaceDomainReporterBindingSpec struct {
 	Domain            DomainReference   `json:"domain"`
 	AllowedKinds      []string          `json:"allowedKinds"`
 	AllowedPeers      []DomainReference `json:"allowedPeers,omitempty"`
-	PublicKeyRef      SecretReference   `json:"publicKeyRef"`
+	// AllowedGateways are explicit authenticated Kubernetes principals that may
+	// persist this reporter's already-signed objects through a controlled local
+	// transport gateway. The original reporter signature remains mandatory.
+	AllowedGateways []string        `json:"allowedGateways,omitempty"`
+	PublicKeyRef    SecretReference `json:"publicKeyRef"`
 }
 
 // +kubebuilder:object:root=true
@@ -165,6 +169,9 @@ type DataObject struct {
 	ID        string   `json:"id"`
 	SizeBytes int64    `json:"sizeBytes"`
 	Locations []string `json:"locations"`
+	// PayloadDigest is required before a non-local input can be transferred.
+	// Local-only legacy inputs remain valid without it.
+	PayloadDigest string `json:"payloadDigest,omitempty"`
 }
 
 type RetryPolicy struct {
@@ -331,8 +338,13 @@ type SpaceResultReceiptSpec struct {
 	Destination   DomainReference `json:"destination"`
 	Bytes         int64           `json:"bytes"`
 	PayloadDigest string          `json:"payloadDigest"`
-	CompletedAt   metav1.Time     `json:"completedAt"`
-	Provenance    Provenance      `json:"provenance"`
+	// LeaseEpoch and TokenHash bind completion to the exact execution fence.
+	// They are optional only so pre-hardening stored v1alpha1 objects remain
+	// decodable; a result used by the workload state machine must provide both.
+	LeaseEpoch  int64       `json:"leaseEpoch,omitempty"`
+	TokenHash   string      `json:"tokenHash,omitempty"`
+	CompletedAt metav1.Time `json:"completedAt"`
+	Provenance  Provenance  `json:"provenance"`
 }
 
 // +kubebuilder:object:root=true
@@ -351,11 +363,14 @@ type SpaceResultReceiptList struct {
 }
 
 type TransferEpoch struct {
-	LinkSnapshotName string      `json:"linkSnapshotName"`
-	WindowID         string      `json:"windowID"`
-	Start            metav1.Time `json:"start"`
-	End              metav1.Time `json:"end"`
-	Bytes            int64       `json:"bytes"`
+	LinkSnapshotName string          `json:"linkSnapshotName"`
+	WindowID         string          `json:"windowID"`
+	DataID           string          `json:"dataID,omitempty"`
+	Source           DomainReference `json:"source,omitempty"`
+	Destination      DomainReference `json:"destination,omitempty"`
+	Start            metav1.Time     `json:"start"`
+	End              metav1.Time     `json:"end"`
+	Bytes            int64           `json:"bytes"`
 }
 
 type DecisionScore struct {

@@ -14,6 +14,8 @@ var reporterKinds = map[string]struct{}{
 	"SpaceLinkSnapshot":          {},
 	"SpaceDomainResourceSummary": {},
 	"SpaceTransferReceipt":       {},
+	"SpaceExecutionLease":        {},
+	"SpaceExecutionObservation":  {},
 	"SpaceResultReceipt":         {},
 }
 
@@ -47,6 +49,23 @@ func ValidateReporterBinding(binding *SpaceDomainReporterBinding, previous *Spac
 	}
 	if len(binding.Spec.AllowedPeers) > 64 {
 		errs.add("spec.allowedPeers", "cannot exceed 64 domains")
+	}
+	if len(binding.Spec.AllowedGateways) > 16 {
+		errs.add("spec.allowedGateways", "cannot exceed 16 principals")
+	}
+	seenGateways := map[string]struct{}{}
+	for i, gateway := range binding.Spec.AllowedGateways {
+		gateway = strings.TrimSpace(gateway)
+		if gateway == "" || len(gateway) > 253 || strings.ContainsAny(gateway, "\r\n\x00") {
+			errs.addf(fmt.Sprintf("spec.allowedGateways[%d]", i), "must be a non-empty principal of at most 253 bytes")
+		}
+		if gateway == principal {
+			errs.addf(fmt.Sprintf("spec.allowedGateways[%d]", i), "must differ from reporterPrincipal")
+		}
+		if _, ok := seenGateways[gateway]; ok {
+			errs.addf(fmt.Sprintf("spec.allowedGateways[%d]", i), "duplicate gateway principal")
+		}
+		seenGateways[gateway] = struct{}{}
 	}
 	seenPeers := map[string]struct{}{}
 	for i, peer := range binding.Spec.AllowedPeers {
@@ -118,6 +137,15 @@ func ValidateResultReceipt(receipt *SpaceResultReceipt, clock Clock) error {
 	}
 	validateReceiptIdentity("spec.resultID", receipt.Spec.ResultID, &errs)
 	validateReceiptCommon(receipt.Spec.MissionUID, receipt.Spec.PlanID, receipt.Spec.Attempt, receipt.Spec.Source, receipt.Spec.Destination, receipt.Spec.Bytes, receipt.Spec.PayloadDigest, receipt.Spec.Provenance, &errs)
+	if receipt.Spec.LeaseEpoch < 0 {
+		errs.add("spec.leaseEpoch", "cannot be negative")
+	}
+	if receipt.Spec.TokenHash != "" {
+		validateLowerSHA256("spec.tokenHash", receipt.Spec.TokenHash, &errs)
+	}
+	if (receipt.Spec.LeaseEpoch == 0) != (receipt.Spec.TokenHash == "") {
+		errs.add("spec", "leaseEpoch and tokenHash must either both be set or both be absent")
+	}
 	if receipt.Spec.CompletedAt.IsZero() {
 		errs.add("spec.completedAt", "is required")
 	} else if receipt.Spec.CompletedAt.After(clock.Now().Add(time.Duration(MaxClockSkewSecs) * time.Second)) {

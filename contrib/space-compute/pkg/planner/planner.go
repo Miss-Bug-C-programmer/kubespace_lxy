@@ -280,6 +280,9 @@ func findIngress(input spacev1.DataObject, target spacev1.DomainReference, earli
 				continue
 			}
 			if transfer, ok := fitTransfer(snapshot, input.SizeBytes, earliest, mission, now); ok && (bestSnapshot == nil || transfer.End.Before(&best.End) || (transfer.End.Equal(&best.End) && snapshot.Name < bestSnapshot.Name)) {
+				transfer.DataID = input.ID
+				transfer.Source = snapshot.Spec.Source
+				transfer.Destination = target
 				best, bestSnapshot = transfer, snapshot
 			}
 		}
@@ -295,7 +298,7 @@ func findEgress(size int64, source spacev1.DomainReference, destinations []strin
 	sort.Strings(values)
 	if locationMatchesDomain(values, source) {
 		at := metav1.NewTime(earliest)
-		return spacev1.TransferEpoch{WindowID: "local-result", Start: at, End: at, Bytes: size}, &spacev1.SpaceLinkSnapshot{ObjectMeta: metav1.ObjectMeta{Name: "local"}, Spec: spacev1.SpaceLinkSnapshotSpec{Provenance: spacev1.Provenance{Sequence: 1}, ValidUntil: mission.Deadline}}, true, nil
+		return spacev1.TransferEpoch{WindowID: "local-result", DataID: "result", Source: source, Destination: source, Start: at, End: at, Bytes: size}, &spacev1.SpaceLinkSnapshot{ObjectMeta: metav1.ObjectMeta{Name: "local"}, Spec: spacev1.SpaceLinkSnapshotSpec{Provenance: spacev1.Provenance{Sequence: 1}, ValidUntil: mission.Deadline}}, true, nil
 	}
 	var best spacev1.TransferEpoch
 	var bestSnapshot *spacev1.SpaceLinkSnapshot
@@ -305,6 +308,9 @@ func findEgress(size int64, source spacev1.DomainReference, destinations []strin
 				continue
 			}
 			if transfer, ok := fitTransfer(snapshot, size, earliest, mission, now); ok && (bestSnapshot == nil || transfer.End.Before(&best.End) || (transfer.End.Equal(&best.End) && snapshot.Name < bestSnapshot.Name)) {
+				transfer.DataID = "result"
+				transfer.Source = source
+				transfer.Destination = snapshot.Spec.Destination
 				best, bestSnapshot = transfer, snapshot
 			}
 		}
@@ -473,7 +479,7 @@ func initialPlacementPhase(value candidate, now time.Time) spacev1.PlacementPhas
 	if len(value.inputTransfers) > 0 {
 		return spacev1.PlacementTransferPending
 	}
-	return spacev1.PlacementReady
+	return spacev1.PlacementExecutionLeasePending
 }
 func domainKey(value spacev1.DomainReference) string {
 	return string(value.OrbitClass) + "/" + value.ClusterID + "/" + value.Name

@@ -295,6 +295,9 @@ func ValidateMission(mission *SpaceMission, clock Clock) error {
 		if input.SizeBytes > 0 && len(input.Locations) == 0 {
 			errs.add(path+".locations", "is required for non-empty input")
 		}
+		if input.PayloadDigest != "" {
+			validateLowerSHA256(path+".payloadDigest", input.PayloadDigest, &errs)
+		}
 		validateLocations(path+".locations", input.Locations, &errs)
 	}
 	if spec.OutputSizeBytes < 0 || spec.OutputSizeBytes > MaxDataBytes {

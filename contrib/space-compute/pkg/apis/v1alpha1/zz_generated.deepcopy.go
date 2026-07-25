@@ -163,6 +163,7 @@ func (in *SpaceDomainReporterBinding) DeepCopy() *SpaceDomainReporterBinding {
 	out.ObjectMeta = *in.ObjectMeta.DeepCopy()
 	out.Spec.AllowedKinds = append([]string(nil), in.Spec.AllowedKinds...)
 	out.Spec.AllowedPeers = append([]DomainReference(nil), in.Spec.AllowedPeers...)
+	out.Spec.AllowedGateways = append([]string(nil), in.Spec.AllowedGateways...)
 	return &out
 }
 

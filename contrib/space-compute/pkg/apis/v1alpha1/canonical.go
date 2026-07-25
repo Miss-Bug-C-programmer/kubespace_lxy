@@ -77,6 +77,10 @@ func CanonicalReporterBytes(value runtime.Object) ([]byte, error) {
 		return canonicalResourceSummary(object)
 	case *SpaceTransferReceipt:
 		return canonicalTransferReceipt(object)
+	case *SpaceExecutionLease:
+		return canonicalExecutionLease(object)
+	case *SpaceExecutionObservation:
+		return canonicalExecutionObservation(object)
 	case *SpaceResultReceipt:
 		return canonicalResultReceipt(object)
 	default:
@@ -194,6 +198,45 @@ func canonicalTransferReceipt(receipt *SpaceTransferReceipt) ([]byte, error) {
 	return w.bytes(), nil
 }
 
+func canonicalExecutionLease(lease *SpaceExecutionLease) ([]byte, error) {
+	if lease == nil {
+		return nil, fmt.Errorf("execution lease is required")
+	}
+	w := newCanonicalWriter("SpaceExecutionLease", lease.Name)
+	w.domain("source", lease.Spec.Source)
+	w.domain("destination", lease.Spec.Destination)
+	w.string("fence.missionUID", lease.Spec.Fence.MissionUID)
+	w.string("fence.planID", lease.Spec.Fence.PlanID)
+	w.integer("fence.attempt", int64(lease.Spec.Fence.Attempt))
+	w.integer("fence.leaseEpoch", lease.Spec.Fence.LeaseEpoch)
+	w.string("fence.tokenHash", lease.Spec.Fence.TokenHash)
+	w.timestamp("fence.expiresAt", lease.Spec.Fence.ExpiresAt.Time)
+	w.timestamp("heartbeatAt", lease.Spec.HeartbeatAt.Time)
+	w.integer("maximumClockSkewSeconds", lease.Spec.MaximumClockSkewSeconds)
+	w.provenance(lease.Spec.Provenance)
+	return w.bytes(), nil
+}
+
+func canonicalExecutionObservation(observation *SpaceExecutionObservation) ([]byte, error) {
+	if observation == nil {
+		return nil, fmt.Errorf("execution observation is required")
+	}
+	w := newCanonicalWriter("SpaceExecutionObservation", observation.Name)
+	w.string("observationID", observation.Spec.ObservationID)
+	w.string("missionUID", observation.Spec.MissionUID)
+	w.string("planID", observation.Spec.PlanID)
+	w.integer("attempt", int64(observation.Spec.Attempt))
+	w.integer("leaseEpoch", observation.Spec.LeaseEpoch)
+	w.string("tokenHash", observation.Spec.TokenHash)
+	w.domain("source", observation.Spec.Source)
+	w.domain("destination", observation.Spec.Destination)
+	w.string("phase", string(observation.Spec.Phase))
+	w.string("checkpointID", observation.Spec.CheckpointID)
+	w.timestamp("observedAt", observation.Spec.ObservedAt.Time)
+	w.provenance(observation.Spec.Provenance)
+	return w.bytes(), nil
+}
+
 func canonicalResultReceipt(receipt *SpaceResultReceipt) ([]byte, error) {
 	if receipt == nil {
 		return nil, fmt.Errorf("result receipt is required")
@@ -207,6 +250,8 @@ func canonicalResultReceipt(receipt *SpaceResultReceipt) ([]byte, error) {
 	w.domain("destination", receipt.Spec.Destination)
 	w.integer("bytes", receipt.Spec.Bytes)
 	w.string("payloadDigest", receipt.Spec.PayloadDigest)
+	w.integer("leaseEpoch", receipt.Spec.LeaseEpoch)
+	w.string("tokenHash", receipt.Spec.TokenHash)
 	w.timestamp("completedAt", receipt.Spec.CompletedAt.Time)
 	w.provenance(receipt.Spec.Provenance)
 	return w.bytes(), nil
