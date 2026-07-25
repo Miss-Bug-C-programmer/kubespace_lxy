@@ -18,6 +18,9 @@ func addKnownTypes(scheme *runtime.Scheme) error {
 	scheme.AddKnownTypes(SchemeGroupVersion,
 		&SpaceLinkSnapshot{}, &SpaceLinkSnapshotList{},
 		&SpaceDomainResourceSummary{}, &SpaceDomainResourceSummaryList{},
+		&SpaceDomainReporterBinding{}, &SpaceDomainReporterBindingList{},
+		&SpaceTransferReceipt{}, &SpaceTransferReceiptList{},
+		&SpaceResultReceipt{}, &SpaceResultReceiptList{},
 		&SpaceMission{}, &SpaceMissionList{},
 		&SpacePlacementIntent{}, &SpacePlacementIntentList{},
 	)

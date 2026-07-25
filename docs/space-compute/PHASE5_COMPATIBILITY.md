@@ -52,3 +52,9 @@ audit/source snapshots, then reconcile reporters before unsuspending missions.
 
 Compatibility gate is incomplete because full-agent and supported patch
 upgrade/rollback were not run. Release status remains `Not ready`.
+
+## Stage 4 reporter-authenticity compatibility note
+
+The v1alpha1 API adds three cluster-scoped kinds: `SpaceDomainReporterBinding`, `SpaceTransferReceipt` and `SpaceResultReceipt`. `Provenance` adds optional `previousDigest` and `signature` fields so stored pre-hardening objects remain decodable. Once the reporter webhook is enabled, CREATE requires sequence 1 with an empty previous digest and a valid signature; UPDATE requires an exact chain. Unsigned legacy reporter objects therefore cannot be mutated through the hardened reporter path and should be deleted/recreated by the owning reporter after a binding/key is provisioned.
+
+The new webhook is an optional space-compute component and does not register anything into the stock K3s scheduler. The standalone mission planner and scheduler process contracts are unchanged.

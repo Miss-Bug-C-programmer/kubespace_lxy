@@ -1,0 +1,148 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: space-compute-reporter-webhook
+  namespace: kube-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: system:space-compute-reporter-webhook
+rules:
+- apiGroups: [spacecompute.k3s.io]
+  resources: [spacedomainreporterbindings]
+  verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: space-compute-reporter-webhook
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:space-compute-reporter-webhook
+subjects:
+- kind: ServiceAccount
+  name: space-compute-reporter-webhook
+  namespace: kube-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: space-compute-reporter-webhook-public-key
+  namespace: kube-system
+rules:
+- apiGroups: [""]
+  resources: [secrets]
+  resourceNames: [space-compute-reporter-public-keys]
+  verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: space-compute-reporter-webhook-public-key
+  namespace: kube-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: space-compute-reporter-webhook-public-key
+subjects:
+- kind: ServiceAccount
+  name: space-compute-reporter-webhook
+  namespace: kube-system
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: space-compute-reporter-webhook
+  namespace: kube-system
+spec:
+  replicas: 2
+  selector:
+    matchLabels: {app.kubernetes.io/name: space-compute-reporter-webhook}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: space-compute-reporter-webhook}
+    spec:
+      serviceAccountName: space-compute-reporter-webhook
+      priorityClassName: system-cluster-critical
+      securityContext:
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+      - name: webhook
+        image: space-compute-reporter-webhook:v1.33.7-k3s1
+        imagePullPolicy: IfNotPresent
+        args:
+        - --bind-address=:9443
+        - --tls-cert-file=/tls/tls.crt
+        - --tls-private-key-file=/tls/tls.key
+        - --reporter-public-key-secret-namespace=kube-system
+        - --reporter-public-key-secret-name=space-compute-reporter-public-keys
+        ports:
+        - {name: https, containerPort: 9443}
+        readinessProbe:
+          httpGet: {scheme: HTTPS, path: /readyz, port: https}
+          initialDelaySeconds: 3
+        livenessProbe:
+          httpGet: {scheme: HTTPS, path: /livez, port: https}
+          initialDelaySeconds: 10
+        resources:
+          requests: {cpu: 50m, memory: 64Mi}
+          limits: {cpu: "1", memory: 256Mi}
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          runAsUser: 65532
+          runAsGroup: 65532
+          capabilities: {drop: [ALL]}
+        volumeMounts:
+        - {name: tls, mountPath: /tls, readOnly: true}
+      volumes:
+      - name: tls
+        secret:
+          secretName: space-compute-reporter-webhook-tls
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: space-compute-reporter-webhook
+  namespace: kube-system
+spec:
+  selector: {app.kubernetes.io/name: space-compute-reporter-webhook}
+  ports:
+  - {name: https, port: 443, targetPort: https}
+---
+# Before enabling reporter writes, provision space-compute-reporter-webhook-tls
+# for DNS name space-compute-reporter-webhook.kube-system.svc and inject its
+# issuing CA below. An empty caBundle uses the API server host trust roots and
+# intentionally fails closed for a private/untrusted serving certificate.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: space-compute-reporter-truth
+webhooks:
+- name: reporter-truth.spacecompute.k3s.io
+  admissionReviewVersions: [v1]
+  sideEffects: None
+  failurePolicy: Fail
+  matchPolicy: Equivalent
+  timeoutSeconds: 3
+  clientConfig:
+    service:
+      namespace: kube-system
+      name: space-compute-reporter-webhook
+      path: /validate
+      port: 443
+    caBundle: ""
+  rules:
+  - operations: [CREATE, UPDATE]
+    apiGroups: [spacecompute.k3s.io]
+    apiVersions: [v1alpha1]
+    resources:
+    - spacedomainreporterbindings
+    - spacelinksnapshots
+    - spacedomainresourcesummaries
+    - spacetransferreceipts
+    - spaceresultreceipts
+    scope: Cluster

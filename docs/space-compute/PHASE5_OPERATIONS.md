@@ -68,3 +68,11 @@ these operational Kubernetes objects.
 
 See `PHASE4_API_AND_OPERATIONS.md` for state-machine troubleshooting and
 `PHASE5_SECURITY.md`/`PHASE5_RISK_REGISTER.md` for release blockers.
+
+## Reporter webhook and key operations
+
+Provision `kube-system/space-compute-reporter-public-keys` as an administrator-owned Secret whose data keys contain raw 32-byte Ed25519 public keys or PEM PKIX `PUBLIC KEY` values. Each `SpaceDomainReporterBinding.spec.publicKeyRef` must reference that exact Secret and one key. Rotate a reporter key by updating the Secret entry and binding reference/key as an administrator; the next accepted object must still chain `previousDigest` to the last stored object but is signed with the new current key.
+
+Provision `space-compute-reporter-webhook-tls` for `space-compute-reporter-webhook.kube-system.svc`, inject the issuing CA into `ValidatingWebhookConfiguration/space-compute-reporter-truth`, and wait for both webhook replicas to be ready before granting reporter CREATE. The webhook is fail-closed. Certificate expiry, missing key material, unavailable binding, invalid digest/signature or unavailable webhook all reject reporter writes; they do not silently fall back to controller status validation.
+
+Reporter RBAC should have CREATE only on the allowed reporter kinds plus GET/UPDATE/PATCH only for exact `resourceNames` calculated from the normalized bound identities. Do not bind a shared role with unrestricted GET/UPDATE/PATCH across cluster-scoped reporter objects.

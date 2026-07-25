@@ -218,9 +218,16 @@ func contactWindowsDigest(windows []ContactWindow) string {
 	sort.Slice(copyWindows, func(i, j int) bool { return copyWindows[i].ID < copyWindows[j].ID })
 	h := sha256.New()
 	for _, w := range copyWindows {
-		fmt.Fprintf(h, "%s|%d|%d|%d|%d|%d|%d|%d|%t\n", w.ID, w.Start.UnixNano(), w.End.UnixNano(), w.BandwidthBitsPerSec, w.RTTMicroseconds, w.LossPartsPerMillion, w.ErrorPartsPerMillion, w.ConfidenceMilli, w.Predicted)
+		fmt.Fprintf(h, "%s|%d|%d|%d|%d|%d|%d|%d|%d|%t\n", w.ID, w.Start.UnixNano(), w.End.UnixNano(), w.BandwidthBitsPerSec, w.RTTMicroseconds, w.LossPartsPerMillion, w.ErrorPartsPerMillion, w.StabilityMilli, w.ConfidenceMilli, w.Predicted)
 	}
 	return hex.EncodeToString(h.Sum(nil))
+}
+
+// ContactWindowsDigest is the deterministic material digest for contact-window
+// content. It is exported for controllers/tests that need to compare material
+// link input without duplicating field coverage.
+func ContactWindowsDigest(windows []ContactWindow) string {
+	return contactWindowsDigest(windows)
 }
 
 func ValidateMission(mission *SpaceMission, clock Clock) error {

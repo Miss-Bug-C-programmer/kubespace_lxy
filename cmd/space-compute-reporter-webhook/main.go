@@ -1,0 +1,123 @@
+package main
+
+import (
+	"context"
+	"crypto/tls"
+	"errors"
+	"flag"
+	"fmt"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
+	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
+	clientcmd "k8s.io/client-go/tools/clientcmd"
+	"k8s.io/klog/v2"
+
+	spaceadmission "github.com/k3s-io/k3s/contrib/space-compute/pkg/admission"
+	spacev1 "github.com/k3s-io/k3s/contrib/space-compute/pkg/apis/v1alpha1"
+)
+
+const componentName = "space-compute-reporter-webhook"
+
+type options struct {
+	kubeconfig, master, bindAddress, tlsCertFile, tlsKeyFile string
+	publicKeySecretNamespace, publicKeySecretName            string
+	maxBodyBytes                                             int64
+}
+
+func main() {
+	klog.InitFlags(nil)
+	opt := options{}
+	flag.StringVar(&opt.kubeconfig, "kubeconfig", "", "Path to kubeconfig; empty uses in-cluster configuration")
+	flag.StringVar(&opt.master, "master", "", "Optional API server address")
+	flag.StringVar(&opt.bindAddress, "bind-address", ":9443", "HTTPS admission and health listen address")
+	flag.StringVar(&opt.tlsCertFile, "tls-cert-file", "/tls/tls.crt", "Webhook serving certificate")
+	flag.StringVar(&opt.tlsKeyFile, "tls-private-key-file", "/tls/tls.key", "Webhook serving private key")
+	flag.StringVar(&opt.publicKeySecretNamespace, "reporter-public-key-secret-namespace", "kube-system", "Namespace of the single reporter public-key Secret")
+	flag.StringVar(&opt.publicKeySecretName, "reporter-public-key-secret-name", "space-compute-reporter-public-keys", "Name of the single reporter public-key Secret")
+	flag.Int64Var(&opt.maxBodyBytes, "max-admission-body-bytes", spaceadmission.DefaultMaxAdmissionBodyBytes, "Maximum AdmissionReview request body")
+	flag.Parse()
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	if err := run(ctx, opt); err != nil {
+		klog.Fatalf("%s failed: %v", componentName, err)
+	}
+}
+
+func run(ctx context.Context, opt options) error {
+	if opt.bindAddress == "" || opt.tlsCertFile == "" || opt.tlsKeyFile == "" {
+		return fmt.Errorf("bind address and TLS certificate/key files are required")
+	}
+	if opt.maxBodyBytes < 4096 || opt.maxBodyBytes > 8<<20 {
+		return fmt.Errorf("max-admission-body-bytes must be between 4096 and %d", 8<<20)
+	}
+	config, err := kubeConfig(opt.master, opt.kubeconfig)
+	if err != nil {
+		return err
+	}
+	config.UserAgent = componentName
+	dynamicClient, err := dynamic.NewForConfig(config)
+	if err != nil {
+		return fmt.Errorf("create dynamic client: %w", err)
+	}
+	coreClient, err := kubernetes.NewForConfig(config)
+	if err != nil {
+		return fmt.Errorf("create Kubernetes client: %w", err)
+	}
+	trust, err := spaceadmission.NewKubernetesTrustSource(dynamicClient, coreClient, opt.publicKeySecretNamespace, opt.publicKeySecretName)
+	if err != nil {
+		return err
+	}
+	validator, err := spaceadmission.NewValidator(trust, spacev1.RealClock{})
+	if err != nil {
+		return err
+	}
+	handler, err := spaceadmission.NewHandler(validator, opt.maxBodyBytes)
+	if err != nil {
+		return err
+	}
+
+	mux := http.NewServeMux()
+	mux.Handle("/validate", handler)
+	mux.HandleFunc("/livez", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("ok\n")) })
+	mux.HandleFunc("/readyz", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("ok\n")) })
+	server := &http.Server{
+		Addr:              opt.bindAddress,
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       10 * time.Second,
+		WriteTimeout:      10 * time.Second,
+		IdleTimeout:       30 * time.Second,
+		TLSConfig:         &tls.Config{MinVersion: tls.VersionTLS12},
+	}
+	errCh := make(chan error, 1)
+	go func() {
+		err := server.ListenAndServeTLS(opt.tlsCertFile, opt.tlsKeyFile)
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			errCh <- err
+			return
+		}
+		errCh <- nil
+	}()
+	select {
+	case <-ctx.Done():
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		return server.Shutdown(shutdownCtx)
+	case err := <-errCh:
+		return err
+	}
+}
+
+func kubeConfig(master, kubeconfig string) (*rest.Config, error) {
+	if master != "" || kubeconfig != "" {
+		return clientcmd.BuildConfigFromFlags(master, kubeconfig)
+	}
+	return rest.InClusterConfig()
+}

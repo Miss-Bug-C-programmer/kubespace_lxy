@@ -41,10 +41,28 @@ spec:
   validations:
   - expression: "object.spec.provenance.reporterID == request.userInfo.username"
     message: link provenance reporterID must equal the authenticated principal
-  - expression: "oldObject == null || object.spec.provenance.sequence > oldObject.spec.provenance.sequence"
+  - expression: "oldObject == null || object.spec.provenance.sequence == oldObject.spec.provenance.sequence + 1"
     message: link provenance sequence must increase on every update
   - expression: "oldObject == null || oldObject.spec.provenance.reporterID == object.spec.provenance.reporterID"
     message: provenance reporterID is immutable
+  - expression: "oldObject == null || oldObject.spec.domain == object.spec.domain"
+    message: resource summary domain is immutable
+  - expression: "oldObject == null || oldObject.spec.provenance.source == object.spec.provenance.source"
+    message: resource provenance source is immutable
+  - expression: "oldObject == null || object.spec.provenance.previousDigest == oldObject.spec.provenance.digest"
+    message: resource previousDigest must chain to the prior digest
+  - expression: "oldObject == null || timestamp(object.spec.observedAt) > timestamp(oldObject.spec.observedAt)"
+    message: resource observedAt must increase
+  - expression: "oldObject == null || oldObject.spec.source == object.spec.source"
+    message: link source domain is immutable
+  - expression: "oldObject == null || oldObject.spec.destination == object.spec.destination"
+    message: link destination domain is immutable
+  - expression: "oldObject == null || oldObject.spec.provenance.source == object.spec.provenance.source"
+    message: link provenance source is immutable
+  - expression: "oldObject == null || object.spec.provenance.previousDigest == oldObject.spec.provenance.digest"
+    message: link previousDigest must chain to the prior digest
+  - expression: "oldObject == null || timestamp(object.spec.observedAt) > timestamp(oldObject.spec.observedAt)"
+    message: link observedAt must increase
 ---
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicyBinding
@@ -69,7 +87,7 @@ spec:
   validations:
   - expression: "object.spec.provenance.reporterID == request.userInfo.username"
     message: resource provenance reporterID must equal the authenticated principal
-  - expression: "oldObject == null || object.spec.provenance.sequence > oldObject.spec.provenance.sequence"
+  - expression: "oldObject == null || object.spec.provenance.sequence == oldObject.spec.provenance.sequence + 1"
     message: resource provenance sequence must increase on every update
   - expression: "oldObject == null || oldObject.spec.provenance.reporterID == object.spec.provenance.reporterID"
     message: provenance reporterID is immutable

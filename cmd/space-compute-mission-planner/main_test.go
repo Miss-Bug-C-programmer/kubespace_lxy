@@ -37,7 +37,7 @@ func TestHealthEndpointsDistinguishLiveAndLeaderReady(t *testing.T) {
 
 func TestPhase4ManifestsHaveCRDsAdmissionIsolationAndLeastPrivilege(t *testing.T) {
 	root := filepath.Join("..", "..", "docs", "space-compute", "manifests")
-	for _, name := range []string{"phase4-crds.yaml", "phase4-admission.yaml", "mission-planner.yaml"} {
+	for _, name := range []string{"phase4-crds.yaml", "phase4-admission.yaml", "mission-planner.yaml", "reporter-admission-webhook.yaml"} {
 		raw, err := os.ReadFile(filepath.Join(root, name))
 		if err != nil {
 			t.Fatal(err)
@@ -66,7 +66,7 @@ func TestPhase4ManifestsHaveCRDsAdmissionIsolationAndLeastPrivilege(t *testing.T
 		}
 		text := string(raw)
 		if name == "phase4-crds.yaml" {
-			for _, kind := range []string{"SpaceLinkSnapshot", "SpaceDomainResourceSummary", "SpaceMission", "SpacePlacementIntent"} {
+			for _, kind := range []string{"SpaceLinkSnapshot", "SpaceDomainResourceSummary", "SpaceDomainReporterBinding", "SpaceTransferReceipt", "SpaceResultReceipt", "SpaceMission", "SpacePlacementIntent"} {
 				if !strings.Contains(text, "kind: "+kind) {
 					t.Fatalf("%s missing %s", name, kind)
 				}
@@ -76,7 +76,7 @@ func TestPhase4ManifestsHaveCRDsAdmissionIsolationAndLeastPrivilege(t *testing.T
 			for _, required := range []string{
 				"failurePolicy: Fail",
 				"request.userInfo.username",
-				"object.spec.provenance.sequence > oldObject.spec.provenance.sequence",
+				"object.spec.provenance.sequence == oldObject.spec.provenance.sequence + 1",
 				"system:serviceaccount:kube-system:space-compute-mission-planner",
 				"resources: [spacemissions]",
 				"resources: [spacelinksnapshots]",
@@ -91,6 +91,13 @@ func TestPhase4ManifestsHaveCRDsAdmissionIsolationAndLeastPrivilege(t *testing.T
 		if name == "mission-planner.yaml" {
 			if strings.Contains(text, "resources: [secrets]") || !strings.Contains(text, "resourceNames: [space-compute-mission-planner]") || !strings.Contains(text, "replicas: 2") || !strings.Contains(text, "verbs: [get, list, watch, create, delete]") {
 				t.Fatal("planner RBAC/deployment isolation regression")
+			}
+		}
+		if name == "reporter-admission-webhook.yaml" {
+			for _, required := range []string{"kind: ValidatingWebhookConfiguration", "failurePolicy: Fail", "space-compute-reporter-public-keys", "resourceNames: [space-compute-reporter-public-keys]", "resources: [spacedomainreporterbindings]", "spacetransferreceipts", "spaceresultreceipts"} {
+				if !strings.Contains(text, required) {
+					t.Fatalf("reporter webhook manifest missing %q", required)
+				}
 			}
 		}
 	}

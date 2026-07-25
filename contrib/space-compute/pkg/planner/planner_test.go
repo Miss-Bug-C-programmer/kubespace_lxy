@@ -242,6 +242,69 @@ func TestControllerRestartDuplicateIntentAndCrossDomainFence(t *testing.T) {
 	}
 }
 
+func TestStabilityOnlyChangeChangesDigestMaterialInputAndTriggersReplan(t *testing.T) {
+	now, mission, summaries, links := scenario()
+	initial, err := Plan(mission, summaries[:1], links[:2], testClock{now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeWindowDigest := spacev1.ContactWindowsDigest(links[0].Spec.Windows)
+	beforeMaterialDigest := initial.Placement.Spec.MaterialInputDigest
+
+	repository := &memoryRepository{mission: mission.DeepCopy(), summaries: summaries[:1], links: links[:2]}
+	controller := &Controller{Repository: repository, Clock: testClock{now}}
+	if _, err := controller.Reconcile(context.Background(), MissionKey{Namespace: mission.Namespace, Name: mission.Name}); err != nil {
+		t.Fatal(err)
+	}
+	if repository.placement == nil {
+		t.Fatal("initial placement was not persisted")
+	}
+	repository.placement.Status.Phase = spacev1.PlacementRunning
+
+	updatedNow := now.Add(20 * time.Second)
+	updated := links[0].DeepCopy()
+	updated.Generation++
+	updated.Spec.Provenance.Sequence++
+	updated.Status.ObservedGeneration = updated.Generation
+	updated.Status.AcceptedSequence = updated.Spec.Provenance.Sequence
+	updated.Status.Conditions = []metav1.Condition{{
+		Type: ConditionLinkValidated, Status: metav1.ConditionTrue,
+		ObservedGeneration: updated.Generation, LastTransitionTime: metav1.NewTime(updatedNow),
+		Reason: "Validated", Message: "updated stability snapshot accepted by resource controller",
+	}}
+	updated.Spec.Provenance.PreviousDigest = updated.Spec.Provenance.Digest
+	updated.Spec.Provenance.Digest = strings.Repeat("c", 64)
+	updated.Spec.ObservedAt = metav1.NewTime(updatedNow)
+	updated.Spec.ValidUntil = metav1.NewTime(updatedNow.Add(3 * time.Hour))
+	updated.Spec.Windows[0].StabilityMilli--
+	if after := spacev1.ContactWindowsDigest(updated.Spec.Windows); after == beforeWindowDigest {
+		t.Fatal("stability-only contact-window change did not produce a new window digest")
+	}
+
+	updatedLinks := []*spacev1.SpaceLinkSnapshot{updated, links[1]}
+	replanned, err := Plan(mission, summaries[:1], updatedLinks, testClock{updatedNow})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replanned.Placement.Spec.MaterialInputDigest == beforeMaterialDigest {
+		t.Fatal("stability-only link change did not change planner material input digest")
+	}
+	if updated.Spec.Provenance.Sequence != links[0].Spec.Provenance.Sequence+1 {
+		t.Fatalf("sequence=%d, want %d", updated.Spec.Provenance.Sequence, links[0].Spec.Provenance.Sequence+1)
+	}
+
+	repository.links = updatedLinks
+	controller = &Controller{Repository: repository, Clock: testClock{updatedNow}}
+	if _, err := controller.Reconcile(context.Background(), MissionKey{Namespace: mission.Namespace, Name: mission.Name}); err != nil {
+		t.Fatal(err)
+	}
+	if repository.placement.Status.Phase != spacev1.PlacementReplanning {
+		t.Fatalf("phase=%s, want %s after stability material change", repository.placement.Status.Phase, spacev1.PlacementReplanning)
+	}
+	if repository.applyCount != 1 {
+		t.Fatalf("running attempt was duplicated during replan: applyCount=%d", repository.applyCount)
+	}
+}
 func scenario() (time.Time, *spacev1.SpaceMission, []*spacev1.SpaceDomainResourceSummary, []*spacev1.SpaceLinkSnapshot) {
 	now := time.Date(2026, 7, 21, 0, 0, 0, 0, time.UTC)
 	mission := &spacev1.SpaceMission{ObjectMeta: metav1.ObjectMeta{Name: "earth-observation", Namespace: "missions", UID: types.UID("mission-uid"), Generation: 1}, Spec: spacev1.SpaceMissionSpec{MissionClass: "earth-observation", Priority: 900, StatePolicy: spacev1.PolicyStrict,

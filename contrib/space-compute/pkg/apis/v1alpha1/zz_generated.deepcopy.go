@@ -154,3 +154,68 @@ func (in *SpacePlacementIntentList) DeepCopy() *SpacePlacementIntentList {
 	}
 	return &out
 }
+
+func (in *SpaceDomainReporterBinding) DeepCopy() *SpaceDomainReporterBinding {
+	if in == nil {
+		return nil
+	}
+	out := *in
+	out.ObjectMeta = *in.ObjectMeta.DeepCopy()
+	out.Spec.AllowedKinds = append([]string(nil), in.Spec.AllowedKinds...)
+	out.Spec.AllowedPeers = append([]DomainReference(nil), in.Spec.AllowedPeers...)
+	return &out
+}
+
+func (in *SpaceDomainReporterBindingList) DeepCopy() *SpaceDomainReporterBindingList {
+	if in == nil {
+		return nil
+	}
+	out := *in
+	out.Items = make([]SpaceDomainReporterBinding, len(in.Items))
+	for i := range in.Items {
+		out.Items[i] = *in.Items[i].DeepCopy()
+	}
+	return &out
+}
+
+func (in *SpaceTransferReceipt) DeepCopy() *SpaceTransferReceipt {
+	if in == nil {
+		return nil
+	}
+	out := *in
+	out.ObjectMeta = *in.ObjectMeta.DeepCopy()
+	return &out
+}
+
+func (in *SpaceTransferReceiptList) DeepCopy() *SpaceTransferReceiptList {
+	if in == nil {
+		return nil
+	}
+	out := *in
+	out.Items = make([]SpaceTransferReceipt, len(in.Items))
+	for i := range in.Items {
+		out.Items[i] = *in.Items[i].DeepCopy()
+	}
+	return &out
+}
+
+func (in *SpaceResultReceipt) DeepCopy() *SpaceResultReceipt {
+	if in == nil {
+		return nil
+	}
+	out := *in
+	out.ObjectMeta = *in.ObjectMeta.DeepCopy()
+	return &out
+}
+
+func (in *SpaceResultReceiptList) DeepCopy() *SpaceResultReceiptList {
+	if in == nil {
+		return nil
+	}
+	out := *in
+	out.Items = make([]SpaceResultReceipt, len(in.Items))
+	for i := range in.Items {
+		out.Items[i] = *in.Items[i].DeepCopy()
+	}
+	return &out
+}

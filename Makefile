@@ -45,6 +45,11 @@ space-compute-mission-planner:
 	mkdir -p bin
 	go build -buildvcs=false -o bin/space-compute-mission-planner ./cmd/space-compute-mission-planner
 
+.PHONY: space-compute-reporter-webhook
+space-compute-reporter-webhook:
+	mkdir -p bin
+	go build -buildvcs=false -o bin/space-compute-reporter-webhook ./cmd/space-compute-reporter-webhook
+
 .PHONY: image-scan
 image-scan:
 	scripts/image_scan.sh $(IMAGE)

@@ -751,3 +751,19 @@ func removeDeviceIdentity(raw string) string {
 	}
 	return strings.Join(lines, "\n")
 }
+
+type panicMetricReader struct{}
+
+func (panicMetricReader) Read([]byte) (int, error) {
+	panic("malformed exporter stream")
+}
+
+func TestParsePrometheusMetricsConvertsParserPanicToError(t *testing.T) {
+	_, err := parsePrometheusMetrics(panicMetricReader{})
+	if err == nil {
+		t.Fatal("parsePrometheusMetrics returned nil error after parser panic")
+	}
+	if !strings.Contains(err.Error(), "parser panic") {
+		t.Fatalf("error = %q, want parser panic context", err)
+	}
+}

@@ -212,7 +212,18 @@ func parsePrometheusMetrics(r io.Reader) (*metricStore, error) {
 	return parsePrometheusMetricsWithLimits(r, defaultParserLimits())
 }
 
-func parsePrometheusMetricsWithLimits(r io.Reader, limits parserLimits) (*metricStore, error) {
+func parsePrometheusMetricsWithLimits(r io.Reader, limits parserLimits) (store *metricStore, err error) {
+	// Prometheus text is supplied by an untrusted node-local exporter. Some
+	// malformed inputs can trigger a panic inside expfmt.TextParser instead of
+	// returning an error. Keep that third-party parser failure inside this trust
+	// boundary and fail closed; scheduler collection workers must never crash.
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			store = nil
+			err = fmt.Errorf("parse Prometheus metrics: parser panic: %v", recovered)
+		}
+	}()
+
 	parser := expfmt.TextParser{}
 	families, err := parser.TextToMetricFamilies(r)
 	if err != nil {
@@ -222,7 +233,7 @@ func parsePrometheusMetricsWithLimits(r io.Reader, limits parserLimits) (*metric
 	if len(families) > limits.MaxMetricFamilies {
 		return nil, fmt.Errorf("metric family count %d exceeds limit %d", len(families), limits.MaxMetricFamilies)
 	}
-	store := &metricStore{samples: map[string][]metricSample{}, maxDevices: limits.MaxDevices}
+	store = &metricStore{samples: map[string][]metricSample{}, maxDevices: limits.MaxDevices}
 	sampleCount := 0
 	for name, family := range families {
 		for _, metric := range family.GetMetric() {

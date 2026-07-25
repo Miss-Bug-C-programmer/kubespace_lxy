@@ -184,3 +184,11 @@ CPU-only replay is provided by `scripts/space-compute scenarios`, `integration`
 and `cluster-e2e`. Golden workload, Node, link, expected explanations and the
 recorded Iluvatar exporter text are under `contrib/space-compute/testdata/golden`
 and `pkg/scheduler/plugins/gpustability/testdata/fixtures`.
+
+## Trusted reporter-domain admission
+
+Reporter-owned cross-domain objects are admitted through the fail-closed `space-compute-reporter-webhook`. Administrators create one cluster-scoped `SpaceDomainReporterBinding` whose deterministic name is derived from the authenticated principal. The binding fixes the reporter domain, allowed kinds, explicit peers and one Ed25519 public-key reference.
+
+Reporter object names are derived from normalized domain or directed-link identity. Canonical provenance uses `spacecompute-canonical-v1`, fixed field order, UTC RFC3339Nano timestamps after Kubernetes API persistence normalization, explicitly sorted map/set-like values, and excludes only digest and signature. Reporters submit lowercase SHA-256 plus a base64 Ed25519 signature. CREATE requires sequence 1 and empty previous digest; UPDATE requires exact sequence increment, exact previous digest, increasing timestamp and immutable reporter/domain/source/destination/stable identity.
+
+Provision the webhook TLS Secret and CA bundle before granting reporter writes. Reporter roles receive CREATE plus exact `resourceNames` for GET/UPDATE/PATCH; no shared reporter role receives unrestricted mutation of all cluster-scoped summaries or snapshots.

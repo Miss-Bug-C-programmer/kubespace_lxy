@@ -47,10 +47,41 @@ type DomainReference struct {
 }
 
 type Provenance struct {
-	ReporterID string `json:"reporterID"`
-	Source     string `json:"source"`
-	Digest     string `json:"digest"`
-	Sequence   int64  `json:"sequence"`
+	ReporterID     string `json:"reporterID"`
+	Source         string `json:"source"`
+	Digest         string `json:"digest"`
+	PreviousDigest string `json:"previousDigest,omitempty"`
+	Sequence       int64  `json:"sequence"`
+	Signature      string `json:"signature,omitempty"`
+}
+
+type SecretReference struct {
+	Namespace string `json:"namespace"`
+	Name      string `json:"name"`
+	Key       string `json:"key"`
+}
+
+type SpaceDomainReporterBindingSpec struct {
+	ReporterPrincipal string            `json:"reporterPrincipal"`
+	Domain            DomainReference   `json:"domain"`
+	AllowedKinds      []string          `json:"allowedKinds"`
+	AllowedPeers      []DomainReference `json:"allowedPeers,omitempty"`
+	PublicKeyRef      SecretReference   `json:"publicKeyRef"`
+}
+
+// +kubebuilder:object:root=true
+// +kubebuilder:resource:scope=Cluster,shortName=sreporter
+type SpaceDomainReporterBinding struct {
+	metav1.TypeMeta   `json:",inline"`
+	metav1.ObjectMeta `json:"metadata,omitempty"`
+	Spec              SpaceDomainReporterBindingSpec `json:"spec"`
+}
+
+// +kubebuilder:object:root=true
+type SpaceDomainReporterBindingList struct {
+	metav1.TypeMeta `json:",inline"`
+	metav1.ListMeta `json:"metadata,omitempty"`
+	Items           []SpaceDomainReporterBinding `json:"items"`
 }
 
 // ContactWindow is half-open: Start is inclusive and End is exclusive.
@@ -261,6 +292,64 @@ type SpaceDomainResourceSummaryList struct {
 	Items           []SpaceDomainResourceSummary `json:"items"`
 }
 
+type SpaceTransferReceiptSpec struct {
+	TransferID    string          `json:"transferID"`
+	MissionUID    string          `json:"missionUID"`
+	PlanID        string          `json:"planID"`
+	Attempt       int32           `json:"attempt"`
+	Source        DomainReference `json:"source"`
+	Destination   DomainReference `json:"destination"`
+	DataID        string          `json:"dataID"`
+	Bytes         int64           `json:"bytes"`
+	PayloadDigest string          `json:"payloadDigest"`
+	StartedAt     metav1.Time     `json:"startedAt"`
+	CompletedAt   metav1.Time     `json:"completedAt"`
+	Provenance    Provenance      `json:"provenance"`
+}
+
+// +kubebuilder:object:root=true
+// +kubebuilder:resource:scope=Cluster,shortName=stransferreceipt
+type SpaceTransferReceipt struct {
+	metav1.TypeMeta   `json:",inline"`
+	metav1.ObjectMeta `json:"metadata,omitempty"`
+	Spec              SpaceTransferReceiptSpec `json:"spec"`
+}
+
+// +kubebuilder:object:root=true
+type SpaceTransferReceiptList struct {
+	metav1.TypeMeta `json:",inline"`
+	metav1.ListMeta `json:"metadata,omitempty"`
+	Items           []SpaceTransferReceipt `json:"items"`
+}
+
+type SpaceResultReceiptSpec struct {
+	ResultID      string          `json:"resultID"`
+	MissionUID    string          `json:"missionUID"`
+	PlanID        string          `json:"planID"`
+	Attempt       int32           `json:"attempt"`
+	Source        DomainReference `json:"source"`
+	Destination   DomainReference `json:"destination"`
+	Bytes         int64           `json:"bytes"`
+	PayloadDigest string          `json:"payloadDigest"`
+	CompletedAt   metav1.Time     `json:"completedAt"`
+	Provenance    Provenance      `json:"provenance"`
+}
+
+// +kubebuilder:object:root=true
+// +kubebuilder:resource:scope=Cluster,shortName=sresultreceipt
+type SpaceResultReceipt struct {
+	metav1.TypeMeta   `json:",inline"`
+	metav1.ObjectMeta `json:"metadata,omitempty"`
+	Spec              SpaceResultReceiptSpec `json:"spec"`
+}
+
+// +kubebuilder:object:root=true
+type SpaceResultReceiptList struct {
+	metav1.TypeMeta `json:",inline"`
+	metav1.ListMeta `json:"metadata,omitempty"`
+	Items           []SpaceResultReceipt `json:"items"`
+}
+
 type TransferEpoch struct {
 	LinkSnapshotName string      `json:"linkSnapshotName"`
 	WindowID         string      `json:"windowID"`
@@ -365,3 +454,9 @@ func (in *SpaceMission) DeepCopyObject() runtime.Object                   { retu
 func (in *SpaceMissionList) DeepCopyObject() runtime.Object               { return in.DeepCopy() }
 func (in *SpacePlacementIntent) DeepCopyObject() runtime.Object           { return in.DeepCopy() }
 func (in *SpacePlacementIntentList) DeepCopyObject() runtime.Object       { return in.DeepCopy() }
+func (in *SpaceDomainReporterBinding) DeepCopyObject() runtime.Object     { return in.DeepCopy() }
+func (in *SpaceDomainReporterBindingList) DeepCopyObject() runtime.Object { return in.DeepCopy() }
+func (in *SpaceTransferReceipt) DeepCopyObject() runtime.Object           { return in.DeepCopy() }
+func (in *SpaceTransferReceiptList) DeepCopyObject() runtime.Object       { return in.DeepCopy() }
+func (in *SpaceResultReceipt) DeepCopyObject() runtime.Object             { return in.DeepCopy() }
+func (in *SpaceResultReceiptList) DeepCopyObject() runtime.Object         { return in.DeepCopy() }

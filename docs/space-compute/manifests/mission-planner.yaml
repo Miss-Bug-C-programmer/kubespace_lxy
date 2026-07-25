@@ -78,13 +78,14 @@ spec:
   selector: {app.kubernetes.io/name: space-compute-mission-planner}
   ports: [{name: metrics, port: 10261, targetPort: metrics}]
 ---
-# Bind this role only to authenticated cross-domain reporter ServiceAccounts.
-# The admission policy additionally requires provenance.reporterID to equal the
-# authenticated Kubernetes principal.
+# Optional create-only capability for authenticated reporter ServiceAccounts.
+# CREATE cannot be constrained by resourceNames in Kubernetes RBAC, so the
+# fail-closed reporter webhook enforces binding/domain/peer/kind/name/signature.
+# Grant GET/UPDATE/PATCH separately per reporter with exact derived resourceNames.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata: {name: system:space-compute-domain-reporter}
 rules:
 - apiGroups: [spacecompute.k3s.io]
-  resources: [spacelinksnapshots, spacedomainresourcesummaries]
-  verbs: [create, get, update, patch]
+  resources: [spacelinksnapshots, spacedomainresourcesummaries, spacetransferreceipts, spaceresultreceipts]
+  verbs: [create]

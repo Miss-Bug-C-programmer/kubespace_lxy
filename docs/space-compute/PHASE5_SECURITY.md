@@ -69,3 +69,11 @@ verify`, and `go mod tidy -diff` also passed under Go 1.25.12.
 The security gate is now **PASS**. Release remains blocked by the independent
 cross-domain transport/fence, full-agent/upgrade, hardware and API evidence
 listed in the risk register.
+
+## Reporter-domain truth boundary hardening (2026-07-24)
+
+Cross-domain reporter ingestion is no longer authenticated by `reporterID` equality alone. `SpaceDomainReporterBinding` binds an exact Kubernetes principal to one domain, allowed reporter kinds, explicit peer domains and a public-key reference. `space-compute-reporter-webhook` runs as a separate ServiceAccount so the mission planner retains zero Secret read permission. The webhook may GET only reporter bindings and the single `kube-system/space-compute-reporter-public-keys` Secret; it cannot mutate reporter objects.
+
+Reporter-owned `SpaceLinkSnapshot`, `SpaceDomainResourceSummary`, `SpaceTransferReceipt` and `SpaceResultReceipt` objects are admitted only when the object name is derived from the normalized stable identity, domain/source matches the binding, destination is an allowed peer, sequence/previous digest form an exact chain, timestamps advance, SHA-256 matches the versioned canonical payload and an Ed25519 signature over the 32-byte digest verifies. Source/domain/destination/reporter/stable identity cannot be switched by UPDATE. Admission failure is synchronous and fail-closed; controller status is defense-in-depth, not the authenticity gate.
+
+The webhook serving key is distinct from reporter verification keys. Its private TLS key is mounted only into the webhook Pod. Reporter bindings reference only public-key material. Private reporter signing keys remain outside this repository and outside the planner.

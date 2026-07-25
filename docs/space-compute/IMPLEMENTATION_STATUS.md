@@ -880,3 +880,26 @@ Regression coverage includes overlapping same-class resource names, disjoint inv
 - gofmt, go vet and source-boundary audit: PASS.
 
 Vendor hardware release remains blocked until exporter stable IDs are demonstrated to match real DRA or vendor allocation identities on supported hardware. No vGPU slicing or second allocator is introduced by this change.
+
+
+### Untrusted Prometheus parser panic containment
+
+The Phase 4 full qualification fuzz gate exposed an expfmt.TextParser panic on malformed exporter text. The production parser boundary now recovers third-party parser panics, returns a fail-closed parse error and keeps collector/scheduler processes alive. A direct panic-boundary regression is included; the existing fuzz gate remains enabled and unchanged.
+
+## Phase 5 focused reporter-domain authenticity and canonical provenance hardening (2026-07-24)
+
+Root cause: the Phase 4 CEL admission boundary only compared `spec.provenance.reporterID` with the authenticated Kubernetes username and checked monotonic sequence. It did not bind a principal to a specific domain/peer set or key, did not recompute the claimed digest, and did not verify a signature before persistence. `contactWindowsDigest` also omitted `stabilityMilli`, so a stability-only contact-product change could be treated as unchanged by the minimum-update guard.
+
+Production fix: `SpaceDomainReporterBinding` is a cluster-scoped administrator-owned trust binding from one exact Kubernetes principal to one domain, an explicit allowed-kind set, explicit peer domains and one public-key Secret reference. A separate `space-compute-reporter-webhook` validates bindings and reporter-owned link/resource/transfer/result objects on CREATE/UPDATE. It enforces derived object names, reporter/domain/peer ownership, immutable stable identity, exact `sequence = previous + 1`, exact `previousDigest`, strictly increasing reporter timestamps, deterministic canonical SHA-256 and Ed25519 signatures. Canonical serialization is versioned, has fixed field order, UTC RFC3339Nano timestamps, explicitly sorted set/map-like inputs and excludes only the digest/signature fields themselves. The planner ServiceAccount still cannot read Secrets; the webhook has only `get` on reporter bindings and `get` on the single `kube-system/space-compute-reporter-public-keys` Secret via `resourceNames`.
+
+`SpaceTransferReceipt` and `SpaceResultReceipt` are added as signed evidence APIs so their provenance contract is defined now, but no WAN transport/result agent or remote execution fence is claimed. Existing R2 remains a release blocker. The shared reporter ClusterRole no longer grants arbitrary cluster-wide get/update/patch; it is create-only and updates must be granted per reporter with exact derived `resourceNames`.
+
+Regression coverage includes canonical ordering and UTC normalization, digest/signature forgery, missing/mismatched reporter bindings, disallowed peer/domain switches, name derivation, exact sequence/previous-digest chains, transfer/result receipts, HTTP AdmissionReview fail-closed behavior, and a stability-only contact-window change that changes the contact digest and planner material digest and drives the running attempt into `Replanning`.
+
+- Focused Stage 4 reporter authenticity tests: PASS in GitHub Actions run 30145278562 from main snapshot 07acff9d401fc59810b40392aaff87a0d65bd070.
+- Focused race tests: PASS in the same run.
+- `scripts/space-compute all`: PASS.
+- `go test ./pkg/executor/embed -count=1`: PASS; the default K3s scheduler remains independent.
+- `gofmt`, `go vet`, manifest/RBAC source audit and production binary build: PASS.
+
+A live API-server webhook TLS/CA provisioning run is still an environment qualification item: operators must provision the serving certificate and inject its issuing CA into the `ValidatingWebhookConfiguration` before enabling reporter writes. The configuration is `failurePolicy: Fail`, so an absent/untrusted webhook fails closed rather than accepting unsigned data.

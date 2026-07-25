@@ -73,3 +73,17 @@ completion. Paths are repository-relative.
 
 Because the matrix contains gaps, failed security evidence and required Not-run
 items, PROJECT.md is not fully traceable to a production release.
+
+## Focused Stage 4 reporter authenticity traceability (2026-07-24)
+
+| Requirement | Production implementation | Verification |
+| --- | --- | --- |
+| Principal is bound to one reporter domain | cluster-scoped `SpaceDomainReporterBinding`; deterministic principal-derived binding name | admission binding/domain/principal regression tests |
+| Link source and summary domain cannot be forged | webhook compares source/domain to binding and update identity is immutable | forged-domain and update-switch tests |
+| Link/receipt destination must be an explicit peer | binding `allowedPeers` exact `DomainReference` matching | disallowed-peer tests |
+| Object stable name is domain/link-derived | `DomainResourceSummaryName`, `LinkSnapshotName`, receipt derived-name helpers | derived-name collision/direction tests |
+| Digest covers all material fields deterministically | `spacecompute-canonical-v1`; fixed order, UTC RFC3339Nano, sorted maps/set-like lists; digest/signature excluded | canonical ordering/field mutation tests |
+| Reporter signature is cryptographically verified | Ed25519 over raw SHA-256 digest using bound public key | valid/forged signature admission tests |
+| Replay/fork resistance | exact `sequence + 1`, exact `previousDigest`, increasing timestamp | chain-gap/previous-digest/timestamp tests |
+| Stability-only contact change is material | `contactWindowsDigest` includes `stabilityMilli`; canonical digest and planner material input change | stability-only digest and replan regression |
+| Default K3s remains independent | webhook/planner are separate optional processes; no default-scheduler registration | `pkg/executor/embed` gate |
