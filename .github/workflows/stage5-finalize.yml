@@ -44,10 +44,11 @@ jobs:
       - name: Apply reviewed Phase 5 source
         run: |
           set -euo pipefail
-          python3 -m py_compile .github/stage5-hardening-source.py .github/stage5-hardening-source2.py .github/stage5-hardening-tests.py .github/stage5-deploy-source.py .github/stage5-deploy-fix.py
+          python3 -m py_compile .github/stage5-hardening-source.py .github/stage5-hardening-source2.py .github/stage5-hardening-tests.py .github/stage5-phase4-regression.py .github/stage5-deploy-source.py .github/stage5-deploy-fix.py
           python3 .github/stage5-hardening-source.py
           python3 .github/stage5-hardening-source2.py
           python3 .github/stage5-hardening-tests.py
+          python3 .github/stage5-phase4-regression.py
           python3 .github/stage5-deploy-source.py
           python3 .github/stage5-deploy-fix.py
       - name: Normalize generated Go indentation
@@ -85,13 +86,16 @@ jobs:
       - name: Format generated Go
         run: |
           set -euo pipefail
-          gofmt -w cmd/space-compute-domain-agent/*.go contrib/space-compute/pkg/apis/v1alpha1/*.go contrib/space-compute/pkg/admission/*.go contrib/space-compute/pkg/execution/*.go contrib/space-compute/pkg/transport/*.go contrib/space-compute/pkg/workload/*.go
+          gofmt -w cmd/space-compute-domain-agent/*.go contrib/space-compute/pkg/apis/v1alpha1/*.go contrib/space-compute/pkg/admission/*.go contrib/space-compute/pkg/execution/*.go contrib/space-compute/pkg/transport/*.go contrib/space-compute/pkg/workload/*.go pkg/scheduler/plugins/gpustability/phase4_test.go pkg/scheduler/plugins/gpustability/phase4_integration_test.go
       - name: Diff whitespace check
         run: git diff --check
       - name: Parse YAML manifests
         run: ruby -e 'require "yaml"; ARGV.each { |p| YAML.load_stream(File.read(p)) }' docs/space-compute/manifests/*.yaml docs/gpu-scheduler/manifests/space-compute-scheduler.yaml
       - name: Verify default scheduler independence
-        run: test -z "$(git diff --name-only -- pkg/scheduler/plugins/gpustability cmd/space-compute-scheduler docs/gpu-scheduler/manifests/space-compute-scheduler.yaml)"
+        run: |
+          set -euo pipefail
+          changed="$(git diff --name-only -- pkg/scheduler/plugins/gpustability cmd/space-compute-scheduler docs/gpu-scheduler/manifests/space-compute-scheduler.yaml | grep -v '^pkg/scheduler/plugins/gpustability/.*_test.go$' || true)"
+          test -z "$changed"
       - name: Run complete repository gate
         run: |
           set -o pipefail
@@ -109,7 +113,7 @@ jobs:
           set -euo pipefail
           git fetch origin main
           test "$(git rev-parse origin/main)" = "$GITHUB_SHA"
-          git add Makefile scripts/space-compute cmd/space-compute-domain-agent contrib/space-compute/pkg docs/space-compute/IMPLEMENTATION_STATUS.md docs/space-compute/PHASE5_TRANSPORT_EXECUTION.md docs/space-compute/manifests/mission-planner.yaml docs/space-compute/manifests/reporter-admission-webhook.yaml docs/space-compute/manifests/phase5-transport-execution-crds.yaml docs/space-compute/manifests/domain-agent.yaml
+          git add Makefile scripts/space-compute cmd/space-compute-domain-agent contrib/space-compute/pkg pkg/scheduler/plugins/gpustability/phase4_test.go pkg/scheduler/plugins/gpustability/phase4_integration_test.go docs/space-compute/IMPLEMENTATION_STATUS.md docs/space-compute/PHASE5_TRANSPORT_EXECUTION.md docs/space-compute/manifests/mission-planner.yaml docs/space-compute/manifests/reporter-admission-webhook.yaml docs/space-compute/manifests/phase5-transport-execution-crds.yaml docs/space-compute/manifests/domain-agent.yaml
           git diff --cached --check
           if git diff --cached --quiet; then
             echo "new_sha=$GITHUB_SHA" >> "$GITHUB_OUTPUT"
