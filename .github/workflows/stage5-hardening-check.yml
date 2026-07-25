@@ -51,10 +51,13 @@ jobs:
           set -euo pipefail
           python3 -m py_compile .github/stage5-hardening-source2.py
           python3 .github/stage5-hardening-source2.py
-      - name: Format and diff check
+      - name: Format generated Go
         run: |
           set -euo pipefail
           gofmt -w cmd/space-compute-domain-agent/*.go contrib/space-compute/pkg/apis/v1alpha1/*.go contrib/space-compute/pkg/admission/*.go contrib/space-compute/pkg/execution/*.go contrib/space-compute/pkg/transport/*.go contrib/space-compute/pkg/workload/*.go
+      - name: Diff whitespace check
+        run: |
+          set -euo pipefail
           git diff --check
       - name: Focused tests
         run: |
