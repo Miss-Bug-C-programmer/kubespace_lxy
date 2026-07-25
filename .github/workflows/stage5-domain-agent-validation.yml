@@ -1,0 +1,66 @@
+name: stage5-domain-agent-validation
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/stage5-trigger
+permissions:
+  contents: write
+  statuses: write
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - name: Publish run identity
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api --method POST "repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
+            -f state=pending -f context="sandbox/stage5-domain-agent-${GITHUB_RUN_ID}" \
+            -f target_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            -f description="Stage 5 domain-agent validation is running"
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Apply candidate and run focused compile
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat .github/stage5-payload-00.b64 .github/stage5-payload-01.b64 | base64 -d | gzip -d > /tmp/stage5-apply.py
+          python3 -m py_compile /tmp/stage5-apply.py
+          python3 /tmp/stage5-apply.py
+          gofmt -w \
+            contrib/space-compute/pkg/apis/v1alpha1/*.go \
+            contrib/space-compute/pkg/admission/*.go \
+            contrib/space-compute/pkg/planner/*.go \
+            contrib/space-compute/pkg/workload/*.go \
+            contrib/space-compute/pkg/kube/*.go \
+            contrib/space-compute/pkg/transport/*.go \
+            contrib/space-compute/pkg/execution/*.go \
+            cmd/space-compute-domain-agent/*.go
+          git diff --check
+          go test ./contrib/space-compute/pkg/apis/v1alpha1 ./contrib/space-compute/pkg/execution ./contrib/space-compute/pkg/transport ./contrib/space-compute/pkg/admission ./contrib/space-compute/pkg/planner ./contrib/space-compute/pkg/workload ./contrib/space-compute/pkg/kube ./cmd/space-compute-domain-agent -count=1 -timeout=180s
+      - name: Publish success
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api --method POST "repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
+            -f state=success -f context="sandbox/stage5-domain-agent-${GITHUB_RUN_ID}" \
+            -f target_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            -f description="Stage 5 focused candidate passed"
+      - name: Publish failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api --method POST "repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
+            -f state=failure -f context="sandbox/stage5-domain-agent-${GITHUB_RUN_ID}" \
+            -f target_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            -f description="Stage 5 focused candidate failed"
