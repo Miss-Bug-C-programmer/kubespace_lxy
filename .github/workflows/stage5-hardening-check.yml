@@ -111,9 +111,18 @@ jobs:
           git diff --check
       - name: Focused tests
         run: |
-          set -euo pipefail
-          go test ./contrib/space-compute/pkg/apis/v1alpha1 ./contrib/space-compute/pkg/execution ./contrib/space-compute/pkg/transport ./contrib/space-compute/pkg/admission ./contrib/space-compute/pkg/planner ./contrib/space-compute/pkg/workload ./contrib/space-compute/pkg/kube -count=1 -timeout=180s
-          go test ./cmd/space-compute-mission-planner ./cmd/space-compute-domain-agent -count=1 -timeout=180s
+          set -o pipefail
+          {
+            go test ./contrib/space-compute/pkg/apis/v1alpha1 ./contrib/space-compute/pkg/execution ./contrib/space-compute/pkg/transport ./contrib/space-compute/pkg/admission ./contrib/space-compute/pkg/planner ./contrib/space-compute/pkg/workload ./contrib/space-compute/pkg/kube -count=1 -timeout=180s
+            go test ./cmd/space-compute-mission-planner ./cmd/space-compute-domain-agent -count=1 -timeout=180s
+          } 2>&1 | tee /tmp/focused-tests.log
+      - name: Upload focused test error
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: focused-test-error
+          path: /tmp/focused-tests.log
+          if-no-files-found: ignore
       - name: Success status
         if: success()
         env: {GH_TOKEN: "${{ github.token }}"}
