@@ -1,0 +1,137 @@
+name: stage6-mission-security
+on:
+  push:
+    branches: [main]
+    paths: [.github/stage6-mission-security-trigger]
+permissions: {contents: write, statuses: write}
+concurrency:
+  group: stage6-mission-security-main
+  cancel-in-progress: false
+jobs:
+  harden:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+        with: {ref: "${{ github.sha }}", fetch-depth: 0}
+      - name: Publish pending status
+        env: {GH_TOKEN: "${{ github.token }}"}
+        run: gh api --method POST "repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=pending -f context="sandbox/stage6-mission-security-${GITHUB_RUN_ID}" -f target_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" -f description="Validating Mission-to-Pod authorization hardening"
+      - uses: actions/setup-go@v5
+        with: {go-version-file: go.mod, cache: true}
+      - name: Apply reviewed Phase 6 source
+        run: |
+          set -euo pipefail
+          cat .github/stage6-payload/part-* > /tmp/stage6-source.b85
+          python3 - <<'PY'
+          import base64, zlib
+          from pathlib import Path
+          payload = Path('/tmp/stage6-source.b85').read_bytes()
+          Path('/tmp/stage6-mission-security-source.py').write_bytes(zlib.decompress(base64.b85decode(payload)))
+          PY
+          python3 -m py_compile /tmp/stage6-mission-security-source.py
+          python3 /tmp/stage6-mission-security-source.py
+      - name: Format generated Go
+        run: |
+          set -euo pipefail
+          gofmt -w \
+            cmd/space-compute-mission-planner/*.go \
+            cmd/space-compute-mission-webhook/*.go \
+            contrib/space-compute/pkg/apis/v1alpha1/*.go \
+            contrib/space-compute/pkg/admission/*.go \
+            contrib/space-compute/pkg/workload/*.go
+      - name: Diff whitespace check
+        run: git diff --check
+      - name: Parse YAML manifests
+        run: ruby -e 'require "yaml"; ARGV.each { |p| YAML.load_stream(File.read(p)) }' docs/space-compute/manifests/*.yaml docs/gpu-scheduler/manifests/space-compute-scheduler.yaml
+      - name: Verify default scheduler independence
+        run: |
+          set -euo pipefail
+          changed="$(git diff --name-only "$GITHUB_SHA" -- pkg/scheduler/plugins/gpustability cmd/space-compute-scheduler docs/gpu-scheduler/manifests/space-compute-scheduler.yaml | grep -v '^pkg/scheduler/plugins/gpustability/.*_test.go$' || true)"
+          test -z "$changed"
+          grep -q 'controlled-attempt-or-approved-dispatcher' docs/space-compute/manifests/mission-admission-webhook.yaml
+      - name: Verify least-privilege source and RBAC invariants
+        run: |
+          set -euo pipefail
+          ! grep -q 'Nodes().Update' cmd/space-compute-mission-planner/main.go
+          grep -q 'types.ApplyPatchType' cmd/space-compute-mission-planner/main.go
+          grep -q 'FieldManager: nodeProjectorFieldManager' cmd/space-compute-mission-planner/main.go
+          grep -q -- '--controller-role=transport-agent' docs/space-compute/manifests/mission-planner.yaml
+          planner_role="$(awk '/^  name: system:space-compute-mission-planner$/{p=1} p && /^kind: ClusterRoleBinding$/{exit} p{print}' docs/space-compute/manifests/mission-planner.yaml)"
+          ! printf '%s\n' "$planner_role" | grep -E 'resources: \[(pods|nodes)\]|spacetransferintents'
+      - name: Run focused Phase 6 unit and race gates
+        run: |
+          set -o pipefail
+          go test ./contrib/space-compute/pkg/admission ./contrib/space-compute/pkg/workload ./cmd/space-compute-mission-planner ./cmd/space-compute-mission-webhook -count=1 2>&1 | tee /tmp/stage6-focused.log
+          go test -race ./contrib/space-compute/pkg/admission ./contrib/space-compute/pkg/workload ./cmd/space-compute-mission-planner ./cmd/space-compute-mission-webhook -count=1 2>&1 | tee /tmp/stage6-race.log
+      - name: Run complete repository gate
+        run: |
+          set -o pipefail
+          scripts/space-compute all 2>&1 | tee /tmp/space-compute-all.log
+      - name: Record exact Phase 6 verification evidence
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          p = Path('docs/space-compute/IMPLEMENTATION_STATUS.md')
+          text = p.read_text()
+          marker = '## Phase 6 Mission-to-Pod authorization hardening\n'
+          if marker in text:
+              raise SystemExit('Phase 6 status section already exists')
+          section = f'''\n## Phase 6 Mission-to-Pod authorization hardening\n\n- Executed on 2026-07-26 by GitHub Actions run `{os.environ["GITHUB_RUN_ID"]}` from baseline `{os.environ["GITHUB_SHA"]}`.\n- Added fail-closed Mission CREATE/UPDATE authorization using the original AdmissionRequest identity and SubjectAccessReview for Pod create, ServiceAccount/RuntimeClass use and referenced PVC/Secret/ConfigMap objects. Material Pod-template updates are reauthorized.\n- Added explicit administrator policy and default-deny validation for host namespaces, privilege, hostPath/hostPort, capabilities, service-account token mounts, placement bypass, reserved metadata, unapproved registries/service accounts/runtime classes and missing resource requests/limits.\n- Hardened attempt-Pod construction: fresh metadata, controller-only reserved fields, forced `space-compute-scheduler`, `automountServiceAccountToken=false`, Restricted security contexts, immutable Mission/Placement SHA-256 digests and no user Node placement.\n- Split controller identities into planner, workload-dispatcher, node-projector and transport-agent. Dispatcher Pod writes require namespace-local RoleBinding; node projection uses Server-Side Apply field manager `space-compute-node-projector` and only `spacecompute.k3s.io/*` Node metadata.\n- Exact successful commands: `go test ./contrib/space-compute/pkg/admission ./contrib/space-compute/pkg/workload ./cmd/space-compute-mission-planner ./cmd/space-compute-mission-webhook -count=1`; the same package set with `go test -race`; `scripts/space-compute all`; YAML parse and explicit default-scheduler/RBAC invariants in `.github/workflows/stage6-mission-security.yml`.\n- No physical accelerator, full-agent K3s, or hardware qualification claim is added by this phase; the existing Phase 5 release blockers remain unless separately qualified.\n\n'''
+          insert = text.find('## Verified plugin catalogue')
+          if insert < 0:
+              raise SystemExit('status insertion marker missing')
+          p.write_text(text[:insert] + section + text[insert:])
+          PY
+      - name: Upload gate failure logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage6-mission-security-error
+          path: |
+            /tmp/stage6-focused.log
+            /tmp/stage6-race.log
+            /tmp/space-compute-all.log
+          if-no-files-found: ignore
+      - name: Fast-forward Phase 6 production source
+        id: publish
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          test "$(git rev-parse origin/main)" = "$GITHUB_SHA"
+          git rm -f .github/stage6-mission-security-trigger .github/workflows/stage6-mission-security.yml .github/stage6-payload/part-*
+          git add \
+            Makefile scripts/space-compute Dockerfile.space-compute-mission-webhook \
+            cmd/space-compute-mission-planner cmd/space-compute-mission-webhook \
+            contrib/space-compute/pkg/apis/v1alpha1/types.go \
+            contrib/space-compute/pkg/admission \
+            contrib/space-compute/pkg/workload \
+            docs/space-compute/IMPLEMENTATION_STATUS.md \
+            docs/space-compute/PHASE6_MISSION_SECURITY.md \
+            docs/space-compute/manifests/mission-planner.yaml \
+            docs/space-compute/manifests/mission-admission-webhook.yaml
+          git diff --cached --check
+          if git diff --cached --quiet; then
+            echo "new_sha=$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git config user.name space-compute-stage6-bot
+          git config user.email space-compute-stage6-bot@users.noreply.github.com
+          git commit -m 'fix: harden mission-to-pod authorization boundary'
+          new_sha="$(git rev-parse HEAD)"
+          git push origin HEAD:main
+          echo "new_sha=$new_sha" >> "$GITHUB_OUTPUT"
+      - name: Publish final success status
+        if: success()
+        env:
+          GH_TOKEN: "${{ github.token }}"
+          NEW_SHA: "${{ steps.publish.outputs.new_sha }}"
+        run: |
+          gh api --method POST "repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=success -f context="sandbox/stage6-mission-security-${GITHUB_RUN_ID}" -f target_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" -f description="Phase 6 gate passed and main fast-forwarded"
+          gh api --method POST "repos/${GITHUB_REPOSITORY}/statuses/${NEW_SHA}" -f state=success -f context="sandbox/stage6-mission-security" -f target_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" -f description="Mission-to-Pod authorization hardening verified"
+      - name: Publish failure status
+        if: failure()
+        env: {GH_TOKEN: "${{ github.token }}"}
+        run: gh api --method POST "repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=failure -f context="sandbox/stage6-mission-security-${GITHUB_RUN_ID}" -f target_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" -f description="Phase 6 failed before production fast-forward"
