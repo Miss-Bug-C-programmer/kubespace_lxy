@@ -51,6 +51,25 @@ jobs:
           set -euo pipefail
           python3 -m py_compile .github/stage5-hardening-source2.py
           python3 .github/stage5-hardening-source2.py
+      - name: Normalize generated indentation
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          paths = [
+              Path('contrib/space-compute/pkg/transport/agent.go'),
+              Path('contrib/space-compute/pkg/transport/hardening.go'),
+              Path('contrib/space-compute/pkg/workload/controller.go'),
+          ]
+          for path in paths:
+              text = path.read_text()
+              out = []
+              for line in text.splitlines(keepends=True):
+                  while line.startswith('\\t'):
+                      line = '\t' + line[2:]
+                  out.append(line)
+              path.write_text(''.join(out))
+          PY
       - name: Format domain agent
         run: gofmt -w cmd/space-compute-domain-agent/*.go
       - name: Format phase5 API
