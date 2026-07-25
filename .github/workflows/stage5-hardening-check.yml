@@ -16,6 +16,31 @@ jobs:
         run: gh api --method POST "repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=pending -f context="sandbox/stage5-hardening-check-${GITHUB_RUN_ID}" -f target_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" -f description="Checking Phase 5 protocol hardening"
       - uses: actions/setup-go@v5
         with: {go-version-file: go.mod, cache: true}
+      - name: Repair staged generator marker
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('.github/stage5-hardening-source.py')
+          text = p.read_text()
+          needle = '''# Result receipts are valid even when the planned return destination is the same
+          # execution domain. Transfer receipts and transfer intents remain cross-domain.
+          replace_once(
+          '''
+          replacement = '''# Result receipts are valid even when the planned return destination is the same
+          # execution domain. Transfer receipts and transfer intents remain cross-domain.
+          replace_first(
+          '''
+          if text.count(needle) != 1:
+              raise SystemExit(f'bootstrap marker count {text.count(needle)}')
+          helper_anchor = '''def replace_between(path, start, end, new):\n'''
+          helper = '''def replace_first(path, old, new):\n    text = read(path)\n    if old not in text:\n        raise SystemExit(f"{path}: marker missing for {old[:80]!r}")\n    write(path, text.replace(old, new, 1))\n\n\n'''
+          if text.count(helper_anchor) != 1:
+              raise SystemExit('replace_between anchor mismatch')
+          text = text.replace(helper_anchor, helper + helper_anchor, 1)
+          text = text.replace(needle, replacement, 1)
+          p.write_text(text)
+          PY
       - name: Apply hardening layer 1
         run: |
           set -euo pipefail
