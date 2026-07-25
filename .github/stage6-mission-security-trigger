@@ -1,3 +1,0 @@
-phase6 mission security rerun 2 2026-07-26
-validated baseline before staging: dffb472b0df0a5c121ccddb13d387fb1eb086a4e
-previous gate: 30167627295 failed only because legacy dispatcher test still expected transfer-intent writes

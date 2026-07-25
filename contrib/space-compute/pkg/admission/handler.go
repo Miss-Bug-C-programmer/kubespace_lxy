@@ -1,6 +1,7 @@
 package admission
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -13,12 +14,16 @@ import (
 
 const DefaultMaxAdmissionBodyBytes int64 = 1 << 20
 
+type RequestValidator interface {
+	Validate(context.Context, *admissionv1.AdmissionRequest) error
+}
+
 type Handler struct {
-	validator *Validator
+	validator RequestValidator
 	maxBytes  int64
 }
 
-func NewHandler(validator *Validator, maxBytes int64) (*Handler, error) {
+func NewHandler(validator RequestValidator, maxBytes int64) (*Handler, error) {
 	if validator == nil {
 		return nil, fmt.Errorf("validator is required")
 	}

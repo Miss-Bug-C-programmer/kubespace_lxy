@@ -45,6 +45,11 @@ space-compute-mission-planner:
 	mkdir -p bin
 	go build -buildvcs=false -o bin/space-compute-mission-planner ./cmd/space-compute-mission-planner
 
+.PHONY: space-compute-mission-webhook
+space-compute-mission-webhook:
+	mkdir -p bin
+	go build -buildvcs=false -o bin/space-compute-mission-webhook ./cmd/space-compute-mission-webhook
+
 .PHONY: space-compute-reporter-webhook
 space-compute-reporter-webhook:
 	mkdir -p bin

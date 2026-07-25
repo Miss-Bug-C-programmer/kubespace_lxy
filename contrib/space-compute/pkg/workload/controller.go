@@ -28,7 +28,6 @@ type Store interface {
 }
 
 type EvidenceStore interface {
-	EnsureTransferIntent(context.Context, *spacev1.SpaceTransferIntent) error
 	ListTransferReceipts(context.Context) ([]*spacev1.SpaceTransferReceipt, error)
 	ListExecutionLeases(context.Context) ([]*spacev1.SpaceExecutionLease, error)
 	GetExecutionLease(context.Context, string) (*spacev1.SpaceExecutionLease, error)
@@ -71,25 +70,17 @@ func (c *Controller) ReconcileDispatch(ctx context.Context, mission *spacev1.Spa
 		return c.wait(ctx, mission, placement, phaseBeforeLease(placement), "TrustedEvidenceUnavailable", "transfer/lease evidence store is unavailable")
 	}
 
-	if len(placement.Spec.InputTransfers) > 0 && c.LocalDomain == nil {
-		return c.wait(ctx, mission, placement, spacev1.PlacementTransferPending, "TransferCoordinatorUnavailable", "local domain identity/transfer agent is not configured")
-	}
 	receipts, err := c.Evidence.ListTransferReceipts(ctx)
 	if err != nil {
 		return 0, err
 	}
-	for i, epoch := range placement.Spec.InputTransfers {
-		transferID := spacev1.InputTransferID(i, epoch.DataID)
-		payloadDigest := lookupInputDigest(mission, epoch.DataID)
-		if payloadDigest == "" {
-			return 0, fmt.Errorf("cross-domain input %q requires a trusted payloadDigest", epoch.DataID)
-		}
-		intent := &spacev1.SpaceTransferIntent{TypeMeta: metav1.TypeMeta{APIVersion: spacev1.SchemeGroupVersion.String(), Kind: "SpaceTransferIntent"}, ObjectMeta: metav1.ObjectMeta{Name: spacev1.TransferIntentName(epoch.Source, epoch.Destination, string(mission.UID), placement.Spec.PlanID, transferID)}, Spec: spacev1.SpaceTransferIntentSpec{TransferID: transferID, MissionUID: string(mission.UID), PlanID: placement.Spec.PlanID, Attempt: placement.Spec.Attempt, Purpose: spacev1.TransferPurposeInput, Coordinator: *c.LocalDomain, Source: epoch.Source, Destination: epoch.Destination, DataID: epoch.DataID, Bytes: epoch.Bytes, PayloadDigest: payloadDigest, Window: epoch, ExpiresAt: placement.Spec.ExpiresAt}}
-		if err := c.Evidence.EnsureTransferIntent(ctx, intent); err != nil {
-			return 0, err
-		}
+	intents, err := BuildInputTransferIntents(mission, placement, spacev1.DomainReference{})
+	if err != nil {
+		return 0, err
+	}
+	for _, intent := range intents {
 		if !matchingTransferReceipt(intent, receipts) {
-			return c.wait(ctx, mission, placement, spacev1.PlacementTransferPending, "TransferReceiptPending", fmt.Sprintf("input %s has no trusted transfer receipt", epoch.DataID))
+			return c.wait(ctx, mission, placement, spacev1.PlacementTransferPending, "TransferReceiptPending", fmt.Sprintf("input %s has no trusted transfer receipt", intent.Spec.DataID))
 		}
 	}
 
@@ -383,6 +374,22 @@ func latestLeaseAnyPlan(values []*spacev1.SpaceExecutionLease, uid string, attem
 	}
 	return best
 }
+func BuildInputTransferIntents(mission *spacev1.SpaceMission, placement *spacev1.SpacePlacementIntent, coordinator spacev1.DomainReference) ([]*spacev1.SpaceTransferIntent, error) {
+	if mission == nil || placement == nil {
+		return nil, fmt.Errorf("mission and placement are required")
+	}
+	intents := make([]*spacev1.SpaceTransferIntent, 0, len(placement.Spec.InputTransfers))
+	for i, epoch := range placement.Spec.InputTransfers {
+		transferID := spacev1.InputTransferID(i, epoch.DataID)
+		payloadDigest := lookupInputDigest(mission, epoch.DataID)
+		if payloadDigest == "" {
+			return nil, fmt.Errorf("cross-domain input %q requires a trusted payloadDigest", epoch.DataID)
+		}
+		intents = append(intents, &spacev1.SpaceTransferIntent{TypeMeta: metav1.TypeMeta{APIVersion: spacev1.SchemeGroupVersion.String(), Kind: "SpaceTransferIntent"}, ObjectMeta: metav1.ObjectMeta{Name: spacev1.TransferIntentName(epoch.Source, epoch.Destination, string(mission.UID), placement.Spec.PlanID, transferID)}, Spec: spacev1.SpaceTransferIntentSpec{TransferID: transferID, MissionUID: string(mission.UID), PlanID: placement.Spec.PlanID, Attempt: placement.Spec.Attempt, Purpose: spacev1.TransferPurposeInput, Coordinator: coordinator, Source: epoch.Source, Destination: epoch.Destination, DataID: epoch.DataID, Bytes: epoch.Bytes, PayloadDigest: payloadDigest, Window: epoch, ExpiresAt: placement.Spec.ExpiresAt}})
+	}
+	return intents, nil
+}
+
 func lookupInputDigest(m *spacev1.SpaceMission, id string) string {
 	for _, input := range m.Spec.Inputs {
 		if input.ID == id {
@@ -419,24 +426,29 @@ func BuildAttemptPodWithLease(mission *spacev1.SpaceMission, placement *spacev1.
 	if err != nil {
 		return nil, err
 	}
-	pod := &corev1.Pod{ObjectMeta: *template.ObjectMeta.DeepCopy(), Spec: *template.Spec.DeepCopy()}
-	pod.Namespace = mission.Namespace
-	pod.Name = AttemptPodName(mission.Name, placement.Spec.Attempt)
-	pod.GenerateName = ""
-	if pod.Labels == nil {
-		pod.Labels = map[string]string{}
+	missionDigest, err := missionSecurityDigest(mission)
+	if err != nil {
+		return nil, fmt.Errorf("mission security digest: %w", err)
 	}
-	if pod.Annotations == nil {
-		pod.Annotations = map[string]string{}
+	placementDigest, err := placementSecurityDigest(placement)
+	if err != nil {
+		return nil, fmt.Errorf("placement security digest: %w", err)
+	}
+	pod, err := secureAttemptPod(mission, placement, template)
+	if err != nil {
+		return nil, err
 	}
 	pod.Labels[spacev1.LabelPlacementID] = placement.Spec.PlanID
 	pod.Labels[spacev1.LabelMissionUID] = string(mission.UID)
 	pod.Annotations[spacev1.AnnotationMissionIntent] = string(missionRaw)
 	pod.Annotations[spacev1.AnnotationPlacement] = string(placementRaw)
+	pod.Annotations[spacev1.AnnotationMissionDigest] = missionDigest
+	pod.Annotations[spacev1.AnnotationPlacementDigest] = placementDigest
 	pod.Annotations[spacev1.GroupName+"/execution-lease"] = lease.Name
 	pod.Annotations[spacev1.GroupName+"/lease-epoch"] = strconv.FormatInt(f.LeaseEpoch, 10)
 	pod.Annotations[spacev1.GroupName+"/token-hash"] = f.TokenHash
-	pod.Spec.SchedulerName = "space-compute-scheduler"
+	// Fence tokens remain in immutable Kubernetes Secrets generated by the trusted
+	// execution transport. The user-supplied template can never select this Secret.
 	tokenEnv := corev1.EnvVar{Name: "SPACE_COMPUTE_FENCE_TOKEN", ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: spacev1.ExecutionTokenSecretName(f)}, Key: "token"}}}
 	for i := range pod.Spec.Containers {
 		pod.Spec.Containers[i].Env = append(pod.Spec.Containers[i].Env, tokenEnv, corev1.EnvVar{Name: "SPACE_COMPUTE_LEASE_EPOCH", Value: strconv.FormatInt(f.LeaseEpoch, 10)}, corev1.EnvVar{Name: "SPACE_COMPUTE_TOKEN_HASH", Value: f.TokenHash})
@@ -446,6 +458,7 @@ func BuildAttemptPodWithLease(mission *spacev1.SpaceMission, placement *spacev1.
 	pod.OwnerReferences = []metav1.OwnerReference{{APIVersion: spacev1.SchemeGroupVersion.String(), Kind: "SpaceMission", Name: mission.Name, UID: mission.UID, Controller: &controller, BlockOwnerDeletion: &block}}
 	return pod, nil
 }
+
 func podMatchesLease(pod *corev1.Pod, lease *spacev1.SpaceExecutionLease) bool {
 	if pod == nil || lease == nil {
 		return false

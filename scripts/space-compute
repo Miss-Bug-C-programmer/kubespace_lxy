@@ -8,28 +8,29 @@ export GOCACHE="${SPACE_COMPUTE_GOCACHE}"
 cd "${SPACE_COMPUTE_ROOT}"
 
 run_unit() {
-	go test ./pkg/scheduler/plugins/gpustability ./cmd/space-compute-scheduler ./cmd/space-compute-mission-planner ./cmd/space-compute-reporter-webhook ./cmd/space-compute-domain-agent ./contrib/space-compute/pkg/... ./tests/integration/spacecomputescheduler -count=1
+	go test ./pkg/scheduler/plugins/gpustability ./cmd/space-compute-scheduler ./cmd/space-compute-mission-planner ./cmd/space-compute-mission-webhook ./cmd/space-compute-reporter-webhook ./cmd/space-compute-domain-agent ./contrib/space-compute/pkg/... ./tests/integration/spacecomputescheduler -count=1
 }
 
 run_race() {
-	go test -race ./pkg/scheduler/plugins/gpustability ./cmd/space-compute-scheduler ./cmd/space-compute-mission-planner ./cmd/space-compute-reporter-webhook ./cmd/space-compute-domain-agent ./contrib/space-compute/pkg/... ./tests/integration/spacecomputescheduler -count=1
+	go test -race ./pkg/scheduler/plugins/gpustability ./cmd/space-compute-scheduler ./cmd/space-compute-mission-planner ./cmd/space-compute-mission-webhook ./cmd/space-compute-reporter-webhook ./cmd/space-compute-domain-agent ./contrib/space-compute/pkg/... ./tests/integration/spacecomputescheduler -count=1
 }
 
 run_static() {
 	local unformatted
-	unformatted="$(gofmt -s -l pkg/scheduler/plugins/gpustability/*.go cmd/space-compute-scheduler/*.go cmd/space-compute-mission-planner/*.go cmd/space-compute-reporter-webhook/*.go cmd/space-compute-domain-agent/*.go contrib/space-compute/pkg/*/*.go contrib/space-compute/pkg/apis/v1alpha1/*.go tests/integration/spacecomputescheduler/*.go)"
+	unformatted="$(gofmt -s -l pkg/scheduler/plugins/gpustability/*.go cmd/space-compute-scheduler/*.go cmd/space-compute-mission-planner/*.go cmd/space-compute-mission-webhook/*.go cmd/space-compute-reporter-webhook/*.go cmd/space-compute-domain-agent/*.go contrib/space-compute/pkg/*/*.go contrib/space-compute/pkg/apis/v1alpha1/*.go tests/integration/spacecomputescheduler/*.go)"
 	if [[ -n "${unformatted}" ]]; then
 		echo "Go files need formatting:"
 		echo "${unformatted}"
 		return 1
 	fi
-	go vet ./pkg/scheduler/plugins/gpustability ./cmd/space-compute-scheduler ./cmd/space-compute-mission-planner ./cmd/space-compute-reporter-webhook ./cmd/space-compute-domain-agent ./contrib/space-compute/pkg/... ./tests/integration/spacecomputescheduler
+	go vet ./pkg/scheduler/plugins/gpustability ./cmd/space-compute-scheduler ./cmd/space-compute-mission-planner ./cmd/space-compute-mission-webhook ./cmd/space-compute-reporter-webhook ./cmd/space-compute-domain-agent ./contrib/space-compute/pkg/... ./tests/integration/spacecomputescheduler
 }
 
 run_build() {
 	mkdir -p "${SPACE_COMPUTE_ROOT}/bin"
 	go build -buildvcs=false -o "${SPACE_COMPUTE_ROOT}/bin/space-compute-scheduler" ./cmd/space-compute-scheduler
 	go build -buildvcs=false -o "${SPACE_COMPUTE_ROOT}/bin/space-compute-mission-planner" ./cmd/space-compute-mission-planner
+	go build -buildvcs=false -o "${SPACE_COMPUTE_ROOT}/bin/space-compute-mission-webhook" ./cmd/space-compute-mission-webhook
 	go build -buildvcs=false -o "${SPACE_COMPUTE_ROOT}/bin/space-compute-reporter-webhook" ./cmd/space-compute-reporter-webhook
 	go build -buildvcs=false -o "${SPACE_COMPUTE_ROOT}/bin/space-compute-domain-agent" ./cmd/space-compute-domain-agent
 }
@@ -37,7 +38,7 @@ run_build() {
 run_integration() {
 	go test ./pkg/scheduler/plugins/gpustability -run '^(TestHTTPIntegration|TestCollectorRejectsOversizedBodyAndRedirect|TestCollectorUsesConfiguredTLSRoot|TestBuiltInAndDeclarativeProfilesThroughProductionCollection|TestTargetChangesInvalidateOldGeneration|TestNodeDeletionRecreationProfileChangeAndInvalidMetadata|TestProfileRegistryReloadIsAtomicAndLastKnownGood|TestSnapshotPublicationPreciselyActivatesBlockedPods|TestNodeQueueHintsIgnoreUnrelatedChanges|TestStrictPhysicalCoverageDoesNotClaimUnlinkedDeviceEnforcement|TestRealSchedulersBindOnlyTheirOwnPodsAndRecoverSpaceComponent|TestPhase4)' -count=1
 	go test ./cmd/space-compute-scheduler -count=1
-	go test ./cmd/space-compute-mission-planner ./cmd/space-compute-reporter-webhook ./cmd/space-compute-domain-agent ./contrib/space-compute/pkg/... -count=1
+	go test ./cmd/space-compute-mission-planner ./cmd/space-compute-mission-webhook ./cmd/space-compute-reporter-webhook ./cmd/space-compute-domain-agent ./contrib/space-compute/pkg/... -count=1
 	go test ./tests/integration/spacecomputescheduler -count=1
 }
 

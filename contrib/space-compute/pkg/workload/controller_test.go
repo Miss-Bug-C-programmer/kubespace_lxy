@@ -77,10 +77,15 @@ func TestTransferReceiptThenLeaseAreBothRequired(t *testing.T) {
 	if _, err := controller.ReconcileDispatch(context.Background(), mission, placement, mission.Spec.WorkloadTemplate); err != nil || store.creates != 0 || placement.Status.Phase != spacev1.PlacementTransferPending {
 		t.Fatalf("missing receipt phase=%s creates=%d err=%v", placement.Status.Phase, store.creates, err)
 	}
-	if len(evidence.intents) != 1 {
-		t.Fatalf("transfer intents=%d, want 1", len(evidence.intents))
+	if len(evidence.intents) != 0 {
+		t.Fatalf("dispatcher created %d transfer intents; transport-agent must own intent writes", len(evidence.intents))
 	}
-	intent := evidence.intents[0]
+	intents, err := BuildInputTransferIntents(mission, placement, coordinator)
+	if err != nil || len(intents) != 1 {
+		t.Fatalf("transport intent build count=%d err=%v", len(intents), err)
+	}
+	intent := intents[0]
+	evidence.intents = append(evidence.intents, intent.DeepCopy())
 	evidence.receipts = []*spacev1.SpaceTransferReceipt{{Spec: spacev1.SpaceTransferReceiptSpec{TransferID: intent.Spec.TransferID, MissionUID: intent.Spec.MissionUID, PlanID: intent.Spec.PlanID, Attempt: intent.Spec.Attempt, Source: intent.Spec.Source, Destination: intent.Spec.Destination, DataID: intent.Spec.DataID, Bytes: intent.Spec.Bytes, PayloadDigest: intent.Spec.PayloadDigest, StartedAt: metav1.NewTime(now.Add(-time.Minute)), CompletedAt: metav1.NewTime(now), Provenance: testProvenance(1)}}}
 	if _, err := controller.ReconcileDispatch(context.Background(), mission, placement, mission.Spec.WorkloadTemplate); err != nil || store.creates != 0 || placement.Status.Phase != spacev1.PlacementExecutionLeasePending {
 		t.Fatalf("receipt without lease phase=%s creates=%d err=%v", placement.Status.Phase, store.creates, err)

@@ -1,0 +1,177 @@
+# Phase 6 Mission authorization boundary. The webhook is fail-closed and performs
+# SubjectAccessReview using the ORIGINAL AdmissionRequest user identity.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: space-compute-mission-webhook
+  namespace: kube-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: system:space-compute-mission-webhook
+rules:
+- apiGroups: [authorization.k8s.io]
+  resources: [subjectaccessreviews]
+  verbs: [create]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: space-compute-mission-webhook
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:space-compute-mission-webhook
+subjects:
+- kind: ServiceAccount
+  name: space-compute-mission-webhook
+  namespace: kube-system
+---
+# This is an explicit administrator policy, not a permissive fallback. Empty
+# allowlists deny the corresponding feature. Change it deliberately for the
+# registries, RuntimeClasses and ServiceAccounts that are approved in a cluster.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: space-compute-mission-security-policy
+  namespace: kube-system
+data:
+  policy.json: |
+    {
+      "apiVersion": "spacecompute.k3s.io/v1alpha1",
+      "kind": "MissionSecurityPolicy",
+      "allowedServiceAccounts": ["default"],
+      "allowedRuntimeClasses": [],
+      "allowedImageRegistries": ["registry.k8s.io"],
+      "allowedCapabilities": [],
+      "allowedLabelPrefixes": ["app.kubernetes.io/"],
+      "allowedAnnotationPrefixes": [],
+      "attemptPodCreators": [
+        "system:serviceaccount:kube-system:space-compute-workload-dispatcher",
+        "system:serviceaccount:kube-system:space-compute-domain-agent"
+      ]
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: space-compute-mission-webhook
+  namespace: kube-system
+spec:
+  replicas: 2
+  selector:
+    matchLabels: {app.kubernetes.io/name: space-compute-mission-webhook}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: space-compute-mission-webhook}
+    spec:
+      serviceAccountName: space-compute-mission-webhook
+      priorityClassName: system-cluster-critical
+      securityContext:
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+      - name: webhook
+        image: space-compute-mission-webhook:v1.33.7-k3s1
+        imagePullPolicy: IfNotPresent
+        args:
+        - --bind-address=:9444
+        - --tls-cert-file=/tls/tls.crt
+        - --tls-private-key-file=/tls/tls.key
+        - --policy-file=/etc/space-compute-mission-security/policy.json
+        ports:
+        - {name: https, containerPort: 9444}
+        readinessProbe:
+          httpGet: {scheme: HTTPS, path: /readyz, port: https}
+          initialDelaySeconds: 3
+        livenessProbe:
+          httpGet: {scheme: HTTPS, path: /livez, port: https}
+          initialDelaySeconds: 10
+        resources:
+          requests: {cpu: 50m, memory: 64Mi}
+          limits: {cpu: "1", memory: 256Mi}
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          runAsUser: 65532
+          runAsGroup: 65532
+          capabilities: {drop: [ALL]}
+        volumeMounts:
+        - {name: tls, mountPath: /tls, readOnly: true}
+        - {name: policy, mountPath: /etc/space-compute-mission-security, readOnly: true}
+      volumes:
+      - name: tls
+        secret: {secretName: space-compute-mission-webhook-tls}
+      - name: policy
+        configMap: {name: space-compute-mission-security-policy}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: space-compute-mission-webhook
+  namespace: kube-system
+spec:
+  selector: {app.kubernetes.io/name: space-compute-mission-webhook}
+  ports:
+  - {name: https, port: 443, targetPort: https}
+---
+# Provision space-compute-mission-webhook-tls for the service DNS name and
+# inject the issuing CA before enabling this configuration. An empty caBundle
+# intentionally fails closed for private/untrusted serving certificates.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: space-compute-mission-security
+webhooks:
+- name: missions.security.spacecompute.k3s.io
+  admissionReviewVersions: [v1]
+  sideEffects: None
+  failurePolicy: Fail
+  matchPolicy: Equivalent
+  timeoutSeconds: 5
+  clientConfig:
+    service:
+      namespace: kube-system
+      name: space-compute-mission-webhook
+      path: /validate
+      port: 443
+    caBundle: ""
+  rules:
+  - operations: [CREATE, UPDATE]
+    apiGroups: [spacecompute.k3s.io]
+    apiVersions: [v1alpha1]
+    resources: [spacemissions]
+    scope: Namespaced
+- name: attempt-pods.security.spacecompute.k3s.io
+  admissionReviewVersions: [v1]
+  sideEffects: None
+  failurePolicy: Fail
+  matchPolicy: Equivalent
+  timeoutSeconds: 5
+  # Ordinary Pods never call this webhook. Only controlled attempt Pods, or Pod
+  # CREATE requests made by an approved dispatcher identity, are selected. This
+  # keeps default-scheduler workloads independent even if the webhook is down.
+  matchConditions:
+  - name: controlled-attempt-or-approved-dispatcher
+    expression: >-
+      request.userInfo.username in [
+        'system:serviceaccount:kube-system:space-compute-workload-dispatcher',
+        'system:serviceaccount:kube-system:space-compute-domain-agent'
+      ] || (has(object.metadata.labels) && (
+        'spacecompute.k3s.io/mission-uid' in object.metadata.labels ||
+        'spacecompute.k3s.io/placement-id' in object.metadata.labels
+      ))
+  clientConfig:
+    service:
+      namespace: kube-system
+      name: space-compute-mission-webhook
+      path: /validate
+      port: 443
+    caBundle: ""
+  rules:
+  - operations: [CREATE, UPDATE]
+    apiGroups: [""]
+    apiVersions: [v1]
+    resources: [pods]
+    scope: Namespaced

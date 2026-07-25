@@ -35,9 +35,22 @@ func TestHealthEndpointsDistinguishLiveAndLeaderReady(t *testing.T) {
 	}
 }
 
-func TestPhase4ManifestsHaveCRDsAdmissionIsolationAndLeastPrivilege(t *testing.T) {
+func TestControllerRolesAreMutuallyExplicit(t *testing.T) {
+	for _, role := range []controllerRole{rolePlanner, roleDispatcher, roleProjector, roleTransport} {
+		if !validControllerRole(role) {
+			t.Fatalf("expected valid role %q", role)
+		}
+	}
+	for _, role := range []controllerRole{"", "all", "combined"} {
+		if validControllerRole(role) {
+			t.Fatalf("unexpected valid role %q", role)
+		}
+	}
+}
+
+func TestPhase4AndPhase6ManifestsHaveAdmissionIsolationAndLeastPrivilege(t *testing.T) {
 	root := filepath.Join("..", "..", "docs", "space-compute", "manifests")
-	for _, name := range []string{"phase4-crds.yaml", "phase4-admission.yaml", "mission-planner.yaml", "reporter-admission-webhook.yaml"} {
+	for _, name := range []string{"phase4-crds.yaml", "phase4-admission.yaml", "mission-planner.yaml", "reporter-admission-webhook.yaml", "mission-admission-webhook.yaml"} {
 		raw, err := os.ReadFile(filepath.Join(root, name))
 		if err != nil {
 			t.Fatal(err)
@@ -89,14 +102,66 @@ func TestPhase4ManifestsHaveCRDsAdmissionIsolationAndLeastPrivilege(t *testing.T
 			}
 		}
 		if name == "mission-planner.yaml" {
-			if strings.Contains(text, "resources: [secrets]") || !strings.Contains(text, "resourceNames: [space-compute-mission-planner]") || !strings.Contains(text, "replicas: 2") || !strings.Contains(text, "verbs: [get, list, watch, create, delete]") {
-				t.Fatal("planner RBAC/deployment isolation regression")
+			for _, required := range []string{
+				"name: space-compute-workload-dispatcher",
+				"name: space-compute-node-projector",
+				"name: space-compute-transport-agent",
+				"name: system:space-compute-workload-dispatcher-namespace",
+				"name: system:space-compute-node-projector",
+				"name: system:space-compute-transport-agent",
+				"--controller-role=planner",
+				"--controller-role=workload-dispatcher",
+				"--controller-role=node-projector",
+				"--controller-role=transport-agent",
+				"verbs: [get, list, watch, patch]",
+			} {
+				if !strings.Contains(text, required) {
+					t.Fatalf("split planner manifest missing %q", required)
+				}
+			}
+			plannerStart := strings.Index(text, "name: system:space-compute-mission-planner")
+			plannerEnd := strings.Index(text, "name: space-compute-mission-planner\nroleRef:")
+			if plannerStart < 0 || plannerEnd <= plannerStart {
+				t.Fatal("planner role boundaries not found")
+			}
+			plannerRole := text[plannerStart:plannerEnd]
+			if strings.Contains(plannerRole, "resources: [pods]") || strings.Contains(plannerRole, "resources: [nodes]") || strings.Contains(plannerRole, "spacetransferintents") {
+				t.Fatal("planner role retained Pod/Node/transport privileges")
+			}
+			transportStart := strings.Index(text, "name: system:space-compute-transport-agent")
+			transportEnd := strings.Index(text[transportStart:], "kind: ClusterRoleBinding")
+			if transportStart < 0 || transportEnd < 0 {
+				t.Fatal("transport role boundaries not found")
+			}
+			transportRole := text[transportStart : transportStart+transportEnd]
+			for _, forbidden := range []string{"resources: [pods]", "resources: [nodes]", "resources: [secrets]"} {
+				if strings.Contains(transportRole, forbidden) {
+					t.Fatalf("transport role retained forbidden privilege %q", forbidden)
+				}
 			}
 		}
 		if name == "reporter-admission-webhook.yaml" {
 			for _, required := range []string{"kind: ValidatingWebhookConfiguration", "failurePolicy: Fail", "space-compute-reporter-public-keys", "resourceNames: [space-compute-reporter-public-keys]", "resources: [spacedomainreporterbindings]", "spacetransferreceipts", "spaceresultreceipts"} {
 				if !strings.Contains(text, required) {
 					t.Fatalf("reporter webhook manifest missing %q", required)
+				}
+			}
+		}
+		if name == "mission-admission-webhook.yaml" {
+			for _, required := range []string{
+				"resources: [subjectaccessreviews]",
+				"kind: ValidatingWebhookConfiguration",
+				"failurePolicy: Fail",
+				"resources: [spacemissions]",
+				"resources: [pods]",
+				"allowedServiceAccounts",
+				"allowedImageRegistries",
+				"attemptPodCreators",
+				"matchConditions:",
+				"controlled-attempt-or-approved-dispatcher",
+			} {
+				if !strings.Contains(text, required) {
+					t.Fatalf("mission webhook manifest missing %q", required)
 				}
 			}
 		}

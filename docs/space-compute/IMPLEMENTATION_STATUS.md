@@ -71,6 +71,17 @@ inspection or compilation.
   5,000-node datasets and K3s lifecycle behavior. It also identifies release
   blockers; Phase 5 is executed but the stack is not release-ready.
 
+
+## Phase 6 Mission-to-Pod authorization hardening
+
+- Executed on 2026-07-26 by GitHub Actions run `30167725955` from baseline `c3b2abb9fbf6825f26a4a6e6209345292bcae8cd`.
+- Added fail-closed Mission CREATE/UPDATE authorization using the original AdmissionRequest identity and SubjectAccessReview for Pod create, ServiceAccount/RuntimeClass use and referenced PVC/Secret/ConfigMap objects. Material Pod-template updates are reauthorized.
+- Added explicit administrator policy and default-deny validation for host namespaces, privilege, hostPath/hostPort, capabilities, service-account token mounts, placement bypass, reserved metadata, unapproved registries/service accounts/runtime classes and missing resource requests/limits.
+- Hardened attempt-Pod construction: fresh metadata, controller-only reserved fields, forced `space-compute-scheduler`, `automountServiceAccountToken=false`, Restricted security contexts, immutable Mission/Placement SHA-256 digests and no user Node placement.
+- Split controller identities into planner, workload-dispatcher, node-projector and transport-agent. Dispatcher Pod writes require namespace-local RoleBinding; node projection uses Server-Side Apply field manager `space-compute-node-projector` and only `spacecompute.k3s.io/*` Node metadata.
+- Exact successful commands: `go test ./contrib/space-compute/pkg/admission ./contrib/space-compute/pkg/workload ./cmd/space-compute-mission-planner ./cmd/space-compute-mission-webhook -count=1`; the same package set with `go test -race`; `scripts/space-compute all`; YAML parse and explicit default-scheduler/RBAC invariants in `.github/workflows/stage6-mission-security.yml`.
+- No physical accelerator, full-agent K3s, or hardware qualification claim is added by this phase; the existing Phase 5 release blockers remain unless separately qualified.
+
 ## Verified plugin catalogue
 
 - Entry points are `New`, `PreFilter`, `Filter`, `PreScore`, `Score`, `Close`,

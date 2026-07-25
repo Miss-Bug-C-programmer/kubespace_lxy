@@ -12,6 +12,8 @@ import (
 const (
 	AnnotationMissionIntent    = GroupName + "/mission-intent"
 	AnnotationPlacement        = GroupName + "/placement"
+	AnnotationMissionDigest    = GroupName + "/mission-digest"
+	AnnotationPlacementDigest  = GroupName + "/placement-digest"
 	AnnotationLinkProjection   = GroupName + "/link-projection"
 	AnnotationResultReturned   = GroupName + "/result-returned"
 	AnnotationCheckpointID     = GroupName + "/checkpoint-id"
