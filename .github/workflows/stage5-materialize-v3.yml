@@ -1,0 +1,37 @@
+name: stage5-materialize-v3
+on:
+  push:
+    branches: [main]
+    paths: [.github/stage5-materialize-trigger]
+permissions: {contents: write, statuses: write}
+jobs:
+  materialize:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with: {ref: "${{ github.sha }}", fetch-depth: 0}
+      - uses: actions/setup-go@v5
+        with: {go-version-file: go.mod, cache: true}
+      - name: Apply reviewed candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          scripts=(stage5-api.py stage5-runtime.py stage5-fix.py stage5-fix2.py stage5-tests-direct.py stage5-agent-core.py stage5-fix3.py stage5-core-tests.py stage5-fix4.py stage5-agent-lib.py stage5-fix5.py stage5-fix6.py stage5-command.py stage5-fix8.py)
+          for script in "${scripts[@]}"; do python3 -m py_compile ".github/$script"; python3 ".github/$script"; done
+          gofmt -w cmd/space-compute-domain-agent/*.go cmd/space-compute-mission-planner/*.go contrib/space-compute/pkg/apis/v1alpha1/*.go contrib/space-compute/pkg/admission/*.go contrib/space-compute/pkg/planner/*.go contrib/space-compute/pkg/workload/*.go contrib/space-compute/pkg/kube/*.go contrib/space-compute/pkg/transport/*.go contrib/space-compute/pkg/execution/*.go
+          git diff --check
+          go test ./contrib/space-compute/pkg/apis/v1alpha1 ./contrib/space-compute/pkg/execution ./contrib/space-compute/pkg/transport ./contrib/space-compute/pkg/admission ./contrib/space-compute/pkg/planner ./contrib/space-compute/pkg/workload ./contrib/space-compute/pkg/kube -count=1 -timeout=180s
+          go test ./cmd/space-compute-mission-planner ./cmd/space-compute-domain-agent -count=1 -timeout=180s
+      - name: Fast-forward materialize source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          test "$(git rev-parse origin/main)" = "$GITHUB_SHA"
+          git add cmd/space-compute-domain-agent cmd/space-compute-mission-planner contrib/space-compute/pkg/apis/v1alpha1 contrib/space-compute/pkg/admission contrib/space-compute/pkg/planner contrib/space-compute/pkg/workload contrib/space-compute/pkg/kube contrib/space-compute/pkg/transport contrib/space-compute/pkg/execution
+          if git diff --cached --quiet; then exit 0; fi
+          git config user.name space-compute-stage5-bot
+          git config user.email space-compute-stage5-bot@users.noreply.github.com
+          git commit -m 'feat: materialize phase5 transport and execution fence core'
+          git push origin HEAD:main
