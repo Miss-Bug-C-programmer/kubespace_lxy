@@ -31,21 +31,42 @@ jobs:
       - name: Apply candidate and run focused compile
         shell: bash
         run: |
-          set -euo pipefail
-          cat .github/stage5-payload-00.b64 .github/stage5-payload-01.b64 | base64 -d | gzip -d > /tmp/stage5-apply.py
-          python3 -m py_compile /tmp/stage5-apply.py
-          python3 /tmp/stage5-apply.py
-          gofmt -w \
-            contrib/space-compute/pkg/apis/v1alpha1/*.go \
-            contrib/space-compute/pkg/admission/*.go \
-            contrib/space-compute/pkg/planner/*.go \
-            contrib/space-compute/pkg/workload/*.go \
-            contrib/space-compute/pkg/kube/*.go \
-            contrib/space-compute/pkg/transport/*.go \
-            contrib/space-compute/pkg/execution/*.go \
-            cmd/space-compute-domain-agent/*.go
-          git diff --check
-          go test ./contrib/space-compute/pkg/apis/v1alpha1 ./contrib/space-compute/pkg/execution ./contrib/space-compute/pkg/transport ./contrib/space-compute/pkg/admission ./contrib/space-compute/pkg/planner ./contrib/space-compute/pkg/workload ./contrib/space-compute/pkg/kube ./cmd/space-compute-domain-agent -count=1 -timeout=180s
+          set +e
+          (
+            set -euo pipefail
+            cat .github/stage5-payload-00.b64 .github/stage5-payload-01.b64 | base64 -d | gzip -d > /tmp/stage5-apply.py
+            python3 -m py_compile /tmp/stage5-apply.py
+            python3 /tmp/stage5-apply.py
+            gofmt -w \
+              contrib/space-compute/pkg/apis/v1alpha1/*.go \
+              contrib/space-compute/pkg/admission/*.go \
+              contrib/space-compute/pkg/planner/*.go \
+              contrib/space-compute/pkg/workload/*.go \
+              contrib/space-compute/pkg/kube/*.go \
+              contrib/space-compute/pkg/transport/*.go \
+              contrib/space-compute/pkg/execution/*.go \
+              cmd/space-compute-domain-agent/*.go
+            git diff --check
+            go test ./contrib/space-compute/pkg/apis/v1alpha1 ./contrib/space-compute/pkg/execution ./contrib/space-compute/pkg/transport ./contrib/space-compute/pkg/admission ./contrib/space-compute/pkg/planner ./contrib/space-compute/pkg/workload ./contrib/space-compute/pkg/kube ./cmd/space-compute-domain-agent -count=1 -timeout=180s
+          ) > /tmp/stage5-focused.log 2>&1
+          status=$?
+          cat /tmp/stage5-focused.log
+          if [ "$status" -ne 0 ]; then
+            git fetch origin main
+            if [ "$(git rev-parse origin/main)" = "$GITHUB_SHA" ]; then
+              {
+                echo "run_id=$GITHUB_RUN_ID"
+                echo "base_sha=$GITHUB_SHA"
+                echo '--- focused output ---'
+                tail -n 800 /tmp/stage5-focused.log
+              } > .github/stage5-failure.txt
+              git add .github/stage5-failure.txt
+              git config user.name space-compute-stage5-bot
+              git config user.email space-compute-stage5-bot@users.noreply.github.com
+              git commit -m 'chore: capture phase5 focused failure' && git push origin HEAD:main
+            fi
+            exit "$status"
+          fi
       - name: Publish success
         if: success()
         env:
