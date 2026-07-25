@@ -1,9 +1,19 @@
-run_id=30147806529
-base_sha=5dc11d4c32ecea78f89bb30a9512a7bec44f0a8b
+run_id=30147855374
+base_sha=2f8ab051bfd97259db26f6892b7fa8b91129cd7e
 --- focused output ---
 stage5 API patch applied
 stage5 runtime patch applied
 stage5 transport compile fix applied
 stage5 fence time fix applied
 stage5 direct workload evidence tests applied
-contrib/space-compute/pkg/apis/v1alpha1/phase5_transport.go: marker count 0 for 'const (\n\tTransferIntentPending   = "Pending"\n\tTransferIntentSending   = "Sending'
+stage5 domain agent core patch applied
+ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/apis/v1alpha1	0.009s
+?   	github.com/k3s-io/k3s/contrib/space-compute/pkg/execution	[no test files]
+?   	github.com/k3s-io/k3s/contrib/space-compute/pkg/transport	[no test files]
+# github.com/k3s-io/k3s/contrib/space-compute/pkg/workload [github.com/k3s-io/k3s/contrib/space-compute/pkg/workload.test]
+contrib/space-compute/pkg/workload/controller.go:11:2: "strings" imported and not used
+ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/admission	0.031s
+ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/planner	0.197s
+FAIL	github.com/k3s-io/k3s/contrib/space-compute/pkg/workload [build failed]
+ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/kube	0.017s
+FAIL
