@@ -44,11 +44,12 @@ jobs:
       - name: Apply reviewed Phase 5 source
         run: |
           set -euo pipefail
-          python3 -m py_compile .github/stage5-hardening-source.py .github/stage5-hardening-source2.py .github/stage5-hardening-tests.py .github/stage5-phase4-regression.py .github/stage5-deploy-source.py .github/stage5-deploy-fix.py
+          python3 -m py_compile .github/stage5-hardening-source.py .github/stage5-hardening-source2.py .github/stage5-hardening-tests.py .github/stage5-phase4-regression.py .github/stage5-final-fixes.py .github/stage5-deploy-source.py .github/stage5-deploy-fix.py
           python3 .github/stage5-hardening-source.py
           python3 .github/stage5-hardening-source2.py
           python3 .github/stage5-hardening-tests.py
           python3 .github/stage5-phase4-regression.py
+          python3 .github/stage5-final-fixes.py
           python3 .github/stage5-deploy-source.py
           python3 .github/stage5-deploy-fix.py
       - name: Normalize generated Go indentation
@@ -86,7 +87,7 @@ jobs:
       - name: Format generated Go
         run: |
           set -euo pipefail
-          gofmt -w cmd/space-compute-domain-agent/*.go contrib/space-compute/pkg/apis/v1alpha1/*.go contrib/space-compute/pkg/admission/*.go contrib/space-compute/pkg/execution/*.go contrib/space-compute/pkg/transport/*.go contrib/space-compute/pkg/workload/*.go pkg/scheduler/plugins/gpustability/phase4_test.go pkg/scheduler/plugins/gpustability/phase4_integration_test.go
+          gofmt -w cmd/space-compute-domain-agent/*.go contrib/space-compute/pkg/apis/v1alpha1/*.go contrib/space-compute/pkg/admission/*.go contrib/space-compute/pkg/execution/*.go contrib/space-compute/pkg/transport/*.go contrib/space-compute/pkg/workload/*.go contrib/space-compute/pkg/planner/*.go pkg/scheduler/plugins/gpustability/phase4_test.go pkg/scheduler/plugins/gpustability/phase4_integration_test.go
       - name: Diff whitespace check
         run: git diff --check
       - name: Parse YAML manifests
