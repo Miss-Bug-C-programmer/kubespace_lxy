@@ -39,6 +39,15 @@ jobs:
             pkg/scheduler/plugins/gpustability/phase1_test.go
           python3 - <<'PY'
           from pathlib import Path
+
+          recovered_path = Path('.github/stage4-recovered.py')
+          recovered = recovered_path.read_text()
+          bad_build_separator = r'\\n\\tgo build -buildvcs=false'
+          good_build_separator = r'\n\tgo build -buildvcs=false'
+          if recovered.count(bad_build_separator) != 1:
+              raise SystemExit('stage4 recovered build separator marker mismatch')
+          recovered_path.write_text(recovered.replace(bad_build_separator, good_build_separator, 1))
+
           path = Path('.github/stage4-finalize.sh')
           text = path.read_text()
           old = '    .github/stage4-failure.txt \\\n'
