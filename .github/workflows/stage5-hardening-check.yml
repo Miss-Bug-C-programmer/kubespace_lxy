@@ -62,12 +62,23 @@ jobs:
               Path('contrib/space-compute/pkg/workload/controller.go'),
           ]
           for path in paths:
-              text = path.read_text()
               out = []
-              for line in text.splitlines(keepends=True):
-                  while line.startswith('\\t'):
-                      line = '\t' + line[2:]
-                  out.append(line)
+              for line in path.read_text().splitlines(keepends=True):
+                  i = 0
+                  prefix = []
+                  while i < len(line):
+                      if line[i] == ' ':
+                          prefix.append(' ')
+                          i += 1
+                      elif line[i] == '\t':
+                          prefix.append('\t')
+                          i += 1
+                      elif line.startswith('\\t', i):
+                          prefix.append('\t')
+                          i += 2
+                      else:
+                          break
+                  out.append(''.join(prefix) + line[i:])
               path.write_text(''.join(out))
           PY
       - name: Format domain agent
@@ -87,7 +98,10 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: transport-gofmt-error
-          path: /tmp/transport-gofmt.err
+          path: |
+            /tmp/transport-gofmt.err
+            contrib/space-compute/pkg/transport/agent.go
+            contrib/space-compute/pkg/transport/hardening.go
           if-no-files-found: ignore
       - name: Format workload
         run: gofmt -w contrib/space-compute/pkg/workload/*.go
