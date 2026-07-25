@@ -1,17 +1,17 @@
-run_id=30088269634
-base_sha=1913f4c2d1a42a9a3d92cbff255375c4d7d4f8b7
+run_id=30144836830
+base_sha=2a7b91990669687b8b2b52748073cb04ad01141e
 --- last gate output ---
 === apply ===
 === focused ===
 ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/apis/v1alpha1	0.004s
-ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/admission	0.016s
+ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/admission	0.015s
 ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/planner	0.007s
-ok  	github.com/k3s-io/k3s/cmd/space-compute-mission-planner	0.018s
+ok  	github.com/k3s-io/k3s/cmd/space-compute-mission-planner	0.017s
 ?   	github.com/k3s-io/k3s/cmd/space-compute-reporter-webhook	[no test files]
 === race ===
-ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/apis/v1alpha1	1.022s
-ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/admission	1.136s
-ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/planner	1.033s
+ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/apis/v1alpha1	1.023s
+ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/admission	1.144s
+ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/planner	1.035s
 === full ===
 go: downloading github.com/spf13/cobra v1.9.1
 go: downloading github.com/k3s-io/kubernetes v1.33.7-k3s1
@@ -38,30 +38,146 @@ go: downloading k8s.io/cri-client v0.33.7
 go: downloading golang.org/x/exp v0.0.0-20250911091902-df9299821621
 go: downloading github.com/kylelemons/godebug v1.1.0
 go: downloading github.com/k3s-io/kubernetes/staging/src/k8s.io/cri-api v1.33.7-k3s1
-ok  	github.com/k3s-io/k3s/pkg/scheduler/plugins/gpustability	1.751s
-ok  	github.com/k3s-io/k3s/cmd/space-compute-scheduler	0.054s
-ok  	github.com/k3s-io/k3s/cmd/space-compute-mission-planner	0.029s
+ok  	github.com/k3s-io/k3s/pkg/scheduler/plugins/gpustability	1.729s
+ok  	github.com/k3s-io/k3s/cmd/space-compute-scheduler	0.059s
+ok  	github.com/k3s-io/k3s/cmd/space-compute-mission-planner	0.031s
 ?   	github.com/k3s-io/k3s/cmd/space-compute-reporter-webhook	[no test files]
-ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/admission	0.029s
-ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/apis/v1alpha1	0.014s
-ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/kube	0.025s
-ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/planner	0.171s
-ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/policy	0.008s
-ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/workload	0.010s
-ok  	github.com/k3s-io/k3s/tests/integration/spacecomputescheduler	0.012s
-ok  	github.com/k3s-io/k3s/pkg/scheduler/plugins/gpustability	5.344s
-ok  	github.com/k3s-io/k3s/cmd/space-compute-scheduler	1.196s
-ok  	github.com/k3s-io/k3s/cmd/space-compute-mission-planner	1.168s
+ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/admission	0.036s
+ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/apis/v1alpha1	0.009s
+ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/kube	0.023s
+ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/planner	0.174s
+ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/policy	0.011s
+ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/workload	0.015s
+ok  	github.com/k3s-io/k3s/tests/integration/spacecomputescheduler	0.013s
+ok  	github.com/k3s-io/k3s/pkg/scheduler/plugins/gpustability	5.700s
+ok  	github.com/k3s-io/k3s/cmd/space-compute-scheduler	1.206s
+ok  	github.com/k3s-io/k3s/cmd/space-compute-mission-planner	1.169s
 ?   	github.com/k3s-io/k3s/cmd/space-compute-reporter-webhook	[no test files]
-ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/admission	1.132s
-ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/apis/v1alpha1	1.028s
-ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/kube	1.081s
-ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/planner	2.478s
-ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/policy	1.041s
-ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/workload	1.045s
-ok  	github.com/k3s-io/k3s/tests/integration/spacecomputescheduler	1.048s
-Go files need formatting:
-pkg/scheduler/plugins/gpustability/phase1_test.go
+ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/admission	1.135s
+ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/apis/v1alpha1	1.029s
+ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/kube	1.077s
+ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/planner	2.483s
+ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/policy	1.038s
+ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/workload	1.051s
+ok  	github.com/k3s-io/k3s/tests/integration/spacecomputescheduler	1.049s
+ok  	github.com/k3s-io/k3s/pkg/scheduler/plugins/gpustability	0.983s
+ok  	github.com/k3s-io/k3s/cmd/space-compute-scheduler	0.029s
+ok  	github.com/k3s-io/k3s/cmd/space-compute-mission-planner	0.027s
+?   	github.com/k3s-io/k3s/cmd/space-compute-reporter-webhook	[no test files]
+ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/admission	0.032s
+ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/apis/v1alpha1	0.017s
+ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/kube	0.021s
+ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/planner	0.149s
+ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/policy	0.009s
+ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/workload	0.014s
+ok  	github.com/k3s-io/k3s/tests/integration/spacecomputescheduler	0.013s
+ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/admission	0.021s [no tests to run]
+ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/apis/v1alpha1	0.008s
+ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/kube	0.022s
+ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/planner	0.014s
+ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/policy	0.004s
+ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/workload	0.007s
+ok  	github.com/k3s-io/k3s/pkg/scheduler/plugins/gpustability	0.202s
+fuzz: elapsed: 0s, gathering baseline coverage: 0/3 completed
+fuzz: elapsed: 0s, gathering baseline coverage: 3/3 completed, now fuzzing with 4 workers
+fuzz: elapsed: 3s, execs: 2316 (772/sec), new interesting: 7 (total: 10)
+fuzz: elapsed: 6s, execs: 6761 (1482/sec), new interesting: 17 (total: 20)
+fuzz: elapsed: 6s, execs: 6761 (0/sec), new interesting: 17 (total: 20)
+PASS
+ok  	github.com/k3s-io/k3s/pkg/scheduler/plugins/gpustability	6.036s
+fuzz: elapsed: 0s, gathering baseline coverage: 0/3 completed
+fuzz: elapsed: 0s, gathering baseline coverage: 3/3 completed, now fuzzing with 4 workers
+fuzz: elapsed: 3s, execs: 1940 (647/sec), new interesting: 6 (total: 9)
+fuzz: elapsed: 5s, execs: 5665 (1690/sec), new interesting: 15 (total: 18)
+PASS
+ok  	github.com/k3s-io/k3s/pkg/scheduler/plugins/gpustability	5.233s
+fuzz: elapsed: 0s, gathering baseline coverage: 0/3 completed
+fuzz: elapsed: 0s, gathering baseline coverage: 3/3 completed, now fuzzing with 4 workers
+fuzz: elapsed: 3s, execs: 5727 (1909/sec), new interesting: 9 (total: 12)
+fuzz: elapsed: 6s, execs: 6808 (374/sec), new interesting: 20 (total: 23)
+PASS
+ok  	github.com/k3s-io/k3s/pkg/scheduler/plugins/gpustability	5.924s
+fuzz: elapsed: 0s, gathering baseline coverage: 0/1 completed
+fuzz: elapsed: 0s, gathering baseline coverage: 1/1 completed, now fuzzing with 4 workers
+fuzz: elapsed: 3s, execs: 4605 (1534/sec), new interesting: 1 (total: 2)
+fuzz: elapsed: 6s, execs: 4605 (0/sec), new interesting: 1 (total: 2)
+fuzz: elapsed: 6s, execs: 4605 (0/sec), new interesting: 1 (total: 2)
+PASS
+ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/apis/v1alpha1	6.012s
+fuzz: elapsed: 0s, gathering baseline coverage: 0/1 completed
+fuzz: elapsed: 0s, gathering baseline coverage: 1/1 completed, now fuzzing with 4 workers
+fuzz: elapsed: 3s, execs: 19911 (6636/sec), new interesting: 3 (total: 4)
+fuzz: elapsed: 6s, execs: 19911 (0/sec), new interesting: 3 (total: 4)
+fuzz: elapsed: 6s, execs: 19911 (0/sec), new interesting: 3 (total: 4)
+PASS
+ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/apis/v1alpha1	6.013s
+fuzz: elapsed: 0s, gathering baseline coverage: 0/1 completed
+fuzz: elapsed: 0s, gathering baseline coverage: 1/1 completed, now fuzzing with 4 workers
+fuzz: elapsed: 3s, execs: 9 (3/sec), new interesting: 0 (total: 1)
+fuzz: elapsed: 6s, execs: 9 (0/sec), new interesting: 0 (total: 1)
+fuzz: elapsed: 6s, execs: 9 (0/sec), new interesting: 0 (total: 1)
+PASS
+ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/apis/v1alpha1	6.012s
+fuzz: elapsed: 0s, gathering baseline coverage: 0/1 completed
+fuzz: elapsed: 0s, gathering baseline coverage: 1/1 completed, now fuzzing with 4 workers
+fuzz: elapsed: 3s, execs: 35987 (11991/sec), new interesting: 3 (total: 4)
+fuzz: elapsed: 6s, execs: 65734 (9919/sec), new interesting: 4 (total: 5)
+fuzz: elapsed: 6s, execs: 65734 (0/sec), new interesting: 4 (total: 5)
+PASS
+ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/apis/v1alpha1	6.013s
+fuzz: elapsed: 0s, gathering baseline coverage: 0/1 completed
+fuzz: elapsed: 0s, gathering baseline coverage: 1/1 completed, now fuzzing with 4 workers
+fuzz: elapsed: 3s, execs: 4845 (1615/sec), new interesting: 44 (total: 45)
+fuzz: elapsed: 5s, execs: 11405 (3154/sec), new interesting: 64 (total: 65)
+PASS
+ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/admission	5.099s
+fuzz: elapsed: 0s, gathering baseline coverage: 0/1 completed
+fuzz: elapsed: 0s, gathering baseline coverage: 1/1 completed, now fuzzing with 4 workers
+fuzz: elapsed: 3s, execs: 9 (3/sec), new interesting: 0 (total: 1)
+fuzz: elapsed: 6s, execs: 9 (0/sec), new interesting: 0 (total: 1)
+fuzz: elapsed: 6s, execs: 9 (0/sec), new interesting: 0 (total: 1)
+PASS
+ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/policy	6.013s
+ok  	github.com/k3s-io/k3s/pkg/scheduler/plugins/gpustability	0.139s
+ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/planner	0.129s
+goos: linux
+goarch: amd64
+pkg: github.com/k3s-io/k3s/pkg/scheduler/plugins/gpustability
+cpu: AMD EPYC 7763 64-Core Processor                
+BenchmarkCollectorTargetDatasets/100-4         	       1	  10216959 ns/op	 4864360 B/op	   68376 allocs/op
+BenchmarkCollectorTargetDatasets/1000-4        	       1	 112172607 ns/op	47314760 B/op	  681008 allocs/op
+BenchmarkCollectorTargetDatasets/5000-4        	       1	1119122888 ns/op	240029456 B/op	 3424257 allocs/op
+PASS
+ok  	github.com/k3s-io/k3s/pkg/scheduler/plugins/gpustability	1.286s
+goos: linux
+goarch: amd64
+pkg: github.com/k3s-io/k3s/pkg/scheduler/plugins/gpustability
+cpu: AMD EPYC 7763 64-Core Processor                
+BenchmarkSchedulerCallbacks/100-4         	       1	   1992128 ns/op	     19921 ns/node-cycle	 1344904 B/op	   11516 allocs/op
+BenchmarkSchedulerCallbacks/1000-4        	       1	  19356753 ns/op	     19357 ns/node-cycle	13507936 B/op	  115032 allocs/op
+BenchmarkSchedulerCallbacks/5000-4        	       1	 118904915 ns/op	     23781 ns/node-cycle	67375232 B/op	  575068 allocs/op
+PASS
+ok  	github.com/k3s-io/k3s/pkg/scheduler/plugins/gpustability	0.610s
+goos: linux
+goarch: amd64
+pkg: github.com/k3s-io/k3s/contrib/space-compute/pkg/planner
+cpu: AMD EPYC 7763 64-Core Processor                
+BenchmarkMissionPlanningDatasets/100/strict-4         	       1	   2344705 ns/op	 1166392 B/op	    9508 allocs/op
+BenchmarkMissionPlanningDatasets/100/degraded-4       	       1	    924435 ns/op	  686112 B/op	    2639 allocs/op
+BenchmarkMissionPlanningDatasets/100/best-effort-4    	       1	    775147 ns/op	  686104 B/op	    2639 allocs/op
+BenchmarkMissionPlanningDatasets/1000/strict-4        	       1	   8638791 ns/op	 6390792 B/op	   28158 allocs/op
+BenchmarkMissionPlanningDatasets/1000/degraded-4      	       1	  12008410 ns/op	 6390376 B/op	   28161 allocs/op
+BenchmarkMissionPlanningDatasets/1000/best-effort-4   	       1	  10603660 ns/op	 6427656 B/op	   28167 allocs/op
+BenchmarkMissionPlanningDatasets/5000/strict-4        	       1	  46326594 ns/op	32329448 B/op	  147213 allocs/op
+BenchmarkMissionPlanningDatasets/5000/degraded-4      	       1	  48772822 ns/op	32285992 B/op	  147196 allocs/op
+BenchmarkMissionPlanningDatasets/5000/best-effort-4   	       1	  48453451 ns/op	32323328 B/op	  147200 allocs/op
+PASS
+ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/planner	0.211s
+stat /home/runner/work/kubespace_lxy/kubespace_lxy/cmd/space-compute-mission-plannerntgo: directory not found
+package build is not in std (/opt/hostedtoolcache/go/1.25.12/x64/src/build)
+malformed import path "-buildvcs=false": leading dash
+malformed import path "-o": leading dash
+stat /home/runner/work/kubespace_lxy/kubespace_lxy/bin/space-compute-reporter-webhook: directory not found
 --- planner stability test ---
 	if repository.applyCount != 1 || repository.placement.Status.Phase != spacev1.PlacementReplanning {
 		t.Fatalf("running attempt was duplicated: apply=%d phase=%s", repository.applyCount, repository.placement.Status.Phase)
