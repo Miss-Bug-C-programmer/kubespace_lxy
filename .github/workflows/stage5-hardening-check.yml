@@ -1,0 +1,39 @@
+name: stage5-hardening-check
+on:
+  push:
+    branches: [main]
+    paths: [.github/stage5-hardening-check-trigger]
+permissions: {contents: read, statuses: write}
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with: {ref: "${{ github.sha }}", fetch-depth: 0}
+      - name: Pending status
+        env: {GH_TOKEN: "${{ github.token }}"}
+        run: gh api --method POST "repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=pending -f context="sandbox/stage5-hardening-check-${GITHUB_RUN_ID}" -f target_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" -f description="Checking Phase 5 protocol hardening"
+      - uses: actions/setup-go@v5
+        with: {go-version-file: go.mod, cache: true}
+      - name: Apply staged hardening
+        run: |
+          set -euo pipefail
+          python3 -m py_compile .github/stage5-hardening-source.py .github/stage5-hardening-source2.py
+          python3 .github/stage5-hardening-source.py
+          python3 .github/stage5-hardening-source2.py
+          gofmt -w cmd/space-compute-domain-agent/*.go contrib/space-compute/pkg/apis/v1alpha1/*.go contrib/space-compute/pkg/admission/*.go contrib/space-compute/pkg/execution/*.go contrib/space-compute/pkg/transport/*.go contrib/space-compute/pkg/workload/*.go
+          git diff --check
+      - name: Focused tests
+        run: |
+          set -euo pipefail
+          go test ./contrib/space-compute/pkg/apis/v1alpha1 ./contrib/space-compute/pkg/execution ./contrib/space-compute/pkg/transport ./contrib/space-compute/pkg/admission ./contrib/space-compute/pkg/planner ./contrib/space-compute/pkg/workload ./contrib/space-compute/pkg/kube -count=1 -timeout=180s
+          go test ./cmd/space-compute-mission-planner ./cmd/space-compute-domain-agent -count=1 -timeout=180s
+      - name: Success status
+        if: success()
+        env: {GH_TOKEN: "${{ github.token }}"}
+        run: gh api --method POST "repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=success -f context="sandbox/stage5-hardening-check-${GITHUB_RUN_ID}" -f target_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" -f description="Phase 5 protocol hardening passes focused tests"
+      - name: Failure status
+        if: failure()
+        env: {GH_TOKEN: "${{ github.token }}"}
+        run: gh api --method POST "repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=failure -f context="sandbox/stage5-hardening-check-${GITHUB_RUN_ID}" -f target_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" -f description="Phase 5 protocol hardening failed"
