@@ -34,7 +34,9 @@ jobs:
           set +e
           (
             set -euo pipefail
-            cat .github/stage5-payload-00.b64 .github/stage5-payload-01.b64 | base64 -d | gzip -d > /tmp/stage5-apply.py
+            base64 -d .github/stage5-payload-00.b64 > /tmp/stage5-apply.py.gz
+            base64 -d .github/stage5-payload-01.b64 >> /tmp/stage5-apply.py.gz
+            gzip -d -c /tmp/stage5-apply.py.gz > /tmp/stage5-apply.py
             python3 -m py_compile /tmp/stage5-apply.py
             python3 /tmp/stage5-apply.py
             gofmt -w \
