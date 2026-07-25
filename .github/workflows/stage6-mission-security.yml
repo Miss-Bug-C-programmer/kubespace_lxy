@@ -31,6 +31,8 @@ jobs:
           PY
           python3 -m py_compile /tmp/stage6-mission-security-source.py
           python3 /tmp/stage6-mission-security-source.py
+          python3 -m py_compile .github/stage6-hotfix.py
+          python3 .github/stage6-hotfix.py
       - name: Format generated Go
         run: |
           set -euo pipefail
@@ -101,7 +103,7 @@ jobs:
           set -euo pipefail
           git fetch origin main
           test "$(git rev-parse origin/main)" = "$GITHUB_SHA"
-          git rm -f .github/stage6-mission-security-trigger .github/workflows/stage6-mission-security.yml .github/stage6-payload/part-*
+          git rm -f .github/stage6-mission-security-trigger .github/workflows/stage6-mission-security.yml .github/stage6-hotfix.py .github/stage6-payload/part-*
           git add \
             Makefile scripts/space-compute Dockerfile.space-compute-mission-webhook \
             cmd/space-compute-mission-planner cmd/space-compute-mission-webhook \
