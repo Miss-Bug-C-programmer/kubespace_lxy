@@ -1,6 +1,17 @@
-run_id=30147103083
-base_sha=4e885774bf82cd00baf9459ad78ffe41e4da544a
+run_id=30147167021
+base_sha=e51e408d83f15defd99b8a1968461bb907481e18
 --- focused output ---
 stage5 API patch applied
 stage5 runtime patch applied
-contrib/space-compute/pkg/transport/http.go:33:717: expected declaration, found s
+stage5 transport compile fix applied
+# github.com/k3s-io/k3s/contrib/space-compute/pkg/execution
+contrib/space-compute/pkg/execution/fence.go:103:39: cannot use &f.ExpiresAt (value of type *"k8s.io/apimachinery/pkg/apis/meta/v1".Time) as time.Time value in argument to observation.Spec.ObservedAt.After
+contrib/space-compute/pkg/execution/fence.go:123:36: cannot use &f.ExpiresAt (value of type *"k8s.io/apimachinery/pkg/apis/meta/v1".Time) as time.Time value in argument to receipt.Spec.CompletedAt.After
+ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/apis/v1alpha1	0.021s
+FAIL	github.com/k3s-io/k3s/contrib/space-compute/pkg/execution [build failed]
+?   	github.com/k3s-io/k3s/contrib/space-compute/pkg/transport	[no test files]
+ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/admission	0.029s
+ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/planner	0.256s
+FAIL	github.com/k3s-io/k3s/contrib/space-compute/pkg/workload [build failed]
+ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/kube	0.017s
+FAIL
