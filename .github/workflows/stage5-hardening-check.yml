@@ -16,12 +16,19 @@ jobs:
         run: gh api --method POST "repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=pending -f context="sandbox/stage5-hardening-check-${GITHUB_RUN_ID}" -f target_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" -f description="Checking Phase 5 protocol hardening"
       - uses: actions/setup-go@v5
         with: {go-version-file: go.mod, cache: true}
-      - name: Apply staged hardening
+      - name: Apply hardening layer 1
         run: |
           set -euo pipefail
-          python3 -m py_compile .github/stage5-hardening-source.py .github/stage5-hardening-source2.py
+          python3 -m py_compile .github/stage5-hardening-source.py
           python3 .github/stage5-hardening-source.py
+      - name: Apply hardening layer 2
+        run: |
+          set -euo pipefail
+          python3 -m py_compile .github/stage5-hardening-source2.py
           python3 .github/stage5-hardening-source2.py
+      - name: Format and diff check
+        run: |
+          set -euo pipefail
           gofmt -w cmd/space-compute-domain-agent/*.go contrib/space-compute/pkg/apis/v1alpha1/*.go contrib/space-compute/pkg/admission/*.go contrib/space-compute/pkg/execution/*.go contrib/space-compute/pkg/transport/*.go contrib/space-compute/pkg/workload/*.go
           git diff --check
       - name: Focused tests
@@ -36,4 +43,4 @@ jobs:
       - name: Failure status
         if: failure()
         env: {GH_TOKEN: "${{ github.token }}"}
-        run: gh api --method POST "repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=failure -f context="sandbox/stage5-hardening-check-${GITHUB_RUN_ID}" -f target_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" -f description="Phase 5 protocol hardening failed"
+        run: gh api --method POST "repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=failure -f context="sandbox/stage5-hardening-check-${GITHUB_RUN_ID}" -f target_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" -f description="Phase 5 protocol hardening failed; inspect failed named step"
