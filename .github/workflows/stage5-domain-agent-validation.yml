@@ -35,6 +35,7 @@ jobs:
             python3 .github/stage5-fix4.py
             gofmt -w contrib/space-compute/pkg/apis/v1alpha1/*.go contrib/space-compute/pkg/admission/*.go contrib/space-compute/pkg/planner/*.go contrib/space-compute/pkg/workload/*.go contrib/space-compute/pkg/kube/*.go contrib/space-compute/pkg/transport/*.go contrib/space-compute/pkg/execution/*.go
             python3 .github/stage5-agent-lib.py
+            gofmt -w contrib/space-compute/pkg/transport/*.go
             python3 .github/stage5-fix5.py
             gofmt -w contrib/space-compute/pkg/transport/*.go
             git diff --check
