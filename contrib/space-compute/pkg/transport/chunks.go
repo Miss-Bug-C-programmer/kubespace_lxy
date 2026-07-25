@@ -16,11 +16,13 @@ import (
 	spacev1 "github.com/k3s-io/k3s/contrib/space-compute/pkg/apis/v1alpha1"
 )
 
+const TransferIntentKind = "transfer-intent"
 const TransferChunkKind = "transfer-chunk"
 const TransferAckKind = "transfer-ack"
 const ReporterObjectKind = "reporter-object"
 const LeaseRequestKind = "lease-request"
 const LeaseGrantKind = "lease-grant"
+const LeaseAckKind = "lease-ack"
 
 type TransferChunk struct {
 	IntentName    string                  `json:"intentName"`

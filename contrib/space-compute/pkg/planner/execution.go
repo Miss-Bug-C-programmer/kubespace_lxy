@@ -95,14 +95,15 @@ func allowedPlacementTransition(from, to spacev1.PlacementPhase) bool {
 		from = spacev1.PlacementPending
 	}
 	allowed := map[spacev1.PlacementPhase]map[spacev1.PlacementPhase]bool{
-		spacev1.PlacementPending:         {spacev1.PlacementDispatched: true, spacev1.PlacementRunning: true, spacev1.PlacementFailed: true},
-		spacev1.PlacementTransferPending: {spacev1.PlacementDispatched: true, spacev1.PlacementRunning: true, spacev1.PlacementFailed: true},
-		spacev1.PlacementReady:           {spacev1.PlacementDispatched: true, spacev1.PlacementRunning: true, spacev1.PlacementFailed: true},
-		spacev1.PlacementDispatched:      {spacev1.PlacementDispatched: true, spacev1.PlacementRunning: true, spacev1.PlacementReturnPending: true, spacev1.PlacementCompleted: true, spacev1.PlacementFailed: true},
-		spacev1.PlacementRunning:         {spacev1.PlacementRunning: true, spacev1.PlacementCheckpointed: true, spacev1.PlacementReturnPending: true, spacev1.PlacementCompleted: true, spacev1.PlacementFailed: true},
-		spacev1.PlacementCheckpointed:    {spacev1.PlacementReplanning: true, spacev1.PlacementFailed: true},
-		spacev1.PlacementReplanning:      {spacev1.PlacementCheckpointed: true, spacev1.PlacementFailed: true},
-		spacev1.PlacementReturnPending:   {spacev1.PlacementReturnPending: true, spacev1.PlacementCompleted: true, spacev1.PlacementFailed: true},
+		spacev1.PlacementPending:               {spacev1.PlacementDispatched: true, spacev1.PlacementRunning: true, spacev1.PlacementFailed: true},
+		spacev1.PlacementTransferPending:       {spacev1.PlacementDispatched: true, spacev1.PlacementRunning: true, spacev1.PlacementFailed: true},
+		spacev1.PlacementExecutionLeasePending: {spacev1.PlacementDispatched: true, spacev1.PlacementRunning: true, spacev1.PlacementFailed: true},
+		spacev1.PlacementReady:                 {spacev1.PlacementDispatched: true, spacev1.PlacementRunning: true, spacev1.PlacementFailed: true},
+		spacev1.PlacementDispatched:            {spacev1.PlacementDispatched: true, spacev1.PlacementRunning: true, spacev1.PlacementReturnPending: true, spacev1.PlacementCompleted: true, spacev1.PlacementFailed: true},
+		spacev1.PlacementRunning:               {spacev1.PlacementRunning: true, spacev1.PlacementCheckpointed: true, spacev1.PlacementReturnPending: true, spacev1.PlacementCompleted: true, spacev1.PlacementFailed: true},
+		spacev1.PlacementCheckpointed:          {spacev1.PlacementReplanning: true, spacev1.PlacementFailed: true},
+		spacev1.PlacementReplanning:            {spacev1.PlacementCheckpointed: true, spacev1.PlacementFailed: true},
+		spacev1.PlacementReturnPending:         {spacev1.PlacementReturnPending: true, spacev1.PlacementCompleted: true, spacev1.PlacementFailed: true},
 	}
 	return allowed[from][to]
 }

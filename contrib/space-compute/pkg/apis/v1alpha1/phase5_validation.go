@@ -19,7 +19,8 @@ func ValidateTransferIntent(intent *SpaceTransferIntent, clock Clock) error {
 		return errs
 	}
 	validateReceiptIdentity("spec.transferID", intent.Spec.TransferID, &errs)
-	validateReceiptCommon(intent.Spec.MissionUID, intent.Spec.PlanID, intent.Spec.Attempt, intent.Spec.Source, intent.Spec.Destination, intent.Spec.Bytes, intent.Spec.PayloadDigest, Provenance{ReporterID: "local", Source: "intent", Digest: strings.Repeat("0", 64), Sequence: 1}, &errs)
+	validateReceiptCommon(intent.Spec.MissionUID, intent.Spec.PlanID, intent.Spec.Attempt, intent.Spec.Source, intent.Spec.Destination, intent.Spec.Bytes, intent.Spec.PayloadDigest, Provenance{ReporterID: "local", Source: "intent", Digest: strings.Repeat("0", 64), Sequence: 1}, true, &errs)
+	validateDomain("spec.coordinator", intent.Spec.Coordinator, &errs)
 	switch intent.Spec.Purpose {
 	case TransferPurposeInput:
 		if intent.Spec.LeaseEpoch != 0 || intent.Spec.TokenHash != "" {
@@ -41,6 +42,12 @@ func ValidateTransferIntent(intent *SpaceTransferIntent, clock Clock) error {
 	}
 	if intent.Spec.Window.Bytes != intent.Spec.Bytes {
 		errs.add("spec.window.bytes", "must equal spec.bytes")
+	}
+	if intent.Spec.Window.Source != intent.Spec.Source || intent.Spec.Window.Destination != intent.Spec.Destination {
+		errs.add("spec.window", "source/destination must equal transfer intent")
+	}
+	if intent.Spec.Window.DataID != "" && intent.Spec.Window.DataID != intent.Spec.DataID {
+		errs.add("spec.window.dataID", "must be empty or equal spec.dataID")
 	}
 	if intent.Spec.ExpiresAt.IsZero() || !intent.Spec.ExpiresAt.After(clock.Now()) {
 		errs.add("spec.expiresAt", "must be in the future")

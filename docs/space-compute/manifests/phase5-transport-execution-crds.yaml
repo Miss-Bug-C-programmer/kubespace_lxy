@@ -1,0 +1,192 @@
+# Phase 5 CRDs that were not present in the Phase 4 receipt API.
+# Reporter-backed resources are additionally validated by the fail-closed
+# reporter admission webhook; CRD schema validation is not the trust boundary.
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: spacetransferintents.spacecompute.k3s.io
+spec:
+  group: spacecompute.k3s.io
+  scope: Cluster
+  names:
+    plural: spacetransferintents
+    singular: spacetransferintent
+    kind: SpaceTransferIntent
+    shortNames: [stransfer]
+  versions:
+  - name: v1alpha1
+    served: true
+    storage: true
+    subresources:
+      status: {}
+    schema:
+      openAPIV3Schema:
+        type: object
+        required: [spec]
+        properties:
+          spec:
+            type: object
+            required: [transferID, missionUID, planID, attempt, purpose, coordinator, source, destination, dataID, bytes, payloadDigest, window, expiresAt]
+            properties:
+              transferID: {type: string, maxLength: 63}
+              missionUID: {type: string, maxLength: 128}
+              planID: {type: string, maxLength: 63}
+              attempt: {type: integer, format: int32, minimum: 1, maximum: 100}
+              purpose: {type: string, enum: [Input, Result]}
+              coordinator: &domain
+                type: object
+                required: [name, clusterID, orbitClass]
+                properties:
+                  name: {type: string, minLength: 1, maxLength: 63}
+                  clusterID: {type: string, minLength: 1, maxLength: 253}
+                  orbitClass: {type: string, minLength: 1, maxLength: 32}
+              source: *domain
+              destination: *domain
+              dataID: {type: string, minLength: 1, maxLength: 253}
+              bytes: {type: integer, format: int64, minimum: 0}
+              payloadDigest: {type: string, pattern: '^[0-9a-f]{64}$'}
+              leaseEpoch: {type: integer, format: int64, minimum: 0}
+              tokenHash: {type: string, pattern: '^(|[0-9a-f]{64})$'}
+              window:
+                type: object
+                required: [source, destination, start, end, bytes]
+                properties:
+                  linkSnapshotName: {type: string}
+                  windowID: {type: string}
+                  dataID: {type: string}
+                  source: *domain
+                  destination: *domain
+                  start: {type: string, format: date-time}
+                  end: {type: string, format: date-time}
+                  bytes: {type: integer, format: int64, minimum: 0}
+              expiresAt: {type: string, format: date-time}
+          status:
+            type: object
+            properties:
+              observedGeneration: {type: integer, format: int64}
+              phase: {type: string}
+              receiptName: {type: string}
+              conditions:
+                type: array
+                items: {type: object, x-kubernetes-preserve-unknown-fields: true}
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: spaceexecutionleases.spacecompute.k3s.io
+spec:
+  group: spacecompute.k3s.io
+  scope: Cluster
+  names:
+    plural: spaceexecutionleases
+    singular: spaceexecutionlease
+    kind: SpaceExecutionLease
+    shortNames: [sexeclease]
+  versions:
+  - name: v1alpha1
+    served: true
+    storage: true
+    schema:
+      openAPIV3Schema:
+        type: object
+        required: [spec]
+        properties:
+          spec:
+            type: object
+            required: [source, destination, fence, heartbeatAt, maximumClockSkewSeconds, provenance]
+            properties:
+              source:
+                type: object
+                required: [name, clusterID, orbitClass]
+                properties:
+                  name: {type: string, minLength: 1, maxLength: 63}
+                  clusterID: {type: string, minLength: 1, maxLength: 253}
+                  orbitClass: {type: string, minLength: 1, maxLength: 32}
+              destination:
+                type: object
+                required: [name, clusterID, orbitClass]
+                properties:
+                  name: {type: string, minLength: 1, maxLength: 63}
+                  clusterID: {type: string, minLength: 1, maxLength: 253}
+                  orbitClass: {type: string, minLength: 1, maxLength: 32}
+              fence:
+                type: object
+                required: [missionUID, planID, attempt, leaseEpoch, tokenHash, expiresAt]
+                properties:
+                  missionUID: {type: string, minLength: 1, maxLength: 128}
+                  planID: {type: string, minLength: 1, maxLength: 63}
+                  attempt: {type: integer, format: int32, minimum: 1, maximum: 100}
+                  leaseEpoch: {type: integer, format: int64, minimum: 1}
+                  tokenHash: {type: string, pattern: '^[0-9a-f]{64}$'}
+                  expiresAt: {type: string, format: date-time}
+              heartbeatAt: {type: string, format: date-time}
+              maximumClockSkewSeconds: {type: integer, format: int64, minimum: 0, maximum: 300}
+              provenance: &provenance
+                type: object
+                required: [reporterID, source, digest, sequence]
+                properties:
+                  reporterID: {type: string, minLength: 1, maxLength: 253}
+                  source: {type: string, minLength: 1, maxLength: 253}
+                  digest: {type: string, pattern: '^[0-9a-f]{64}$'}
+                  signature: {type: string}
+                  sequence: {type: integer, format: int64, minimum: 1}
+                  previousDigest: {type: string, pattern: '^(|[0-9a-f]{64})$'}
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: spaceexecutionobservations.spacecompute.k3s.io
+spec:
+  group: spacecompute.k3s.io
+  scope: Cluster
+  names:
+    plural: spaceexecutionobservations
+    singular: spaceexecutionobservation
+    kind: SpaceExecutionObservation
+    shortNames: [sexecobs]
+  versions:
+  - name: v1alpha1
+    served: true
+    storage: true
+    schema:
+      openAPIV3Schema:
+        type: object
+        required: [spec]
+        properties:
+          spec:
+            type: object
+            required: [observationID, missionUID, planID, attempt, leaseEpoch, tokenHash, source, destination, phase, observedAt, provenance]
+            properties:
+              observationID: {type: string, minLength: 1, maxLength: 63}
+              missionUID: {type: string, minLength: 1, maxLength: 128}
+              planID: {type: string, minLength: 1, maxLength: 63}
+              attempt: {type: integer, format: int32, minimum: 1, maximum: 100}
+              leaseEpoch: {type: integer, format: int64, minimum: 1}
+              tokenHash: {type: string, pattern: '^[0-9a-f]{64}$'}
+              source:
+                type: object
+                required: [name, clusterID, orbitClass]
+                properties:
+                  name: {type: string, minLength: 1, maxLength: 63}
+                  clusterID: {type: string, minLength: 1, maxLength: 253}
+                  orbitClass: {type: string, minLength: 1, maxLength: 32}
+              destination:
+                type: object
+                required: [name, clusterID, orbitClass]
+                properties:
+                  name: {type: string, minLength: 1, maxLength: 63}
+                  clusterID: {type: string, minLength: 1, maxLength: 253}
+                  orbitClass: {type: string, minLength: 1, maxLength: 32}
+              phase: {type: string, enum: [Heartbeat, Stopped, Checkpointed, Completed, Failed]}
+              checkpointID: {type: string, maxLength: 253}
+              observedAt: {type: string, format: date-time}
+              provenance:
+                type: object
+                required: [reporterID, source, digest, sequence]
+                properties:
+                  reporterID: {type: string, minLength: 1, maxLength: 253}
+                  source: {type: string, minLength: 1, maxLength: 253}
+                  digest: {type: string, pattern: '^[0-9a-f]{64}$'}
+                  signature: {type: string}
+                  sequence: {type: integer, format: int64, minimum: 1}
+                  previousDigest: {type: string, pattern: '^(|[0-9a-f]{64})$'}

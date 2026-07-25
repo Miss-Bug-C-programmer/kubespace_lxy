@@ -71,6 +71,9 @@ func (c *Controller) ReconcileDispatch(ctx context.Context, mission *spacev1.Spa
 		return c.wait(ctx, mission, placement, phaseBeforeLease(placement), "TrustedEvidenceUnavailable", "transfer/lease evidence store is unavailable")
 	}
 
+	if len(placement.Spec.InputTransfers) > 0 && c.LocalDomain == nil {
+		return c.wait(ctx, mission, placement, spacev1.PlacementTransferPending, "TransferCoordinatorUnavailable", "local domain identity/transfer agent is not configured")
+	}
 	receipts, err := c.Evidence.ListTransferReceipts(ctx)
 	if err != nil {
 		return 0, err
@@ -81,7 +84,7 @@ func (c *Controller) ReconcileDispatch(ctx context.Context, mission *spacev1.Spa
 		if payloadDigest == "" {
 			return 0, fmt.Errorf("cross-domain input %q requires a trusted payloadDigest", epoch.DataID)
 		}
-		intent := &spacev1.SpaceTransferIntent{TypeMeta: metav1.TypeMeta{APIVersion: spacev1.SchemeGroupVersion.String(), Kind: "SpaceTransferIntent"}, ObjectMeta: metav1.ObjectMeta{Name: spacev1.TransferIntentName(epoch.Source, epoch.Destination, string(mission.UID), placement.Spec.PlanID, transferID)}, Spec: spacev1.SpaceTransferIntentSpec{TransferID: transferID, MissionUID: string(mission.UID), PlanID: placement.Spec.PlanID, Attempt: placement.Spec.Attempt, Source: epoch.Source, Destination: epoch.Destination, DataID: epoch.DataID, Bytes: epoch.Bytes, PayloadDigest: payloadDigest, Window: epoch, ExpiresAt: placement.Spec.ExpiresAt}}
+		intent := &spacev1.SpaceTransferIntent{TypeMeta: metav1.TypeMeta{APIVersion: spacev1.SchemeGroupVersion.String(), Kind: "SpaceTransferIntent"}, ObjectMeta: metav1.ObjectMeta{Name: spacev1.TransferIntentName(epoch.Source, epoch.Destination, string(mission.UID), placement.Spec.PlanID, transferID)}, Spec: spacev1.SpaceTransferIntentSpec{TransferID: transferID, MissionUID: string(mission.UID), PlanID: placement.Spec.PlanID, Attempt: placement.Spec.Attempt, Purpose: spacev1.TransferPurposeInput, Coordinator: *c.LocalDomain, Source: epoch.Source, Destination: epoch.Destination, DataID: epoch.DataID, Bytes: epoch.Bytes, PayloadDigest: payloadDigest, Window: epoch, ExpiresAt: placement.Spec.ExpiresAt}}
 		if err := c.Evidence.EnsureTransferIntent(ctx, intent); err != nil {
 			return 0, err
 		}
@@ -271,25 +274,58 @@ func (c *Controller) ReconcileTrustedEvidence(ctx context.Context, mission *spac
 	if err != nil || lease == nil {
 		return false, err
 	}
+	observations, err := c.Evidence.ListExecutionObservations(ctx)
+	if err != nil {
+		return false, err
+	}
 	if placement.Status.Phase == spacev1.PlacementReplanning && mission.Spec.Checkpoint.Checkpointable {
-		observations, err := c.Evidence.ListExecutionObservations(ctx)
-		if err != nil {
-			return false, err
-		}
+		var checkpoint *spacev1.SpaceExecutionObservation
 		for _, o := range observations {
-			if o.Spec.Phase != spacev1.ExecutionObservationCheckpointed {
+			if o == nil || o.Spec.Phase != spacev1.ExecutionObservationCheckpointed || spaceexecution.ValidateObservationAgainstLease(o, lease, now) != nil {
 				continue
 			}
-			if spaceexecution.ValidateObservationAgainstLease(o, lease, now) != nil {
-				continue
+			if checkpoint == nil || o.Spec.ObservedAt.After(checkpoint.Spec.ObservedAt.Time) {
+				checkpoint = o
 			}
-			obs := spacev1.ExecutionObservation{Sequence: placement.Status.LastObservationSequence + 1, Attempt: placement.Spec.Attempt, PodUID: activeUID(placement), Phase: "checkpointed", ObservedAt: o.Spec.ObservedAt, CheckpointID: o.Spec.CheckpointID}
+		}
+		if checkpoint != nil {
+			obs := spacev1.ExecutionObservation{Sequence: placement.Status.LastObservationSequence + 1, Attempt: placement.Spec.Attempt, PodUID: remoteFenceUID(lease), Phase: "checkpointed", ObservedAt: checkpoint.Spec.ObservedAt, CheckpointID: checkpoint.Spec.CheckpointID}
 			changed, err := planner.ApplyExecutionObservation(placement, mission, obs, c.clock())
 			if err != nil {
 				return false, err
 			}
 			if changed {
 				return true, c.Store.UpdatePlacementStatus(ctx, placement)
+			}
+		}
+	}
+	if placement.Status.Phase != spacev1.PlacementReturnPending && placement.Status.Phase != spacev1.PlacementCompleted && placement.Status.Phase != spacev1.PlacementFailed {
+		var terminal *spacev1.SpaceExecutionObservation
+		for _, o := range observations {
+			if o == nil || (o.Spec.Phase != spacev1.ExecutionObservationCompleted && o.Spec.Phase != spacev1.ExecutionObservationFailed) || spaceexecution.ValidateObservationAgainstLease(o, lease, now) != nil {
+				continue
+			}
+			if terminal == nil || o.Spec.ObservedAt.After(terminal.Spec.ObservedAt.Time) {
+				terminal = o
+			}
+		}
+		if terminal != nil {
+			phase := "failed"
+			if terminal.Spec.Phase == spacev1.ExecutionObservationCompleted {
+				phase = "completed"
+				if mission.Spec.ResultReturnRequired {
+					phase = "return-pending"
+				}
+			}
+			obs := spacev1.ExecutionObservation{Sequence: placement.Status.LastObservationSequence + 1, Attempt: placement.Spec.Attempt, PodUID: remoteFenceUID(lease), Phase: phase, ObservedAt: terminal.Spec.ObservedAt}
+			changed, err := planner.ApplyExecutionObservation(placement, mission, obs, c.clock())
+			if err != nil {
+				return false, err
+			}
+			if changed {
+				if err := c.Store.UpdatePlacementStatus(ctx, placement); err != nil {
+					return false, err
+				}
 			}
 		}
 	}
@@ -302,7 +338,10 @@ func (c *Controller) ReconcileTrustedEvidence(ctx context.Context, mission *spac
 			if spaceexecution.ValidateResultAgainstLease(r, lease, now) != nil {
 				continue
 			}
-			obs := spacev1.ExecutionObservation{Sequence: placement.Status.LastObservationSequence + 1, Attempt: placement.Spec.Attempt, PodUID: activeUID(placement), Phase: "completed", ObservedAt: r.Spec.CompletedAt}
+			if placement.Spec.ResultTransfer != nil && r.Spec.Destination != placement.Spec.ResultTransfer.Destination {
+				continue
+			}
+			obs := spacev1.ExecutionObservation{Sequence: placement.Status.LastObservationSequence + 1, Attempt: placement.Spec.Attempt, PodUID: remoteFenceUID(lease), Phase: "completed", ObservedAt: r.Spec.CompletedAt}
 			changed, err := planner.ApplyExecutionObservation(placement, mission, obs, c.clock())
 			if err != nil {
 				return false, err
@@ -314,6 +353,13 @@ func (c *Controller) ReconcileTrustedEvidence(ctx context.Context, mission *spac
 		}
 	}
 	return false, nil
+}
+
+func remoteFenceUID(lease *spacev1.SpaceExecutionLease) string {
+	if lease == nil {
+		return "remote"
+	}
+	return fmt.Sprintf("remote-%s-%d", lease.Spec.Source.Name, lease.Spec.Fence.LeaseEpoch)
 }
 
 func matchingTransferReceipt(intent *spacev1.SpaceTransferIntent, receipts []*spacev1.SpaceTransferReceipt) bool {

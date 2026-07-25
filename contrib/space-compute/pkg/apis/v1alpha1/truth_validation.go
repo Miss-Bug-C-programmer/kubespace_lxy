@@ -112,7 +112,7 @@ func ValidateTransferReceipt(receipt *SpaceTransferReceipt, clock Clock) error {
 		return errs
 	}
 	validateReceiptIdentity("spec.transferID", receipt.Spec.TransferID, &errs)
-	validateReceiptCommon(receipt.Spec.MissionUID, receipt.Spec.PlanID, receipt.Spec.Attempt, receipt.Spec.Source, receipt.Spec.Destination, receipt.Spec.Bytes, receipt.Spec.PayloadDigest, receipt.Spec.Provenance, &errs)
+	validateReceiptCommon(receipt.Spec.MissionUID, receipt.Spec.PlanID, receipt.Spec.Attempt, receipt.Spec.Source, receipt.Spec.Destination, receipt.Spec.Bytes, receipt.Spec.PayloadDigest, receipt.Spec.Provenance, true, &errs)
 	if receipt.Spec.DataID == "" || len(receipt.Spec.DataID) > 253 || strings.ContainsAny(receipt.Spec.DataID, "\r\n\x00") {
 		errs.add("spec.dataID", "must be non-empty and at most 253 bytes without control separators")
 	}
@@ -136,7 +136,7 @@ func ValidateResultReceipt(receipt *SpaceResultReceipt, clock Clock) error {
 		return errs
 	}
 	validateReceiptIdentity("spec.resultID", receipt.Spec.ResultID, &errs)
-	validateReceiptCommon(receipt.Spec.MissionUID, receipt.Spec.PlanID, receipt.Spec.Attempt, receipt.Spec.Source, receipt.Spec.Destination, receipt.Spec.Bytes, receipt.Spec.PayloadDigest, receipt.Spec.Provenance, &errs)
+	validateReceiptCommon(receipt.Spec.MissionUID, receipt.Spec.PlanID, receipt.Spec.Attempt, receipt.Spec.Source, receipt.Spec.Destination, receipt.Spec.Bytes, receipt.Spec.PayloadDigest, receipt.Spec.Provenance, false, &errs)
 	if receipt.Spec.LeaseEpoch < 0 {
 		errs.add("spec.leaseEpoch", "cannot be negative")
 	}
@@ -160,7 +160,7 @@ func validateReceiptIdentity(path, value string, errs *ValidationErrors) {
 	}
 }
 
-func validateReceiptCommon(missionUID, planID string, attempt int32, source, destination DomainReference, bytes int64, payloadDigest string, provenance Provenance, errs *ValidationErrors) {
+func validateReceiptCommon(missionUID, planID string, attempt int32, source, destination DomainReference, bytes int64, payloadDigest string, provenance Provenance, requireDistinct bool, errs *ValidationErrors) {
 	if missionUID == "" || len(missionUID) > 128 || strings.ContainsAny(missionUID, "\r\n\x00") {
 		errs.add("spec.missionUID", "must be non-empty and at most 128 bytes without control separators")
 	}
@@ -172,7 +172,7 @@ func validateReceiptCommon(missionUID, planID string, attempt int32, source, des
 	}
 	validateDomain("spec.source", source, errs)
 	validateDomain("spec.destination", destination, errs)
-	if source == destination {
+	if requireDistinct && source == destination {
 		errs.add("spec.destination", "must differ from source")
 	}
 	if bytes < 0 || bytes > MaxDataBytes {

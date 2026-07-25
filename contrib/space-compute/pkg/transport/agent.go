@@ -27,8 +27,10 @@ type Assignment struct {
 	Placement *spacev1.SpacePlacementIntent `json:"placement"`
 }
 type LeaseRequest struct {
-	Namespace  string     `json:"namespace"`
-	Assignment Assignment `json:"assignment"`
+	Namespace            string                              `json:"namespace"`
+	Assignment           Assignment                          `json:"assignment"`
+	PreviousLease        *spacev1.SpaceExecutionLease        `json:"previousLease,omitempty"`
+	PreviousObservations []spacev1.SpaceExecutionObservation `json:"previousObservations,omitempty"`
 }
 type LeaseGrant struct {
 	Namespace string                      `json:"namespace"`
@@ -67,12 +69,15 @@ type Agent struct {
 	Local             spacev1.DomainReference
 	ReporterPrincipal string
 	PrivateKey        ed25519.PrivateKey
+	PeerKeys          PeerKeys
+	StateDir          string
 	Queue             *DiskQueue
 	Store             AgentStore
 	Executor          Executor
 	Assembler         *FileAssembler
 	DataRoot          string
 	LeaseTTL          time.Duration
+	LeaseClockSkew    time.Duration
 	MaxChunkBytes     int
 	Limits            Limits
 	Now               func() time.Time
@@ -86,11 +91,14 @@ func (a *Agent) Validate() error {
 	if len(a.PrivateKey) != ed25519.PrivateKeySize {
 		return fmt.Errorf("Ed25519 reporter private key is required")
 	}
-	if a.Queue == nil || a.Store == nil || a.Assembler == nil {
-		return fmt.Errorf("queue, store and assembler are required")
+	if a.Queue == nil || a.Store == nil || a.Assembler == nil || a.PeerKeys == nil || strings.TrimSpace(a.StateDir) == "" {
+		return fmt.Errorf("queue, store, assembler, peer keys and persistent state directory are required")
 	}
 	if a.LeaseTTL < 30*time.Second || a.LeaseTTL > 24*time.Hour {
 		return fmt.Errorf("lease TTL out of bounds")
+	}
+	if a.LeaseClockSkew < 0 || a.LeaseClockSkew > 30*time.Second || 4*a.LeaseClockSkew >= a.LeaseTTL {
+		return fmt.Errorf("lease clock skew must be non-negative, at most 30s and below one quarter of lease TTL")
 	}
 	if a.MaxChunkBytes < 1024 || int64(a.MaxChunkBytes) > a.Limits.MaxMessageBytes/2 {
 		return fmt.Errorf("chunk size out of bounds")
@@ -125,8 +133,42 @@ func (a *Agent) reconcileTransfers(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	receipts, err := a.Store.ListTransferReceipts(ctx)
+	if err != nil {
+		return err
+	}
+	now := a.now()
 	for _, intent := range intents {
-		if intent == nil || intent.Spec.Source != a.Local || !intent.Spec.ExpiresAt.After(a.now()) {
+		if intent == nil || !intent.Spec.ExpiresAt.After(now) {
+			continue
+		}
+		if err := spacev1.ValidateTransferIntent(intent, agentClock{now}); err != nil {
+			return fmt.Errorf("transfer intent %s: %w", intent.Name, err)
+		}
+		if hasTransferReceipt(intent, receipts) {
+			continue
+		}
+		if intent.Spec.Purpose == spacev1.TransferPurposeInput && intent.Spec.Coordinator == a.Local {
+			for _, destination := range uniqueDomains(intent.Spec.Source, intent.Spec.Destination) {
+				if destination == a.Local {
+					continue
+				}
+				if err := a.enqueueTransferIntent(intent, destination); err != nil {
+					return err
+				}
+			}
+		}
+		if intent.Spec.Purpose == spacev1.TransferPurposeResult && intent.Spec.Source == a.Local && intent.Spec.Destination != a.Local {
+			if err := a.enqueueTransferIntent(intent, intent.Spec.Destination); err != nil {
+				return err
+			}
+		}
+		if intent.Spec.Source != a.Local {
+			continue
+		}
+		// Planner transfer windows are already clock-skew/safety-margin adjusted.
+		// Do not turn NotBefore or wall-clock arrival into an assumption of success.
+		if now.Before(intent.Spec.Window.Start.Time) || !intent.Spec.Window.End.After(now) {
 			continue
 		}
 		chunks, err := ReadChunks(intent, a.DataRoot, a.MaxChunkBytes)
@@ -134,11 +176,19 @@ func (a *Agent) reconcileTransfers(ctx context.Context) error {
 			return fmt.Errorf("transfer %s: %w", intent.Name, err)
 		}
 		for _, chunk := range chunks {
+			sequence := int64(chunk.ChunkIndex) + 1
+			queued, err := a.Queue.Contains(intent.Name, sequence)
+			if err != nil {
+				return err
+			}
+			if queued {
+				continue
+			}
 			raw, err := json.Marshal(chunk)
 			if err != nil {
 				return err
 			}
-			e := NewEnvelope(intent.Name, TransferChunkKind, a.Local, intent.Spec.Destination, intent.Spec.MissionUID, intent.Spec.PlanID, intent.Spec.Attempt, int64(chunk.ChunkIndex)+1, a.now(), intent.Spec.ExpiresAt.Time, raw)
+			e := NewEnvelope(intent.Name, TransferChunkKind, a.Local, intent.Spec.Destination, intent.Spec.MissionUID, intent.Spec.PlanID, intent.Spec.Attempt, sequence, now, intent.Spec.ExpiresAt.Time, raw)
 			if err := e.Sign(a.PrivateKey); err != nil {
 				return err
 			}
@@ -159,29 +209,48 @@ func (a *Agent) reconcileAssignments(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	observations, err := a.Store.ListExecutionObservations(ctx)
+	if err != nil {
+		return err
+	}
+	now := a.now()
 	for _, assignment := range assignments {
-		if assignment.Mission == nil || assignment.Placement == nil || !assignment.Placement.Spec.ExpiresAt.After(a.now()) {
+		if assignment.Mission == nil || assignment.Placement == nil || !assignment.Placement.Spec.ExpiresAt.After(now) {
 			continue
 		}
 		p := assignment.Placement
 		m := assignment.Mission
-		lease, _ := spaceexecution.LatestLeaseForAttempt(leases, string(m.UID), p.Spec.PlanID, p.Spec.Attempt, a.now())
+		lease, _ := spaceexecution.LatestLeaseForAttempt(leases, string(m.UID), p.Spec.PlanID, p.Spec.Attempt, now)
 		if lease != nil {
 			continue
 		}
+		var previous *spacev1.SpaceExecutionLease
+		var proof []spacev1.SpaceExecutionObservation
+		if p.Spec.Attempt > 1 {
+			previous, proof, err = priorFenceProof(m, p, leases, observations, now)
+			if err != nil || previous == nil {
+				// Fail closed: a replacement attempt is not even requested until the
+				// coordinator has trusted old-attempt evidence.
+				continue
+			}
+		}
+		minEpoch := int64(0)
+		if previous != nil {
+			minEpoch = previous.Spec.Fence.LeaseEpoch
+		}
 		if p.Spec.Target == a.Local {
-			if _, _, err := a.issueLease(ctx, assignment, a.Local); err != nil {
+			if _, _, err := a.issueLease(ctx, assignment, a.Local, minEpoch); err != nil {
 				return err
 			}
 			continue
 		}
-		request := LeaseRequest{Namespace: m.Namespace, Assignment: assignment}
+		request := LeaseRequest{Namespace: m.Namespace, Assignment: assignment, PreviousLease: previous, PreviousObservations: proof}
 		raw, err := json.Marshal(request)
 		if err != nil {
 			return err
 		}
 		id := "lease-request-" + p.Spec.PlanID + fmt.Sprintf("-%d", p.Spec.Attempt)
-		e := NewEnvelope(id, LeaseRequestKind, a.Local, p.Spec.Target, string(m.UID), p.Spec.PlanID, p.Spec.Attempt, 1, a.now(), p.Spec.ExpiresAt.Time, raw)
+		e := NewEnvelope(id, LeaseRequestKind, a.Local, p.Spec.Target, string(m.UID), p.Spec.PlanID, p.Spec.Attempt, 1, now, p.Spec.ExpiresAt.Time, raw)
 		if err := e.Sign(a.PrivateKey); err != nil {
 			return err
 		}
@@ -205,24 +274,54 @@ func (a *Agent) reconcileRemoteAssignments(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	observations, err := a.Store.ListExecutionObservations(ctx)
+	if err != nil {
+		return err
+	}
+	now := a.now()
 	for _, assignment := range assignments {
 		if assignment.Mission == nil || assignment.Placement == nil || assignment.Placement.Spec.Target != a.Local {
 			continue
 		}
-		lease, err := spaceexecution.LatestLeaseForAttempt(leases, string(assignment.Mission.UID), assignment.Placement.Spec.PlanID, assignment.Placement.Spec.Attempt, a.now())
-		if err != nil {
-			return err
-		}
+		m, p := assignment.Mission, assignment.Placement
+		lease := latestLeaseForAttemptAny(leases, string(m.UID), p.Spec.PlanID, p.Spec.Attempt)
 		if lease == nil {
 			continue
 		}
-		if err := spaceexecution.CanDispatch(assignment.Mission, assignment.Placement, lease, receipts, a.now()); err != nil {
+		if latestMissionEpoch(leases, string(m.UID)) > lease.Spec.Fence.LeaseEpoch {
+			if err := a.fenceRemoteExecution(ctx, assignment, lease, "superseded lease epoch", observations); err != nil {
+				return err
+			}
+			continue
+		}
+		terminal := terminalObservation(lease, observations, now)
+		if terminal != nil {
+			if terminal.Spec.Phase == spacev1.ExecutionObservationStopped {
+				if err := a.fenceRemoteExecution(ctx, assignment, lease, "trusted stop", observations); err != nil {
+					return err
+				}
+			}
+			continue
+		}
+		confirmed, err := a.leaseConfirmed(lease)
+		if err != nil {
+			return err
+		}
+		skew := time.Duration(lease.Spec.MaximumClockSkewSeconds) * time.Second
+		safety := skew + 2*time.Second
+		if !confirmed || spaceexecution.ValidateLease(lease, now) != nil || !lease.Spec.Fence.ExpiresAt.Time.After(now.Add(safety)) {
+			if err := a.fenceRemoteExecution(ctx, assignment, lease, "lease confirmation/expiry fence", observations); err != nil {
+				return err
+			}
+			continue
+		}
+		if err := spaceexecution.CanDispatch(m, p, lease, receipts, now); err != nil {
 			continue
 		}
 		if a.Executor == nil {
 			return fmt.Errorf("remote assignment ready but executor is unavailable")
 		}
-		if err := a.Executor.EnsureExecution(ctx, assignment.Mission, assignment.Placement, lease); err != nil {
+		if err := a.Executor.EnsureExecution(ctx, m, p, lease); err != nil {
 			return err
 		}
 	}
@@ -234,37 +333,76 @@ func (a *Agent) reconcileHeartbeats(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	maxEpoch := map[string]int64{}
-	for _, l := range leases {
-		if l != nil && l.Spec.Source == a.Local && l.Spec.Fence.LeaseEpoch > maxEpoch[l.Spec.Fence.MissionUID] {
-			maxEpoch[l.Spec.Fence.MissionUID] = l.Spec.Fence.LeaseEpoch
-		}
+	localAssignments, err := a.Store.ListAssignments(ctx)
+	if err != nil {
+		return err
 	}
+	remoteAssignments, err := a.Store.ListRemoteAssignments(ctx)
+	if err != nil {
+		return err
+	}
+	observations, err := a.Store.ListExecutionObservations(ctx)
+	if err != nil {
+		return err
+	}
+	now := a.now()
 	for _, lease := range leases {
-		if lease == nil || lease.Spec.Source != a.Local || maxEpoch[lease.Spec.Fence.MissionUID] != lease.Spec.Fence.LeaseEpoch {
+		if lease == nil || lease.Spec.Source != a.Local || latestMissionEpoch(leases, lease.Spec.Fence.MissionUID) != lease.Spec.Fence.LeaseEpoch {
 			continue
 		}
-		if lease.Spec.Fence.ExpiresAt.Time.Sub(a.now()) > a.LeaseTTL/2 {
+		assignment := assignmentForLease(lease, localAssignments, remoteAssignments)
+		if assignment == nil || assignment.Placement == nil || !assignment.Placement.Spec.ExpiresAt.After(now) {
+			continue
+		}
+		terminal := terminalObservation(lease, observations, now)
+		if terminal != nil {
+			switch terminal.Spec.Phase {
+			case spacev1.ExecutionObservationStopped, spacev1.ExecutionObservationFailed:
+				continue
+			case spacev1.ExecutionObservationCompleted:
+				if assignment.Mission == nil || !assignment.Mission.Spec.ResultReturnRequired {
+					continue
+				}
+			}
+		}
+		if lease.Spec.Destination != a.Local {
+			confirmed, err := a.leaseConfirmed(lease)
+			if err != nil {
+				return err
+			}
+			if !confirmed {
+				continue
+			}
+		}
+		nextHeartbeat := lease.Spec.HeartbeatAt.Time.Add(a.LeaseTTL / 2)
+		if now.Before(nextHeartbeat) {
+			continue
+		}
+		nextExpiry := lease.Spec.Fence.ExpiresAt.Time.Add(a.LeaseTTL / 2)
+		if nextExpiry.After(assignment.Placement.Spec.ExpiresAt.Time) {
+			nextExpiry = assignment.Placement.Spec.ExpiresAt.Time
+		}
+		if !nextExpiry.After(nextHeartbeat) || !nextExpiry.After(now.Add(time.Duration(lease.Spec.MaximumClockSkewSeconds)*time.Second)) {
 			continue
 		}
 		next := lease.DeepCopy()
 		next.Spec.Provenance.Sequence++
 		next.Spec.Provenance.PreviousDigest = lease.Spec.Provenance.Digest
-		next.Spec.HeartbeatAt = metav1.NewTime(a.now())
-		next.Spec.Fence.ExpiresAt = metav1.NewTime(a.now().Add(a.LeaseTTL))
+		next.Spec.HeartbeatAt = metav1.NewTime(nextHeartbeat.UTC())
+		next.Spec.Fence.ExpiresAt = metav1.NewTime(nextExpiry.UTC())
 		if err := a.signLease(next); err != nil {
 			return err
 		}
-		if err := a.Store.UpsertExecutionLease(ctx, next); err != nil {
-			return err
-		}
-		if next.Spec.Destination != a.Local {
-			// The plaintext fencing token is sent only in the initial lease grant.
-			// Same-epoch heartbeats update the signed lease object; the origin keeps
-			// the already-persisted token Secret and stale tokens remain unchanged.
-			if err := a.enqueueReporterObject(next.Spec.Destination, "spaceexecutionleases", next, next.Spec.Fence.MissionUID, next.Spec.Fence.PlanID, next.Spec.Fence.Attempt, next.Spec.Provenance.Sequence, next.Spec.Fence.ExpiresAt.Time); err != nil {
+		if next.Spec.Destination == a.Local {
+			if err := a.Store.UpsertExecutionLease(ctx, next); err != nil {
 				return err
 			}
+			continue
+		}
+		// Two-phase renewal: the remote execution domain does not persist the
+		// extended expiry until the coordinator echoes a LeaseAck.
+		if err := a.enqueueReporterObject(next.Spec.Destination, "spaceexecutionleases", next, next.Spec.Fence.MissionUID, next.Spec.Fence.PlanID, next.Spec.Fence.Attempt, next.Spec.Provenance.Sequence, next.Spec.Fence.ExpiresAt.Time); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -275,6 +413,25 @@ func (a *Agent) HandleEnvelope(ctx context.Context, e *Envelope) error {
 		return fmt.Errorf("envelope required")
 	}
 	switch e.Kind {
+	case TransferIntentKind:
+		var intent spacev1.SpaceTransferIntent
+		if err := json.Unmarshal(e.Payload, &intent); err != nil {
+			return err
+		}
+		if (a.Local != intent.Spec.Source && a.Local != intent.Spec.Destination) || intent.Spec.MissionUID != e.MissionUID || intent.Spec.PlanID != e.PlanID || intent.Spec.Attempt != e.Attempt {
+			return fmt.Errorf("transfer intent envelope metadata mismatch")
+		}
+		authorized := e.Source == intent.Spec.Coordinator
+		if intent.Spec.Purpose == spacev1.TransferPurposeResult && e.Source == intent.Spec.Source {
+			authorized = true
+		}
+		if !authorized {
+			return fmt.Errorf("transfer intent sender is not coordinator/source authority")
+		}
+		if err := spacev1.ValidateTransferIntent(&intent, agentClock{a.now()}); err != nil {
+			return err
+		}
+		return a.Store.UpsertTransferIntent(ctx, &intent)
 	case TransferChunkKind:
 		var chunk TransferChunk
 		if err := json.Unmarshal(e.Payload, &chunk); err != nil {
@@ -282,6 +439,13 @@ func (a *Agent) HandleEnvelope(ctx context.Context, e *Envelope) error {
 		}
 		if chunk.Source != e.Source || chunk.Destination != e.Destination || chunk.MissionUID != e.MissionUID || chunk.PlanID != e.PlanID || chunk.Attempt != e.Attempt {
 			return fmt.Errorf("transfer chunk metadata does not match envelope")
+		}
+		intent, err := a.Store.GetTransferIntent(ctx, chunk.IntentName)
+		if err != nil {
+			return fmt.Errorf("transfer intent is not durable at receiver: %w", err)
+		}
+		if err := validateChunkAgainstIntent(&chunk, intent, a.Local, a.now()); err != nil {
+			return err
 		}
 		complete, ack, err := a.Assembler.Accept(chunk)
 		if err != nil {
@@ -309,12 +473,18 @@ func (a *Agent) HandleEnvelope(ctx context.Context, e *Envelope) error {
 			return err
 		}
 		return a.acceptLeaseGrant(ctx, e, &grant)
+	case LeaseAckKind:
+		var ack LeaseAck
+		if err := json.Unmarshal(e.Payload, &ack); err != nil {
+			return err
+		}
+		return a.acceptLeaseAck(ctx, e, &ack)
 	case ReporterObjectKind:
 		var object ReporterObject
 		if err := json.Unmarshal(e.Payload, &object); err != nil {
 			return err
 		}
-		return a.Store.UpsertRemoteReporterObject(ctx, object.Resource, object.Object)
+		return a.acceptReporterObject(ctx, e, &object)
 	default:
 		return fmt.Errorf("unsupported envelope kind %q", e.Kind)
 	}
@@ -334,42 +504,49 @@ func (a *Agent) acceptLeaseRequest(ctx context.Context, e *Envelope, r *LeaseReq
 	if err := spacev1.ValidatePlacement(p, m); err != nil {
 		return err
 	}
+	minEpoch := int64(0)
+	if p.Spec.Attempt > 1 {
+		if r.PreviousLease == nil || r.PreviousLease.Spec.Fence.MissionUID != string(m.UID) || r.PreviousLease.Spec.Fence.Attempt != p.Spec.Attempt-1 {
+			return fmt.Errorf("replacement lease request lacks exact previous-attempt fence proof")
+		}
+		if err := a.verifyPriorFenceEvidence(m, r.PreviousLease, r.PreviousObservations); err != nil {
+			return err
+		}
+		minEpoch = r.PreviousLease.Spec.Fence.LeaseEpoch
+	}
 	if err := a.Store.SaveRemoteAssignment(ctx, r.Assignment); err != nil {
 		return err
 	}
-	lease, token, err := a.issueLease(ctx, r.Assignment, e.Source)
+	lease, token, err := a.issueLease(ctx, r.Assignment, e.Source, minEpoch)
 	if err != nil {
 		return err
 	}
 	return a.enqueueLeaseGrant(r.Namespace, lease, token)
 }
 
-func (a *Agent) issueLease(ctx context.Context, assignment Assignment, destination spacev1.DomainReference) (*spacev1.SpaceExecutionLease, string, error) {
+func (a *Agent) issueLease(ctx context.Context, assignment Assignment, destination spacev1.DomainReference, minimumEpoch int64) (*spacev1.SpaceExecutionLease, string, error) {
 	m, p := assignment.Mission, assignment.Placement
 	leases, err := a.Store.ListExecutionLeases(ctx)
 	if err != nil {
 		return nil, "", err
 	}
-	observations, err := a.Store.ListExecutionObservations(ctx)
-	if err != nil {
-		return nil, "", err
-	}
-	var previous *spacev1.SpaceExecutionLease
-	maxEpoch := int64(0)
-	for _, l := range leases {
-		if l == nil || l.Spec.Fence.MissionUID != string(m.UID) {
+	for _, existing := range leases {
+		if existing == nil || existing.Spec.Source != a.Local {
 			continue
 		}
-		if l.Spec.Fence.LeaseEpoch > maxEpoch {
-			maxEpoch = l.Spec.Fence.LeaseEpoch
-		}
-		if l.Spec.Fence.Attempt == p.Spec.Attempt-1 && (previous == nil || l.Spec.Fence.LeaseEpoch > previous.Spec.Fence.LeaseEpoch) {
-			previous = l
+		f := existing.Spec.Fence
+		if f.MissionUID == string(m.UID) && f.PlanID == p.Spec.PlanID && f.Attempt == p.Spec.Attempt {
+			if f.LeaseEpoch <= minimumEpoch || spaceexecution.ValidateLease(existing, a.now()) != nil {
+				return nil, "", fmt.Errorf("existing lease for attempt is expired/stale; a new attempt is required")
+			}
+			token, err := a.Store.GetFenceToken(ctx, m.Namespace, f)
+			return existing, token, err
 		}
 	}
-	if p.Spec.Attempt > 1 {
-		if err := spaceexecution.CanStartAttempt(m, previous, observations, a.now()); err != nil {
-			return nil, "", err
+	maxEpoch := minimumEpoch
+	for _, l := range leases {
+		if l != nil && l.Spec.Fence.MissionUID == string(m.UID) && l.Spec.Fence.LeaseEpoch > maxEpoch {
+			maxEpoch = l.Spec.Fence.LeaseEpoch
 		}
 	}
 	token, hash, err := spaceexecution.NewFenceToken()
@@ -377,7 +554,7 @@ func (a *Agent) issueLease(ctx context.Context, assignment Assignment, destinati
 		return nil, "", err
 	}
 	f := spacev1.ExecutionFence{MissionUID: string(m.UID), PlanID: p.Spec.PlanID, Attempt: p.Spec.Attempt, LeaseEpoch: maxEpoch + 1, TokenHash: hash, ExpiresAt: metav1.NewTime(a.now().Add(a.LeaseTTL))}
-	lease := &spacev1.SpaceExecutionLease{TypeMeta: metav1.TypeMeta{APIVersion: spacev1.SchemeGroupVersion.String(), Kind: "SpaceExecutionLease"}, ObjectMeta: metav1.ObjectMeta{Name: spacev1.ExecutionLeaseName(f.MissionUID, f.PlanID, f.Attempt, f.LeaseEpoch)}, Spec: spacev1.SpaceExecutionLeaseSpec{Source: a.Local, Destination: destination, Fence: f, HeartbeatAt: metav1.NewTime(a.now()), MaximumClockSkewSeconds: int64(a.Limits.MaximumClockSkew / time.Second), Provenance: a.baseProvenance(1)}}
+	lease := &spacev1.SpaceExecutionLease{TypeMeta: metav1.TypeMeta{APIVersion: spacev1.SchemeGroupVersion.String(), Kind: "SpaceExecutionLease"}, ObjectMeta: metav1.ObjectMeta{Name: spacev1.ExecutionLeaseName(f.MissionUID, f.PlanID, f.Attempt, f.LeaseEpoch)}, Spec: spacev1.SpaceExecutionLeaseSpec{Source: a.Local, Destination: destination, Fence: f, HeartbeatAt: metav1.NewTime(a.now()), MaximumClockSkewSeconds: int64(a.LeaseClockSkew / time.Second), Provenance: a.baseProvenance(1)}}
 	if err := a.signLease(lease); err != nil {
 		return nil, "", err
 	}
@@ -386,6 +563,11 @@ func (a *Agent) issueLease(ctx context.Context, assignment Assignment, destinati
 	}
 	if err := a.Store.UpsertExecutionLease(ctx, lease); err != nil {
 		return nil, "", err
+	}
+	if destination == a.Local {
+		if err := a.markLeaseConfirmed(lease); err != nil {
+			return nil, "", err
+		}
 	}
 	return lease, token, nil
 }
@@ -411,10 +593,20 @@ func (a *Agent) acceptLeaseGrant(ctx context.Context, e *Envelope, g *LeaseGrant
 	if err != nil || hash != l.Spec.Fence.TokenHash {
 		return fmt.Errorf("lease grant token hash mismatch")
 	}
+	leases, err := a.Store.ListExecutionLeases(ctx)
+	if err != nil {
+		return err
+	}
+	if err := validateIncomingLease(leases, l, a.now()); err != nil {
+		return err
+	}
 	if err := a.Store.PutFenceToken(ctx, g.Namespace, l.Spec.Fence, g.Token); err != nil {
 		return err
 	}
-	return a.Store.UpsertRemoteReporterObject(ctx, "spaceexecutionleases", mustJSON(l))
+	if err := a.Store.UpsertRemoteReporterObject(ctx, "spaceexecutionleases", mustJSON(l)); err != nil {
+		return err
+	}
+	return a.enqueueLeaseAck(l.Spec.Source, l)
 }
 
 func (a *Agent) enqueueAck(ack *TransferAck) error {
@@ -444,8 +636,13 @@ func (a *Agent) acceptAck(ctx context.Context, e *Envelope, ack *TransferAck) er
 	if err := a.Store.UpsertTransferReceipt(ctx, receipt); err != nil {
 		return err
 	}
-	if err := a.enqueueReporterObject(receipt.Spec.Destination, "spacetransferreceipts", receipt, s.MissionUID, s.PlanID, s.Attempt, 1, intent.Spec.ExpiresAt.Time); err != nil {
-		return err
+	for _, destination := range uniqueDomains(s.Destination, s.Coordinator) {
+		if destination == a.Local {
+			continue
+		}
+		if err := a.enqueueReporterObject(destination, "spacetransferreceipts", receipt, s.MissionUID, s.PlanID, s.Attempt, 1, intent.Spec.ExpiresAt.Time); err != nil {
+			return err
+		}
 	}
 	if s.Purpose == spacev1.TransferPurposeResult {
 		result := &spacev1.SpaceResultReceipt{TypeMeta: metav1.TypeMeta{APIVersion: spacev1.SchemeGroupVersion.String(), Kind: "SpaceResultReceipt"}, ObjectMeta: metav1.ObjectMeta{Name: spacev1.ResultReceiptName(s.Source, s.Destination, s.MissionUID, s.PlanID, spacev1.ResultTransferID(s.Attempt))}, Spec: spacev1.SpaceResultReceiptSpec{ResultID: spacev1.ResultTransferID(s.Attempt), MissionUID: s.MissionUID, PlanID: s.PlanID, Attempt: s.Attempt, Source: s.Source, Destination: s.Destination, Bytes: s.Bytes, PayloadDigest: s.PayloadDigest, LeaseEpoch: s.LeaseEpoch, TokenHash: s.TokenHash, CompletedAt: metav1.NewTime(ack.CompletedAt), Provenance: a.baseProvenance(1)}}
@@ -455,7 +652,14 @@ func (a *Agent) acceptAck(ctx context.Context, e *Envelope, ack *TransferAck) er
 		if err := a.Store.UpsertResultReceipt(ctx, result); err != nil {
 			return err
 		}
-		return a.enqueueReporterObject(result.Spec.Destination, "spaceresultreceipts", result, s.MissionUID, s.PlanID, s.Attempt, 1, intent.Spec.ExpiresAt.Time)
+		for _, destination := range uniqueDomains(s.Destination, s.Coordinator) {
+			if destination == a.Local {
+				continue
+			}
+			if err := a.enqueueReporterObject(destination, "spaceresultreceipts", result, s.MissionUID, s.PlanID, s.Attempt, 1, intent.Spec.ExpiresAt.Time); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
 }
@@ -465,14 +669,11 @@ func (a *Agent) ReportExecution(ctx context.Context, namespace string, report sp
 	if err != nil {
 		return err
 	}
-	var lease *spacev1.SpaceExecutionLease
-	for _, candidate := range leases {
-		if candidate != nil && candidate.Spec.Fence.MissionUID == report.MissionUID && candidate.Spec.Fence.PlanID == report.PlanID && candidate.Spec.Fence.Attempt == report.Attempt && candidate.Spec.Fence.LeaseEpoch == report.LeaseEpoch {
-			lease = candidate
-			break
-		}
+	if latestMissionEpoch(leases, report.MissionUID) != report.LeaseEpoch {
+		return fmt.Errorf("execution report uses a superseded lease epoch")
 	}
-	if lease == nil {
+	lease := latestLeaseForAttemptAny(leases, report.MissionUID, report.PlanID, report.Attempt)
+	if lease == nil || lease.Spec.Fence.LeaseEpoch != report.LeaseEpoch {
 		return fmt.Errorf("execution lease not found")
 	}
 	if lease.Spec.Source != a.Local {
@@ -481,37 +682,48 @@ func (a *Agent) ReportExecution(ctx context.Context, namespace string, report sp
 	if err := spaceexecution.ValidateReport(report, lease, a.now()); err != nil {
 		return err
 	}
-	id := strings.ToLower(string(report.Phase)) + fmt.Sprintf("-%d-%d", report.LeaseEpoch, a.now().UnixNano())
-	if len(id) > 63 {
-		id = id[:63]
+	localAssignments, err := a.Store.ListAssignments(ctx)
+	if err != nil {
+		return err
 	}
+	remoteAssignments, err := a.Store.ListRemoteAssignments(ctx)
+	if err != nil {
+		return err
+	}
+	assignment := assignmentForLease(lease, localAssignments, remoteAssignments)
+	if assignment == nil || assignment.Mission == nil || assignment.Placement == nil || assignment.Placement.Spec.Target != a.Local {
+		return fmt.Errorf("execution assignment not found for fence")
+	}
+	observations, err := a.Store.ListExecutionObservations(ctx)
+	if err != nil {
+		return err
+	}
+	if existing := matchingReportObservation(report, lease, observations); existing != nil {
+		if err := a.ensureResultReturn(ctx, *assignment, lease, report); err != nil {
+			return err
+		}
+		if existing.Spec.Destination != a.Local {
+			return a.enqueueReporterObject(existing.Spec.Destination, "spaceexecutionobservations", existing, report.MissionUID, report.PlanID, report.Attempt, existing.Spec.Provenance.Sequence, assignment.Placement.Spec.ExpiresAt.Time)
+		}
+		return nil
+	}
+	if terminalObservation(lease, observations, a.now()) != nil {
+		return fmt.Errorf("execution fence is terminal; further token reports are rejected")
+	}
+	if err := a.ensureResultReturn(ctx, *assignment, lease, report); err != nil {
+		return err
+	}
+	id := reportObservationID(report, a.now())
 	obs := &spacev1.SpaceExecutionObservation{TypeMeta: metav1.TypeMeta{APIVersion: spacev1.SchemeGroupVersion.String(), Kind: "SpaceExecutionObservation"}, ObjectMeta: metav1.ObjectMeta{Name: spacev1.ExecutionObservationName(a.Local, lease.Spec.Destination, report.MissionUID, report.PlanID, id)}, Spec: spacev1.SpaceExecutionObservationSpec{ObservationID: id, MissionUID: report.MissionUID, PlanID: report.PlanID, Attempt: report.Attempt, LeaseEpoch: report.LeaseEpoch, TokenHash: lease.Spec.Fence.TokenHash, Source: a.Local, Destination: lease.Spec.Destination, Phase: report.Phase, CheckpointID: report.CheckpointID, ObservedAt: metav1.NewTime(a.now()), Provenance: a.baseProvenance(1)}}
 	if err := a.signObservation(obs); err != nil {
 		return err
 	}
-	if err := a.Store.UpsertExecutionObservation(ctx, obs); err != nil {
-		return err
-	}
 	if obs.Spec.Destination != a.Local {
-		if err := a.enqueueReporterObject(obs.Spec.Destination, "spaceexecutionobservations", obs, report.MissionUID, report.PlanID, report.Attempt, 1, lease.Spec.Fence.ExpiresAt.Time); err != nil {
+		if err := a.enqueueReporterObject(obs.Spec.Destination, "spaceexecutionobservations", obs, report.MissionUID, report.PlanID, report.Attempt, 1, assignment.Placement.Spec.ExpiresAt.Time); err != nil {
 			return err
 		}
 	}
-	if report.Phase == spacev1.ExecutionObservationCompleted && report.ResultDataID != "" {
-		path, err := DataPath(a.DataRoot, report.ResultDataID)
-		if err != nil {
-			return err
-		}
-		raw, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		sum := sha256Bytes(raw)
-		transferID := spacev1.ResultTransferID(report.Attempt)
-		intent := &spacev1.SpaceTransferIntent{TypeMeta: metav1.TypeMeta{APIVersion: spacev1.SchemeGroupVersion.String(), Kind: "SpaceTransferIntent"}, ObjectMeta: metav1.ObjectMeta{Name: spacev1.TransferIntentName(a.Local, lease.Spec.Destination, report.MissionUID, report.PlanID, transferID)}, Spec: spacev1.SpaceTransferIntentSpec{TransferID: transferID, MissionUID: report.MissionUID, PlanID: report.PlanID, Attempt: report.Attempt, Purpose: spacev1.TransferPurposeResult, Source: a.Local, Destination: lease.Spec.Destination, DataID: report.ResultDataID, Bytes: int64(len(raw)), PayloadDigest: hex.EncodeToString(sum[:]), LeaseEpoch: lease.Spec.Fence.LeaseEpoch, TokenHash: lease.Spec.Fence.TokenHash, Window: spacev1.TransferEpoch{DataID: report.ResultDataID, Source: a.Local, Destination: lease.Spec.Destination, Start: metav1.NewTime(a.now()), End: lease.Spec.Fence.ExpiresAt, Bytes: int64(len(raw))}, ExpiresAt: lease.Spec.Fence.ExpiresAt}}
-		return a.Store.UpsertTransferIntent(ctx, intent)
-	}
-	return nil
+	return a.Store.UpsertExecutionObservation(ctx, obs)
 }
 
 func (a *Agent) enqueueReporterObject(destination spacev1.DomainReference, resource string, object any, missionUID, planID string, attempt int32, sequence int64, expiry time.Time) error {
@@ -523,7 +735,7 @@ func (a *Agent) enqueueReporterObject(destination spacev1.DomainReference, resou
 	if err != nil {
 		return err
 	}
-	id := resource + "-" + objectName(object)
+	id := reporterEnvelopeID(resource, objectName(object), destination)
 	e := NewEnvelope(id, ReporterObjectKind, a.Local, destination, missionUID, planID, attempt, sequence, a.now(), expiry, payload)
 	if err := e.Sign(a.PrivateKey); err != nil {
 		return err

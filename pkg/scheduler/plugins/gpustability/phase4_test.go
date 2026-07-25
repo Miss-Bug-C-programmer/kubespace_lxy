@@ -46,7 +46,7 @@ func TestPhase4FixtureFlowPlannerProjectionSchedulerAndStatus(t *testing.T) {
 		t.Fatal(err)
 	}
 	template := v1.PodTemplateSpec{Spec: v1.PodSpec{Containers: []v1.Container{{Name: "processor", Resources: v1.ResourceRequirements{Requests: v1.ResourceList{"iluvatar.com/gpu": resource.MustParse("1")}, Limits: v1.ResourceList{"iluvatar.com/gpu": resource.MustParse("1")}}}}}}
-	pod, err := spaceworkload.BuildAttemptPod(mission, decision.Placement, template)
+	pod, err := spaceworkload.BuildAttemptPodWithLease(mission, decision.Placement, template, phase4ExecutionLease(mission, decision.Placement, now))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -119,7 +119,7 @@ func TestPhase4IntentAndProjectionMutationCannotChangeCycleDecision(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	pod, err := spaceworkload.BuildAttemptPod(mission, decision.Placement, v1.PodTemplateSpec{Spec: v1.PodSpec{Containers: []v1.Container{{Name: "processor", Resources: v1.ResourceRequirements{Requests: v1.ResourceList{"iluvatar.com/gpu": resource.MustParse("1")}}}}}})
+	pod, err := spaceworkload.BuildAttemptPodWithLease(mission, decision.Placement, v1.PodTemplateSpec{Spec: v1.PodSpec{Containers: []v1.Container{{Name: "processor", Resources: v1.ResourceRequirements{Requests: v1.ResourceList{"iluvatar.com/gpu": resource.MustParse("1")}}}}}}, phase4ExecutionLease(mission, decision.Placement, now))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -135,6 +135,11 @@ func TestPhase4IntentAndProjectionMutationCannotChangeCycleDecision(t *testing.T
 	if requirement.Space == nil || requirement.Space.Placement.Spec.PlanID != decision.Placement.Spec.PlanID {
 		t.Fatal("immutable Phase 4 cycle state changed after Pod mutation")
 	}
+}
+
+func phase4ExecutionLease(mission *spacev1.SpaceMission, placement *spacev1.SpacePlacementIntent, now time.Time) *spacev1.SpaceExecutionLease {
+	fence := spacev1.ExecutionFence{MissionUID: string(mission.UID), PlanID: placement.Spec.PlanID, Attempt: placement.Spec.Attempt, LeaseEpoch: 1, TokenHash: strings.Repeat("d", 64), ExpiresAt: metav1.NewTime(now.Add(30 * time.Minute))}
+	return &spacev1.SpaceExecutionLease{ObjectMeta: metav1.ObjectMeta{Name: spacev1.ExecutionLeaseName(fence.MissionUID, fence.PlanID, fence.Attempt, fence.LeaseEpoch)}, Spec: spacev1.SpaceExecutionLeaseSpec{Source: placement.Spec.Target, Destination: placement.Spec.Target, Fence: fence, HeartbeatAt: metav1.NewTime(now), MaximumClockSkewSeconds: 2, Provenance: phase4Provenance(1)}}
 }
 
 func readPhase4Node(t *testing.T) *v1.Node {

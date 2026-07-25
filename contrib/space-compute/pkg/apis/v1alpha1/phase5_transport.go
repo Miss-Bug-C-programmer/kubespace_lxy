@@ -31,6 +31,7 @@ type SpaceTransferIntentSpec struct {
 	PlanID        string          `json:"planID"`
 	Attempt       int32           `json:"attempt"`
 	Purpose       string          `json:"purpose"`
+	Coordinator   DomainReference `json:"coordinator"`
 	Source        DomainReference `json:"source"`
 	Destination   DomainReference `json:"destination"`
 	DataID        string          `json:"dataID"`

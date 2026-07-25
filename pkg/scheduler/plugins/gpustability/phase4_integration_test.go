@@ -47,7 +47,7 @@ func TestPhase4FullCPUFlowBindsAndTracksResultStatus(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pod, err := spaceworkload.BuildAttemptPod(mission, decision.Placement, mission.Spec.WorkloadTemplate)
+	pod, err := spaceworkload.BuildAttemptPodWithLease(mission, decision.Placement, mission.Spec.WorkloadTemplate, phase4ExecutionLease(mission, decision.Placement, now))
 	if err != nil {
 		t.Fatal(err)
 	}

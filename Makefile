@@ -50,6 +50,11 @@ space-compute-reporter-webhook:
 	mkdir -p bin
 	go build -buildvcs=false -o bin/space-compute-reporter-webhook ./cmd/space-compute-reporter-webhook
 
+.PHONY: space-compute-domain-agent
+space-compute-domain-agent:
+	mkdir -p bin
+	go build -buildvcs=false -o bin/space-compute-domain-agent ./cmd/space-compute-domain-agent
+
 .PHONY: image-scan
 image-scan:
 	scripts/image_scan.sh $(IMAGE)

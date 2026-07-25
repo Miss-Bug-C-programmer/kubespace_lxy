@@ -7,10 +7,10 @@ kind: ClusterRole
 metadata: {name: system:space-compute-mission-planner}
 rules:
 - apiGroups: [spacecompute.k3s.io]
-  resources: [spacemissions, spaceplacementintents, spacelinksnapshots, spacedomainresourcesummaries]
+  resources: [spacemissions, spaceplacementintents, spacelinksnapshots, spacedomainresourcesummaries, spacetransferintents, spacetransferreceipts, spaceexecutionleases, spaceexecutionobservations, spaceresultreceipts]
   verbs: [get, list, watch]
 - apiGroups: [spacecompute.k3s.io]
-  resources: [spaceplacementintents]
+  resources: [spaceplacementintents, spacetransferintents]
   verbs: [create, update, patch]
 - apiGroups: [spacecompute.k3s.io]
   resources: [spacemissions/status, spaceplacementintents/status, spacelinksnapshots/status, spacedomainresourcesummaries/status]
@@ -65,6 +65,13 @@ spec:
       - name: planner
         image: space-compute-mission-planner:v1.33.7-k3s1
         args: [--leader-elect=true, --leader-election-namespace=kube-system, --workers=4, --metrics-bind-address=:10261]
+        env:
+        - name: SPACE_COMPUTE_LOCAL_DOMAIN_JSON
+          valueFrom:
+            configMapKeyRef:
+              name: space-compute-domain-identity
+              key: domain.json
+              optional: true
         ports: [{name: metrics, containerPort: 10261}]
         readinessProbe: {httpGet: {path: /readyz, port: metrics}, initialDelaySeconds: 3}
         livenessProbe: {httpGet: {path: /livez, port: metrics}, initialDelaySeconds: 10}
@@ -87,5 +94,5 @@ kind: ClusterRole
 metadata: {name: system:space-compute-domain-reporter}
 rules:
 - apiGroups: [spacecompute.k3s.io]
-  resources: [spacelinksnapshots, spacedomainresourcesummaries, spacetransferreceipts, spaceresultreceipts]
+  resources: [spacelinksnapshots, spacedomainresourcesummaries, spacetransferreceipts, spaceexecutionleases, spaceexecutionobservations, spaceresultreceipts]
   verbs: [create]

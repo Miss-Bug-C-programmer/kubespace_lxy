@@ -144,5 +144,7 @@ webhooks:
     - spacelinksnapshots
     - spacedomainresourcesummaries
     - spacetransferreceipts
+    - spaceexecutionleases
+    - spaceexecutionobservations
     - spaceresultreceipts
     scope: Cluster

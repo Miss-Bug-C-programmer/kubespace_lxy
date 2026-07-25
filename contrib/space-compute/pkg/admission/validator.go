@@ -258,6 +258,18 @@ func validateUpdateStructural(current, previous *reporterEnvelope, clock spacev1
 			return fmt.Errorf("previous reporter object kind does not match")
 		}
 		return spacev1.ValidateLinkSnapshot(value, old, clock)
+	case *spacev1.SpaceExecutionLease:
+		old, ok := previous.digestObject.(*spacev1.SpaceExecutionLease)
+		if !ok {
+			return fmt.Errorf("previous reporter object kind does not match")
+		}
+		a, b := old.Spec.Fence, value.Spec.Fence
+		if a.MissionUID != b.MissionUID || a.PlanID != b.PlanID || a.Attempt != b.Attempt || a.LeaseEpoch != b.LeaseEpoch || a.TokenHash != b.TokenHash {
+			return fmt.Errorf("same-epoch lease heartbeat changed fencing identity")
+		}
+		if !value.Spec.HeartbeatAt.After(old.Spec.HeartbeatAt.Time) || !b.ExpiresAt.After(a.ExpiresAt.Time) {
+			return fmt.Errorf("lease heartbeat and expiry must strictly increase")
+		}
 	}
 	return nil
 }
@@ -382,9 +394,13 @@ func (v *Validator) decodeReporterEnvelope(resource string, raw []byte) (*report
 			return nil, err
 		}
 		destination := value.Spec.Destination
+		var peer *spacev1.DomainReference
+		if destination != value.Spec.Source {
+			peer = &destination
+		}
 		return &reporterEnvelope{
 			kind: "SpaceResultReceipt", name: value.Name, provenance: &value.Spec.Provenance,
-			source: value.Spec.Source, destination: &destination, digestObject: value,
+			source: value.Spec.Source, destination: peer, digestObject: value,
 			observedAtNano: value.Spec.CompletedAt.UnixNano(),
 			identity:       normalizedEnvelopeIdentity(value.Spec.Source, &value.Spec.Destination, fmt.Sprintf("%s|%s|%d|%s", value.Spec.MissionUID, value.Spec.PlanID, value.Spec.Attempt, value.Spec.ResultID)),
 		}, nil

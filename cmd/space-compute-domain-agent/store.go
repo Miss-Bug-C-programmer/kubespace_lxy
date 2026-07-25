@@ -299,5 +299,28 @@ func (e *kubeExecutor) EnsureExecution(ctx context.Context, m *spacev1.SpaceMiss
 	return err
 }
 
+func (e *kubeExecutor) FenceExecution(ctx context.Context, m *spacev1.SpaceMission, p *spacev1.SpacePlacementIntent, reason string) (bool, error) {
+	if m == nil || p == nil {
+		return false, fmt.Errorf("mission and placement are required")
+	}
+	name := spaceworkload.AttemptPodName(m.Name, p.Spec.Attempt)
+	pods := e.client.CoreV1().Pods(m.Namespace)
+	current, err := pods.Get(ctx, name, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if current.Labels[spacev1.LabelPlacementID] != p.Spec.PlanID {
+		return false, fmt.Errorf("refusing to fence Pod owned by another plan")
+	}
+	zero := int64(0)
+	if err := pods.Delete(ctx, name, metav1.DeleteOptions{GracePeriodSeconds: &zero}); err != nil && !apierrors.IsNotFound(err) {
+		return false, fmt.Errorf("fence execution (%s): %w", reason, err)
+	}
+	return true, nil
+}
+
 var _ spacetransport.AgentStore = (*kubeAgentStore)(nil)
 var _ spacetransport.Executor = (*kubeExecutor)(nil)

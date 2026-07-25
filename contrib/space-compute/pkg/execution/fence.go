@@ -100,7 +100,7 @@ func ValidateObservationAgainstLease(observation *spacev1.SpaceExecutionObservat
 	if observation.Spec.Source != lease.Spec.Source || observation.Spec.Destination != lease.Spec.Destination {
 		return fmt.Errorf("execution observation domain identity does not match lease")
 	}
-	if observation.Spec.ObservedAt.After(f.ExpiresAt.Time) {
+	if observation.Spec.Phase != spacev1.ExecutionObservationStopped && observation.Spec.ObservedAt.After(f.ExpiresAt.Time) {
 		return fmt.Errorf("execution observation was produced after lease expiry")
 	}
 	return nil

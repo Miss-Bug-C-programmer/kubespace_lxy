@@ -903,3 +903,17 @@ Regression coverage includes canonical ordering and UTC normalization, digest/si
 - `gofmt`, `go vet`, manifest/RBAC source audit and production binary build: PASS.
 
 A live API-server webhook TLS/CA provisioning run is still an environment qualification item: operators must provision the serving certificate and inject its issuing CA into the `ValidatingWebhookConfiguration` before enabling reporter writes. The configuration is `failurePolicy: Fail`, so an absent/untrusted webhook fails closed rather than accepting unsigned data.
+
+
+## Phase 5 transport / transfer / result / execution fence
+
+Implemented as independent components above the scheduler hot path:
+
+- `cmd/space-compute-domain-agent` plus `contrib/space-compute/pkg/transport` and `pkg/execution`;
+- versioned `SpaceTransferIntent`, `SpaceTransferReceipt`, `SpaceExecutionLease`, `SpaceExecutionObservation`, and `SpaceResultReceipt` APIs;
+- TLS 1.3 mTLS cross-domain envelopes with SPIFFE identity binding, Ed25519 signatures, persistent bounded at-least-once retry/dedupe, jittered exponential backoff and circuit breaking;
+- monotonic execution epochs, non-reusable fence tokens, durable two-phase lease renewal acknowledgements, signed stop/checkpoint/result evidence, and fail-closed partition behavior;
+- transfer-receipt + compute-time + placement-expiry + execution-lease dispatch gates; remote placements do not create local shadow Pods;
+- result completion only from signed result receipts; legacy workload annotations remain untrusted hints.
+
+The repository `scripts/space-compute all` gate includes the domain-agent command and Phase 5 packages. Cluster/hardware E2E remain environment-gated separately and are not silently substituted by unit tests.

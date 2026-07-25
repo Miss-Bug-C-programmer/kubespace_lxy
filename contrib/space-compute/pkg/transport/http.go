@@ -131,6 +131,13 @@ func ServerTLSConfig(cert tls.Certificate, clientCAs *x509.CertPool) *tls.Config
 	}
 }
 
+// ServerOnlyTLSConfig protects the local execution report endpoint. The fence
+// token authenticates the workload report; cross-domain transport still always
+// uses ServerTLSConfig and mutual certificate authentication.
+func ServerOnlyTLSConfig(cert tls.Certificate) *tls.Config {
+	return &tls.Config{MinVersion: tls.VersionTLS13, Certificates: []tls.Certificate{cert}}
+}
+
 type EndpointResolver interface {
 	Endpoint(spacev1.DomainReference) (string, error)
 }

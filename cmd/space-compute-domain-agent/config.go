@@ -36,6 +36,7 @@ type agentConfig struct {
 	ClientCAFile            string                  `json:"clientCAFile"`
 	SigningKeyFile          string                  `json:"signingKeyFile"`
 	LeaseTTLSeconds         int64                   `json:"leaseTTLSeconds"`
+	LeaseClockSkewSeconds   int64                   `json:"leaseClockSkewSeconds"`
 	MaxChunkBytes           int                     `json:"maxChunkBytes"`
 	MaxMessageBytes         int64                   `json:"maxMessageBytes"`
 	MaxQueueItems           int                     `json:"maxQueueItems"`
@@ -77,6 +78,9 @@ func loadAgentConfig(path string) (agentConfig, error) {
 	}
 	if cfg.LeaseTTLSeconds == 0 {
 		cfg.LeaseTTLSeconds = 120
+	}
+	if cfg.LeaseClockSkewSeconds == 0 {
+		cfg.LeaseClockSkewSeconds = 2
 	}
 	if cfg.MaxChunkBytes == 0 {
 		cfg.MaxChunkBytes = 256 << 10
@@ -123,6 +127,9 @@ func loadAgentConfig(path string) (agentConfig, error) {
 	}
 	if len(cfg.Peers) > 64 {
 		return cfg, fmt.Errorf("peer count exceeds 64")
+	}
+	if cfg.LeaseClockSkewSeconds < 0 || cfg.LeaseClockSkewSeconds > 30 || 4*cfg.LeaseClockSkewSeconds >= cfg.LeaseTTLSeconds {
+		return cfg, fmt.Errorf("leaseClockSkewSeconds must be 0..30 and strictly less than one quarter of leaseTTLSeconds")
 	}
 	if err := cfg.limits().Validate(); err != nil {
 		return cfg, err

@@ -83,7 +83,7 @@ func run(configPath, kubeconfig string) error {
 		return err
 	}
 	store := &kubeAgentStore{dynamic: dynamicClient, client: client, remote: assignments}
-	agent := &spacetransport.Agent{Local: cfg.LocalDomain, ReporterPrincipal: cfg.ReporterPrincipal, PrivateKey: privateKey, Queue: queue, Store: store, Executor: &kubeExecutor{client: client}, Assembler: &spacetransport.FileAssembler{Root: cfg.DataRoot, MaxBytes: 1 << 40}, DataRoot: cfg.DataRoot, LeaseTTL: time.Duration(cfg.LeaseTTLSeconds) * time.Second, MaxChunkBytes: cfg.MaxChunkBytes, Limits: limits}
+	agent := &spacetransport.Agent{Local: cfg.LocalDomain, ReporterPrincipal: cfg.ReporterPrincipal, PrivateKey: privateKey, PeerKeys: peers, StateDir: cfg.StateDir, Queue: queue, Store: store, Executor: &kubeExecutor{client: client}, Assembler: &spacetransport.FileAssembler{Root: cfg.DataRoot, MaxBytes: 1 << 40}, DataRoot: cfg.DataRoot, LeaseTTL: time.Duration(cfg.LeaseTTLSeconds) * time.Second, LeaseClockSkew: time.Duration(cfg.LeaseClockSkewSeconds) * time.Second, MaxChunkBytes: cfg.MaxChunkBytes, Limits: limits}
 	if err := agent.Validate(); err != nil {
 		return err
 	}
@@ -95,7 +95,7 @@ func run(configPath, kubeconfig string) error {
 	go func() {
 		errCh <- serveEnvelope(ctx, cfg.ListenAddress, spacetransport.ServerTLSConfig(cert, roots), receiver)
 	}()
-	go func() { errCh <- serveReport(ctx, cfg.ReportAddress, agent) }()
+	go func() { errCh <- serveReport(ctx, cfg.ReportAddress, spacetransport.ServerOnlyTLSConfig(cert), agent) }()
 	go func() { errCh <- serveHealth(ctx, cfg.HealthAddress) }()
 	go func() { errCh <- sender.Run(ctx) }()
 	ticker := time.NewTicker(time.Second)
@@ -140,7 +140,7 @@ func serveEnvelope(ctx context.Context, address string, tlsConfig *tls.Config, h
 	}
 	return err
 }
-func serveReport(ctx context.Context, address string, agent *spacetransport.Agent) error {
+func serveReport(ctx context.Context, address string, tlsConfig *tls.Config, agent *spacetransport.Agent) error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v1/report", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -168,7 +168,7 @@ func serveReport(ctx context.Context, address string, agent *spacetransport.Agen
 		}
 		w.WriteHeader(http.StatusNoContent)
 	})
-	return servePlain(ctx, address, mux)
+	return serveEnvelope(ctx, address, tlsConfig, mux)
 }
 func serveHealth(ctx context.Context, address string) error {
 	mux := http.NewServeMux()

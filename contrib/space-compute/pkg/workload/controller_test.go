@@ -72,7 +72,8 @@ func TestTransferReceiptThenLeaseAreBothRequired(t *testing.T) {
 	placement.Spec.ComputeStart = metav1.NewTime(now)
 	store := &memoryStore{}
 	evidence := newMemoryEvidence()
-	controller := &Controller{Store: store, Evidence: evidence, Clock: &mutableClock{now: now}}
+	coordinator := placement.Spec.Target
+	controller := &Controller{Store: store, Evidence: evidence, Clock: &mutableClock{now: now}, LocalDomain: &coordinator}
 	if _, err := controller.ReconcileDispatch(context.Background(), mission, placement, mission.Spec.WorkloadTemplate); err != nil || store.creates != 0 || placement.Status.Phase != spacev1.PlacementTransferPending {
 		t.Fatalf("missing receipt phase=%s creates=%d err=%v", placement.Status.Phase, store.creates, err)
 	}
@@ -94,10 +95,32 @@ func TestCrossDomainTransferWithoutDeclaredDigestFailsClosed(t *testing.T) {
 	now := time.Date(2026, 7, 21, 0, 0, 0, 0, time.UTC)
 	mission, placement := dispatchFixture(now)
 	mission.Spec.Inputs = []spacev1.DataObject{{ID: "sensor", SizeBytes: 1, Locations: []string{"ground-a"}}}
-	placement.Spec.InputTransfers = []spacev1.TransferEpoch{{DataID: "sensor", Source: spacev1.DomainReference{Name: "ground-a", ClusterID: "g", OrbitClass: spacev1.OrbitGround}, Destination: placement.Spec.Target, Start: metav1.NewTime(now), End: metav1.NewTime(now.Add(time.Minute)), Bytes: 1}}
-	_, err := (&Controller{Store: &memoryStore{}, Evidence: newMemoryEvidence(), Clock: &mutableClock{now: now}}).ReconcileDispatch(context.Background(), mission, placement, mission.Spec.WorkloadTemplate)
+	source := spacev1.DomainReference{Name: "ground-a", ClusterID: "g", OrbitClass: spacev1.OrbitGround}
+	placement.Spec.InputTransfers = []spacev1.TransferEpoch{{DataID: "sensor", Source: source, Destination: placement.Spec.Target, Start: metav1.NewTime(now), End: metav1.NewTime(now.Add(time.Minute)), Bytes: 1}}
+	coordinator := spacev1.DomainReference{Name: "ground-control", ClusterID: "ground-control", OrbitClass: spacev1.OrbitGround}
+	_, err := (&Controller{Store: &memoryStore{}, Evidence: newMemoryEvidence(), Clock: &mutableClock{now: now}, LocalDomain: &coordinator}).ReconcileDispatch(context.Background(), mission, placement, mission.Spec.WorkloadTemplate)
 	if err == nil {
 		t.Fatal("missing payload digest was accepted")
+	}
+}
+
+func TestMissingTransferCoordinatorStaysPendingWithoutPod(t *testing.T) {
+	now := time.Date(2026, 7, 21, 0, 0, 0, 0, time.UTC)
+	mission, placement := dispatchFixture(now)
+	digest := strings.Repeat("a", 64)
+	source := spacev1.DomainReference{Name: "ground-a", ClusterID: "ground", OrbitClass: spacev1.OrbitGround}
+	mission.Spec.Inputs = []spacev1.DataObject{{ID: "sensor", SizeBytes: 1, Locations: []string{"ground-a"}, PayloadDigest: digest}}
+	placement.Spec.InputTransfers = []spacev1.TransferEpoch{{DataID: "sensor", Source: source, Destination: placement.Spec.Target, Start: metav1.NewTime(now), End: metav1.NewTime(now.Add(time.Minute)), Bytes: 1}}
+	placement.Spec.NotBefore = metav1.NewTime(now)
+	placement.Spec.ComputeStart = metav1.NewTime(now)
+	store := &memoryStore{}
+	evidence := newMemoryEvidence()
+	c := &Controller{Store: store, Evidence: evidence, Clock: &mutableClock{now: now}}
+	if _, err := c.ReconcileDispatch(context.Background(), mission, placement, mission.Spec.WorkloadTemplate); err != nil {
+		t.Fatalf("missing coordinator should wait fail-closed: %v", err)
+	}
+	if placement.Status.Phase != spacev1.PlacementTransferPending || store.creates != 0 || len(evidence.intents) != 0 {
+		t.Fatalf("phase=%s creates=%d intents=%d", placement.Status.Phase, store.creates, len(evidence.intents))
 	}
 }
 
@@ -204,7 +227,11 @@ func validObservation(lease *spacev1.SpaceExecutionLease, id string, phase space
 	return o
 }
 func validResultReceipt(m *spacev1.SpaceMission, p *spacev1.SpacePlacementIntent, lease *spacev1.SpaceExecutionLease, at time.Time) *spacev1.SpaceResultReceipt {
-	r := &spacev1.SpaceResultReceipt{Spec: spacev1.SpaceResultReceiptSpec{ResultID: "result-one", MissionUID: string(m.UID), PlanID: p.Spec.PlanID, Attempt: p.Spec.Attempt, Source: lease.Spec.Source, Destination: lease.Spec.Destination, Bytes: 1, PayloadDigest: strings.Repeat("d", 64), LeaseEpoch: lease.Spec.Fence.LeaseEpoch, TokenHash: lease.Spec.Fence.TokenHash, CompletedAt: metav1.NewTime(at), Provenance: testProvenance(1)}}
+	destination := lease.Spec.Destination
+	if p.Spec.ResultTransfer != nil {
+		destination = p.Spec.ResultTransfer.Destination
+	}
+	r := &spacev1.SpaceResultReceipt{Spec: spacev1.SpaceResultReceiptSpec{ResultID: "result-one", MissionUID: string(m.UID), PlanID: p.Spec.PlanID, Attempt: p.Spec.Attempt, Source: lease.Spec.Source, Destination: destination, Bytes: 1, PayloadDigest: strings.Repeat("d", 64), LeaseEpoch: lease.Spec.Fence.LeaseEpoch, TokenHash: lease.Spec.Fence.TokenHash, CompletedAt: metav1.NewTime(at), Provenance: testProvenance(1)}}
 	r.Name = spacev1.ResultReceiptName(r.Spec.Source, r.Spec.Destination, r.Spec.MissionUID, r.Spec.PlanID, r.Spec.ResultID)
 	return r
 }

@@ -1,0 +1,112 @@
+# Per-domain transport/execution agent. Administrators must provision:
+# - Secret space-compute-domain-agent-config with domain-agent.json
+# - Secret space-compute-domain-agent-identity with tls.crt/tls.key/ca.crt,
+#   signing.key and peer public keys referenced by domain-agent.json.
+# The serving certificate must contain the local domain SPIFFE URI SAN used by
+# the peer registry. Persistent state is mandatory for bounded at-least-once
+# retry and lease-confirmation recovery across process restarts.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: space-compute-domain-agent
+  namespace: kube-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: system:space-compute-domain-agent
+rules:
+- apiGroups: [spacecompute.k3s.io]
+  resources: [spacemissions, spaceplacementintents, spacetransferintents, spacetransferreceipts, spaceexecutionleases, spaceexecutionobservations, spaceresultreceipts]
+  verbs: [get, list, watch]
+- apiGroups: [spacecompute.k3s.io]
+  resources: [spacetransferintents, spacetransferreceipts, spaceexecutionleases, spaceexecutionobservations, spaceresultreceipts]
+  verbs: [create, update, patch]
+- apiGroups: [""]
+  resources: [pods]
+  verbs: [get, create, delete]
+- apiGroups: [""]
+  resources: [secrets]
+  verbs: [get, create]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: space-compute-domain-agent
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:space-compute-domain-agent
+subjects:
+- kind: ServiceAccount
+  name: space-compute-domain-agent
+  namespace: kube-system
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: space-compute-domain-agent
+  namespace: kube-system
+spec:
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: space-compute-domain-agent
+  ports:
+  - {name: envelope, port: 10443, targetPort: envelope}
+  - {name: report, port: 10445, targetPort: report}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: space-compute-domain-agent
+  namespace: kube-system
+spec:
+  replicas: 1
+  serviceName: space-compute-domain-agent
+  selector:
+    matchLabels: {app.kubernetes.io/name: space-compute-domain-agent}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: space-compute-domain-agent}
+    spec:
+      serviceAccountName: space-compute-domain-agent
+      priorityClassName: system-cluster-critical
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+      - name: domain-agent
+        image: space-compute-domain-agent:v1.33.7-k3s1
+        imagePullPolicy: IfNotPresent
+        args: [--config=/etc/space-compute/domain-agent.json]
+        ports:
+        - {name: envelope, containerPort: 10443}
+        - {name: report, containerPort: 10445}
+        - {name: health, containerPort: 10446}
+        readinessProbe: {httpGet: {path: /readyz, port: health}, initialDelaySeconds: 3}
+        livenessProbe: {httpGet: {path: /livez, port: health}, initialDelaySeconds: 10}
+        resources:
+          requests: {cpu: 100m, memory: 128Mi}
+          limits: {cpu: "2", memory: 1Gi}
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          runAsUser: 65532
+          runAsGroup: 65532
+          capabilities: {drop: [ALL]}
+        volumeMounts:
+        - {name: config, mountPath: /etc/space-compute, readOnly: true}
+        - {name: identity, mountPath: /identity, readOnly: true}
+        - {name: state, mountPath: /var/lib/space-compute}
+      volumes:
+      - name: config
+        secret: {secretName: space-compute-domain-agent-config}
+      - name: identity
+        secret: {secretName: space-compute-domain-agent-identity}
+  volumeClaimTemplates:
+  - metadata: {name: state}
+    spec:
+      accessModes: [ReadWriteOnce]
+      resources:
+        requests: {storage: 10Gi}

@@ -74,6 +74,19 @@ func (q *DiskQueue) Enqueue(e *Envelope) error {
 	item := queuedEnvelope{Envelope: *e, CreatedAt: time.Now().UTC(), NextAttempt: time.Now().UTC()}
 	return writeAtomic(target, item)
 }
+func (q *DiskQueue) Contains(id string, sequence int64) (bool, error) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	_, err := os.Stat(q.path(id, sequence))
+	if err == nil {
+		return true, nil
+	}
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	return false, err
+}
+
 func (q *DiskQueue) Due(now time.Time, limit int) ([]queuedEnvelope, error) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
