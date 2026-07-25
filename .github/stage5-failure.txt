@@ -1,36 +1,8 @@
-run_id=30147236492
-base_sha=74147bd5c3939e94e331e3b56b5f611e129b477e
+run_id=30147371460
+base_sha=a998f833a15d5dde4dbc1797ead3808b0badb218
 --- focused output ---
 stage5 API patch applied
 stage5 runtime patch applied
 stage5 transport compile fix applied
 stage5 fence time fix applied
-ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/apis/v1alpha1	0.010s
-?   	github.com/k3s-io/k3s/contrib/space-compute/pkg/execution	[no test files]
-?   	github.com/k3s-io/k3s/contrib/space-compute/pkg/transport	[no test files]
-ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/admission	0.029s
-ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/planner	0.182s
---- FAIL: TestFutureWaitRestartAndDuplicateDispatchAreIdempotent (0.00s)
-    controller_test.go:29: future wait delay=1s creates=0 err=<nil>
---- FAIL: TestDeterministicAttemptFenceRejectsDifferentPlan (0.00s)
-    controller_test.go:51: different plan fence was accepted
---- FAIL: TestPodStatusRequiresExplicitResultReturnAndIgnoresDuplicates (0.00s)
-panic: runtime error: invalid memory address or nil pointer dereference [recovered, repanicked]
-[signal SIGSEGV: segmentation violation code=0x1 addr=0x340 pc=0x9f16a3]
-
-goroutine 24 [running]:
-testing.tRunner.func1.2({0xacbf40, 0x10de640})
-	/opt/hostedtoolcache/go/1.25.12/x64/src/testing/testing.go:1872 +0x237
-testing.tRunner.func1()
-	/opt/hostedtoolcache/go/1.25.12/x64/src/testing/testing.go:1875 +0x35b
-panic({0xacbf40?, 0x10de640?})
-	/opt/hostedtoolcache/go/1.25.12/x64/src/runtime/panic.go:783 +0x132
-github.com/k3s-io/k3s/contrib/space-compute/pkg/workload.TestPodStatusRequiresExplicitResultReturnAndIgnoresDuplicates(0xc000102fc0)
-	/home/runner/work/kubespace_lxy/kubespace_lxy/contrib/space-compute/pkg/workload/controller_test.go:69 +0x3a3
-testing.tRunner(0xc000102fc0, 0xc04778)
-	/opt/hostedtoolcache/go/1.25.12/x64/src/testing/testing.go:1934 +0xea
-created by testing.(*T).Run in goroutine 1
-	/opt/hostedtoolcache/go/1.25.12/x64/src/testing/testing.go:1997 +0x465
-FAIL	github.com/k3s-io/k3s/contrib/space-compute/pkg/workload	0.015s
-ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/kube	0.014s
-FAIL
+contrib/space-compute/pkg/workload/controller.go: marker count 0
