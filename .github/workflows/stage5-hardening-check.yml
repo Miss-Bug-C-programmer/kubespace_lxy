@@ -51,6 +51,11 @@ jobs:
           set -euo pipefail
           python3 -m py_compile .github/stage5-hardening-source2.py
           python3 .github/stage5-hardening-source2.py
+      - name: Stage hardening regressions
+        run: |
+          set -euo pipefail
+          python3 -m py_compile .github/stage5-hardening-tests.py
+          python3 .github/stage5-hardening-tests.py
       - name: Normalize generated indentation
         run: |
           set -euo pipefail
@@ -59,7 +64,9 @@ jobs:
           paths = [
               Path('contrib/space-compute/pkg/transport/agent.go'),
               Path('contrib/space-compute/pkg/transport/hardening.go'),
+              Path('contrib/space-compute/pkg/transport/hardening_test.go'),
               Path('contrib/space-compute/pkg/workload/controller.go'),
+              Path('contrib/space-compute/pkg/workload/controller_test.go'),
           ]
           for path in paths:
               out = []
