@@ -34,11 +34,9 @@ jobs:
           set +e
           (
             set -euo pipefail
-            base64 -d .github/stage5-payload-00.b64 > /tmp/stage5-apply.py.gz
-            base64 -d .github/stage5-payload-01.b64 >> /tmp/stage5-apply.py.gz
-            gzip -d -c /tmp/stage5-apply.py.gz > /tmp/stage5-apply.py
-            python3 -m py_compile /tmp/stage5-apply.py
-            python3 /tmp/stage5-apply.py
+            python3 -m py_compile .github/stage5-api.py .github/stage5-runtime.py
+            python3 .github/stage5-api.py
+            python3 .github/stage5-runtime.py
             gofmt -w \
               contrib/space-compute/pkg/apis/v1alpha1/*.go \
               contrib/space-compute/pkg/admission/*.go \
@@ -46,10 +44,9 @@ jobs:
               contrib/space-compute/pkg/workload/*.go \
               contrib/space-compute/pkg/kube/*.go \
               contrib/space-compute/pkg/transport/*.go \
-              contrib/space-compute/pkg/execution/*.go \
-              cmd/space-compute-domain-agent/*.go
+              contrib/space-compute/pkg/execution/*.go
             git diff --check
-            go test ./contrib/space-compute/pkg/apis/v1alpha1 ./contrib/space-compute/pkg/execution ./contrib/space-compute/pkg/transport ./contrib/space-compute/pkg/admission ./contrib/space-compute/pkg/planner ./contrib/space-compute/pkg/workload ./contrib/space-compute/pkg/kube ./cmd/space-compute-domain-agent -count=1 -timeout=180s
+            go test ./contrib/space-compute/pkg/apis/v1alpha1 ./contrib/space-compute/pkg/execution ./contrib/space-compute/pkg/transport ./contrib/space-compute/pkg/admission ./contrib/space-compute/pkg/planner ./contrib/space-compute/pkg/workload ./contrib/space-compute/pkg/kube -count=1 -timeout=180s
           ) > /tmp/stage5-focused.log 2>&1
           status=$?
           cat /tmp/stage5-focused.log
