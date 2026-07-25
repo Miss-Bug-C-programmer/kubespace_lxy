@@ -86,12 +86,12 @@ jobs:
         run: |
           set -euo pipefail
           gofmt -w cmd/space-compute-domain-agent/*.go contrib/space-compute/pkg/apis/v1alpha1/*.go contrib/space-compute/pkg/admission/*.go contrib/space-compute/pkg/execution/*.go contrib/space-compute/pkg/transport/*.go contrib/space-compute/pkg/workload/*.go
-      - name: Validate manifests and diff
-        run: |
-          set -euo pipefail
-          git diff --check
-          ruby -e 'require "yaml"; ARGV.each { |p| YAML.load_stream(File.read(p), aliases: true) }' docs/space-compute/manifests/*.yaml docs/gpu-scheduler/manifests/space-compute-scheduler.yaml
-          test -z "$(git diff --name-only -- pkg/scheduler/plugins/gpustability cmd/space-compute-scheduler docs/gpu-scheduler/manifests/space-compute-scheduler.yaml)"
+      - name: Diff whitespace check
+        run: git diff --check
+      - name: Parse YAML manifests
+        run: ruby -e 'require "yaml"; ARGV.each { |p| YAML.load_stream(File.read(p)) }' docs/space-compute/manifests/*.yaml docs/gpu-scheduler/manifests/space-compute-scheduler.yaml
+      - name: Verify default scheduler independence
+        run: test -z "$(git diff --name-only -- pkg/scheduler/plugins/gpustability cmd/space-compute-scheduler docs/gpu-scheduler/manifests/space-compute-scheduler.yaml)"
       - name: Run complete repository gate
         run: |
           set -euo pipefail
