@@ -22,7 +22,7 @@ jobs:
           set +e
           (
             set -euo pipefail
-            python3 -m py_compile .github/stage5-api.py .github/stage5-runtime.py .github/stage5-fix.py .github/stage5-fix2.py .github/stage5-tests-direct.py .github/stage5-agent-core.py .github/stage5-fix3.py .github/stage5-core-tests.py
+            python3 -m py_compile .github/stage5-api.py .github/stage5-runtime.py .github/stage5-fix.py .github/stage5-fix2.py .github/stage5-tests-direct.py .github/stage5-agent-core.py .github/stage5-fix3.py .github/stage5-core-tests.py .github/stage5-fix4.py
             python3 .github/stage5-api.py
             python3 .github/stage5-runtime.py
             python3 .github/stage5-fix.py
@@ -32,6 +32,7 @@ jobs:
             python3 .github/stage5-agent-core.py
             python3 .github/stage5-fix3.py
             python3 .github/stage5-core-tests.py
+            python3 .github/stage5-fix4.py
             gofmt -w contrib/space-compute/pkg/apis/v1alpha1/*.go contrib/space-compute/pkg/admission/*.go contrib/space-compute/pkg/planner/*.go contrib/space-compute/pkg/workload/*.go contrib/space-compute/pkg/kube/*.go contrib/space-compute/pkg/transport/*.go contrib/space-compute/pkg/execution/*.go
             git diff --check
             go test ./contrib/space-compute/pkg/apis/v1alpha1 ./contrib/space-compute/pkg/execution ./contrib/space-compute/pkg/transport ./contrib/space-compute/pkg/admission ./contrib/space-compute/pkg/planner ./contrib/space-compute/pkg/workload ./contrib/space-compute/pkg/kube -count=1 -timeout=180s
