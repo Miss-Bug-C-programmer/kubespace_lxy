@@ -1,5 +1,5 @@
-run_id=30147971892
-base_sha=756ddb2ca1d0bf56d3390b664988e0c10cf0d7c1
+run_id=30148203011
+base_sha=9b7cd7d428f6c756031d7e6e8a117f2315966445
 --- focused output ---
 stage5 API patch applied
 stage5 runtime patch applied
@@ -9,19 +9,17 @@ stage5 direct workload evidence tests applied
 stage5 domain agent core patch applied
 stage5 workload import fix applied
 stage5 core transport/execution tests applied
-ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/apis/v1alpha1	0.009s
---- FAIL: TestNonCheckpointablePartitionNeverDuplicatesOnExpiryAlone (0.00s)
-    fence_test.go:46: trusted stop rejected: non-checkpointable prior attempt has no trusted remote stop; partition cannot create a duplicate
---- FAIL: TestCheckpointableMigrationRequiresSignedCheckpointThenStopOrExpiry (0.00s)
-    fence_test.go:63: expired checkpointed lease should migrate: checkpointable migration requires a signed checkpoint receipt
-FAIL
-FAIL	github.com/k3s-io/k3s/contrib/space-compute/pkg/execution	0.004s
---- FAIL: TestDiskQueuePersistsBoundsAndIdempotency (0.00s)
-    transport_test.go:53: json: error calling MarshalJSON for type json.RawMessage: invalid character 'x' looking for beginning of value
-FAIL
-FAIL	github.com/k3s-io/k3s/contrib/space-compute/pkg/transport	0.081s
-ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/admission	0.028s
-ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/planner	0.202s
-ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/workload	0.009s
-ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/kube	0.014s
+stage5 binary envelope/local observation fix applied
+stage5 domain-agent runtime library applied
+# github.com/k3s-io/k3s/contrib/space-compute/pkg/transport [github.com/k3s-io/k3s/contrib/space-compute/pkg/transport.test]
+contrib/space-compute/pkg/transport/agent.go:265:34: cannot use ctx (variable of interface type context.Context) as string value in argument to a.enqueueLeaseGrant
+contrib/space-compute/pkg/transport/agent.go:344:29: cannot use ctx (variable of interface type context.Context) as string value in argument to a.enqueueLeaseGrant
+contrib/space-compute/pkg/transport/agent.go:564:40: cannot use object (variable of interface type any) as "k8s.io/apimachinery/pkg/runtime".Object value in argument to spacev1.ReporterDigest: any does not implement "k8s.io/apimachinery/pkg/runtime".Object (missing method DeepCopyObject)
+ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/apis/v1alpha1	0.011s
+ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/execution	0.008s
+FAIL	github.com/k3s-io/k3s/contrib/space-compute/pkg/transport [build failed]
+ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/admission	0.025s
+ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/planner	0.205s
+ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/workload	0.010s
+ok  	github.com/k3s-io/k3s/contrib/space-compute/pkg/kube	0.013s
 FAIL
