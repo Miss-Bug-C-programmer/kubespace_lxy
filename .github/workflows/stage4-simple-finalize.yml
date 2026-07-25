@@ -34,6 +34,9 @@ jobs:
         run: |
           set -euo pipefail
           python3 .github/stage4-hardening.py
+          gofmt -w \
+            pkg/scheduler/plugins/gpustability/metrics_profiles.go \
+            pkg/scheduler/plugins/gpustability/phase1_test.go
           python3 - <<'PY'
           from pathlib import Path
           path = Path('.github/stage4-finalize.sh')
