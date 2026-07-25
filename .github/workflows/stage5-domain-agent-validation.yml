@@ -2,11 +2,8 @@ name: stage5-domain-agent-validation
 on:
   push:
     branches: [main]
-    paths:
-      - .github/stage5-trigger
-permissions:
-  contents: write
-  statuses: write
+    paths: [.github/stage5-trigger]
+permissions: {contents: write, statuses: write}
 jobs:
   validate:
     runs-on: ubuntu-24.04
@@ -31,6 +28,7 @@ jobs:
             python3 .github/stage5-fix.py
             python3 .github/stage5-fix2.py
             python3 .github/stage5-tests-direct.py
+            gofmt -w contrib/space-compute/pkg/apis/v1alpha1/*.go contrib/space-compute/pkg/admission/*.go contrib/space-compute/pkg/planner/*.go contrib/space-compute/pkg/workload/*.go contrib/space-compute/pkg/kube/*.go contrib/space-compute/pkg/transport/*.go contrib/space-compute/pkg/execution/*.go
             python3 .github/stage5-agent-core.py
             gofmt -w contrib/space-compute/pkg/apis/v1alpha1/*.go contrib/space-compute/pkg/admission/*.go contrib/space-compute/pkg/planner/*.go contrib/space-compute/pkg/workload/*.go contrib/space-compute/pkg/kube/*.go contrib/space-compute/pkg/transport/*.go contrib/space-compute/pkg/execution/*.go
             git diff --check
