@@ -15,7 +15,7 @@ workload_test = "contrib/space-compute/pkg/workload/controller_test.go"
 replace_once(
     workload_test,
     'controller := &Controller{Store: store, Evidence: evidence, Clock: &mutableClock{now: now}}\n',
-    'coordinator := source\n\tcontroller := &Controller{Store: store, Evidence: evidence, Clock: &mutableClock{now: now}, LocalDomain: &coordinator}\n',
+    'coordinator := placement.Spec.Target\n\tcontroller := &Controller{Store: store, Evidence: evidence, Clock: &mutableClock{now: now}, LocalDomain: &coordinator}\n',
 )
 
 replace_once(
