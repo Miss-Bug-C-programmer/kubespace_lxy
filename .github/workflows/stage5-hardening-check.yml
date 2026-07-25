@@ -79,7 +79,16 @@ jobs:
       - name: Format execution
         run: gofmt -w contrib/space-compute/pkg/execution/*.go
       - name: Format transport
-        run: gofmt -w contrib/space-compute/pkg/transport/*.go
+        run: |
+          set -o pipefail
+          gofmt -w contrib/space-compute/pkg/transport/*.go 2> /tmp/transport-gofmt.err || { cat /tmp/transport-gofmt.err; exit 1; }
+      - name: Upload transport format error
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: transport-gofmt-error
+          path: /tmp/transport-gofmt.err
+          if-no-files-found: ignore
       - name: Format workload
         run: gofmt -w contrib/space-compute/pkg/workload/*.go
       - name: Diff whitespace check
