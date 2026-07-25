@@ -25,15 +25,17 @@ jobs:
           set +e
           (
             set -euo pipefail
-            python3 -m py_compile .github/stage5-api.py .github/stage5-runtime.py .github/stage5-fix.py .github/stage5-fix2.py .github/stage5-tests-direct.py
+            python3 -m py_compile .github/stage5-api.py .github/stage5-runtime.py .github/stage5-fix.py .github/stage5-fix2.py .github/stage5-tests-direct.py .github/stage5-agent-core.py
             python3 .github/stage5-api.py
             python3 .github/stage5-runtime.py
             python3 .github/stage5-fix.py
             python3 .github/stage5-fix2.py
             python3 .github/stage5-tests-direct.py
+            python3 .github/stage5-agent-core.py
             gofmt -w contrib/space-compute/pkg/apis/v1alpha1/*.go contrib/space-compute/pkg/admission/*.go contrib/space-compute/pkg/planner/*.go contrib/space-compute/pkg/workload/*.go contrib/space-compute/pkg/kube/*.go contrib/space-compute/pkg/transport/*.go contrib/space-compute/pkg/execution/*.go
             git diff --check
             go test ./contrib/space-compute/pkg/apis/v1alpha1 ./contrib/space-compute/pkg/execution ./contrib/space-compute/pkg/transport ./contrib/space-compute/pkg/admission ./contrib/space-compute/pkg/planner ./contrib/space-compute/pkg/workload ./contrib/space-compute/pkg/kube -count=1 -timeout=180s
+            go test ./cmd/space-compute-mission-planner -count=1 -timeout=180s
           ) > /tmp/stage5-focused.log 2>&1
           status=$?
           cat /tmp/stage5-focused.log
