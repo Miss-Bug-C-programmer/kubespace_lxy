@@ -1,4 +1,6 @@
-run_id=30146856513
-base_sha=12ee472188f223ae4b845aea65c4b82171206c3b
+run_id=30147103083
+base_sha=4e885774bf82cd00baf9459ad78ffe41e4da544a
 --- focused output ---
-base64: invalid input
+stage5 API patch applied
+stage5 runtime patch applied
+contrib/space-compute/pkg/transport/http.go:33:717: expected declaration, found s
