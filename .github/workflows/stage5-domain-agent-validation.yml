@@ -34,9 +34,10 @@ jobs:
           set +e
           (
             set -euo pipefail
-            python3 -m py_compile .github/stage5-api.py .github/stage5-runtime.py
+            python3 -m py_compile .github/stage5-api.py .github/stage5-runtime.py .github/stage5-fix.py
             python3 .github/stage5-api.py
             python3 .github/stage5-runtime.py
+            python3 .github/stage5-fix.py
             gofmt -w \
               contrib/space-compute/pkg/apis/v1alpha1/*.go \
               contrib/space-compute/pkg/admission/*.go \
