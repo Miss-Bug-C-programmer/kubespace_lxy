@@ -22,9 +22,9 @@ jobs:
           printf '%s\n' '=== FILES ==='
           find contrib/space-compute cmd tests docs/space-compute -type f 2>/dev/null | sort || true
           printf '%s\n' '=== CALLSITES ==='
-          rg -n --no-heading 'ResultDestinations|\.Locations|DataObject|DeviceCapacity|QueueDelaySeconds|MaximumSnapshotAgeSecs|TransferEpoch|predictedComputeSeconds|capacityMismatch|buildLinkIndex|locationMatchesDomain' contrib/space-compute cmd tests docs/space-compute || true
+          grep -R -n -E 'ResultDestinations|\.Locations|DataObject|DeviceCapacity|QueueDelaySeconds|MaximumSnapshotAgeSecs|TransferEpoch|predictedComputeSeconds|capacityMismatch|buildLinkIndex|locationMatchesDomain' contrib/space-compute cmd tests docs/space-compute 2>/dev/null || true
           printf '%s\n' '=== TOPOLOGY ==='
-          rg -n --no-heading -i 'topology' contrib/space-compute docs/space-compute || true
+          grep -R -n -i 'topology' contrib/space-compute docs/space-compute 2>/dev/null || true
         } | tee /tmp/stage7-inspect.txt
     - name: Upload inspection artifact
       uses: actions/upload-artifact@v4
