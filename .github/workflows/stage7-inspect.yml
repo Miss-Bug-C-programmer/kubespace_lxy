@@ -1,0 +1,22 @@
+name: stage7-inspect
+on:
+  push:
+    branches: [main]
+    paths: [.github/stage7-inspect-trigger]
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-24.04
+    steps:
+    - uses: actions/checkout@v4
+      with: {ref: "${{ github.sha }}", fetch-depth: 1}
+    - name: Enumerate Phase 7 call sites
+      run: |
+        set -euo pipefail
+        printf '%s\n' '=== FILES ==='
+        find contrib/space-compute cmd tests docs/space-compute/testdata -type f 2>/dev/null | sort
+        printf '%s\n' '=== CALLSITES ==='
+        rg -n --no-heading 'ResultDestinations|\.Locations|DataObject|DeviceCapacity|QueueDelaySeconds|MaximumSnapshotAgeSecs|TransferEpoch|predictedComputeSeconds|capacityMismatch|buildLinkIndex|locationMatchesDomain' contrib/space-compute cmd tests docs/space-compute/testdata || true
+        printf '%s\n' '=== TOPOLOGY ==='
+        rg -n --no-heading -i 'topology' contrib/space-compute docs/space-compute || true
