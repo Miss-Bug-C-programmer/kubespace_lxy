@@ -10,41 +10,32 @@ jobs:
   inspect:
     runs-on: ubuntu-24.04
     steps:
-    - name: Publish inspection status
-      env: {GH_TOKEN: "${{ github.token }}"}
-      run: gh api --method POST "repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=pending -f context="sandbox/stage7-inspect-${GITHUB_RUN_ID}" -f target_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" -f description="Enumerating Phase 7 planner/API call sites"
     - uses: actions/checkout@v4
       with: {ref: "${{ github.sha }}", fetch-depth: 1}
-    - name: Enumerate Phase 7 call sites
+    - name: Diagnose staged Phase 7 payload
       run: |
         set -euo pipefail
         {
-          printf '%s\n' '=== CALLSITES ==='
-          grep -R -n -E 'ResultDestinations|\.Locations|DataObject|DeviceCapacity|QueueDelaySeconds|MaximumSnapshotAgeSecs|TransferEpoch|predictedComputeSeconds|capacityMismatch|buildLinkIndex|locationMatchesDomain' contrib/space-compute cmd tests/integration/spacecomputescheduler docs/space-compute 2>/dev/null || true
-          printf '%s\n' '=== TOPOLOGY ==='
-          grep -R -n -i 'topology' contrib/space-compute docs/space-compute 2>/dev/null || true
-        } | tee /tmp/stage7-inspect.txt
-    - name: Build source snapshot
-      run: |
-        tar -czf /tmp/stage7-source-snapshot.tgz \
-          go.mod go.sum Makefile scripts/space-compute \
-          contrib/space-compute \
-          cmd/space-compute-mission-planner cmd/space-compute-domain-agent cmd/space-compute-mission-webhook cmd/space-compute-reporter-webhook cmd/space-compute-scheduler \
-          tests/integration/spacecomputescheduler \
-          docs/space-compute docs/gpu-scheduler/manifests/space-compute-scheduler.yaml
-    - name: Upload inspection artifact
-      uses: actions/upload-artifact@v4
+          sha256sum .github/stage7-payload/part-*
+          wc -c .github/stage7-payload/part-*
+          cat .github/stage7-payload/part-* > /tmp/stage7-source.b64
+          printf 'combined-bytes '
+          wc -c < /tmp/stage7-source.b64
+          python3 - <<'PY'
+        import base64, hashlib, zlib
+        from pathlib import Path
+        payload = Path('/tmp/stage7-source.b64').read_bytes()
+        print('combined-sha256', hashlib.sha256(payload).hexdigest())
+        try:
+            raw = zlib.decompress(base64.b64decode(payload, validate=True))
+            print('decoded-bytes', len(raw))
+            print('patch-sha256', hashlib.sha256(raw).hexdigest())
+        except Exception as exc:
+            print('decode-error', repr(exc))
+        PY
+        } | tee /tmp/stage7-payload-diagnostic.txt
+    - uses: actions/upload-artifact@v4
       with:
-        name: stage7-callsite-inspection
-        path: /tmp/stage7-inspect.txt
+        name: stage7-payload-diagnostic
+        path: /tmp/stage7-payload-diagnostic.txt
         if-no-files-found: error
-    - name: Upload source snapshot
-      uses: actions/upload-artifact@v4
-      with:
-        name: stage7-source-snapshot
-        path: /tmp/stage7-source-snapshot.tgz
-        if-no-files-found: error
-    - name: Publish inspection success
-      if: success()
-      env: {GH_TOKEN: "${{ github.token }}"}
-      run: gh api --method POST "repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=success -f context="sandbox/stage7-inspect-${GITHUB_RUN_ID}" -f target_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" -f description="Phase 7 callsite inspection complete"
