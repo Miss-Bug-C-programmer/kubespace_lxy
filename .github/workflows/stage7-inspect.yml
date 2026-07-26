@@ -10,6 +10,9 @@ jobs:
   inspect:
     runs-on: ubuntu-24.04
     steps:
+    - name: Publish diagnostic status
+      env: {GH_TOKEN: "${{ github.token }}"}
+      run: gh api --method POST "repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=pending -f context="sandbox/stage7-payload-diagnostic-${GITHUB_RUN_ID}" -f target_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" -f description="Checking Phase 7 staged payload hashes"
     - uses: actions/checkout@v4
       with: {ref: "${{ github.sha }}", fetch-depth: 1}
     - name: Diagnose staged Phase 7 payload
@@ -19,23 +22,14 @@ jobs:
           sha256sum .github/stage7-payload/part-*
           wc -c .github/stage7-payload/part-*
           cat .github/stage7-payload/part-* > /tmp/stage7-source.b64
-          printf 'combined-bytes '
-          wc -c < /tmp/stage7-source.b64
-          python3 - <<'PY'
-        import base64, hashlib, zlib
-        from pathlib import Path
-        payload = Path('/tmp/stage7-source.b64').read_bytes()
-        print('combined-sha256', hashlib.sha256(payload).hexdigest())
-        try:
-            raw = zlib.decompress(base64.b64decode(payload, validate=True))
-            print('decoded-bytes', len(raw))
-            print('patch-sha256', hashlib.sha256(raw).hexdigest())
-        except Exception as exc:
-            print('decode-error', repr(exc))
-        PY
+          printf 'combined-bytes '; wc -c < /tmp/stage7-source.b64
+          python3 -c "import base64,hashlib,zlib,pathlib; p=pathlib.Path('/tmp/stage7-source.b64').read_bytes(); print('combined-sha256',hashlib.sha256(p).hexdigest()); r=zlib.decompress(base64.b64decode(p,validate=True)); print('decoded-bytes',len(r)); print('patch-sha256',hashlib.sha256(r).hexdigest())"
         } | tee /tmp/stage7-payload-diagnostic.txt
     - uses: actions/upload-artifact@v4
       with:
         name: stage7-payload-diagnostic
         path: /tmp/stage7-payload-diagnostic.txt
         if-no-files-found: error
+    - name: Publish diagnostic success
+      env: {GH_TOKEN: "${{ github.token }}"}
+      run: gh api --method POST "repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=success -f context="sandbox/stage7-payload-diagnostic-${GITHUB_RUN_ID}" -f target_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" -f description="Phase 7 staged payload hashes checked"
