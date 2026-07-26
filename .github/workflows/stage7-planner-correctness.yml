@@ -26,13 +26,26 @@ jobs:
         set -euo pipefail
         printf '%s  %s\n' \
           464691b57a1648eb9d3723399a65c54051ce9d5044f62afdf76fcbf671d79cfd .github/stage7-payload/part-00 \
-          ca8fea3ca81bd9ea249702d3b97874fdf62ee1795b73f0c8357b0c300688515f .github/stage7-payload/part-01 \
+          eff1ec9b2cf7dcb819bd105da7206e669da6ca8bfc710a8d114f9184005da351 .github/stage7-payload/fix-01-00-00 \
+          80b53fe81fecc276e17b3d3bd1e117b78cb2d1e71731fdfa09f99ae7e340f8e0 .github/stage7-payload/fix-01-00-01 \
+          ac612124c636ca9071a2b8270ee8745e927294653b32284a515808aa61e1fb9f .github/stage7-payload/fix-01-00-02 \
+          55a0ef7c05af97d7ef7dd345f8c376682c0d412c7db1343f630f65a878a25cc1 .github/stage7-payload/fix-01-00-03 \
+          c0ee2cc4fd7da81adcf9d11eac18fc5057e3037d848a83ea2bfe008d61a66d40 .github/stage7-payload/fix-01-01 \
+          12b8df8991cd9fd7df53ba752d50b14a754f6801119586024a9b4abd39815732 .github/stage7-payload/fix-01-02 \
           f6257e08d211f8a129205ad77d266cc41c9d18fbd0f440d5b419d03e043f5884 .github/stage7-payload/part-02 \
           6cb5fbeea4ddccec7bed7d7db13cb51290d275776c52e43da3473885b6247ab9 .github/stage7-payload/part-03 \
           00fb6c35b0cf22111976cebd4230957bc237aa897dd6660b1634d1ea7974110c .github/stage7-payload/part-04 \
-          2bfe83055c540b282ce4647410d453c5a88e51a3214aa843d5046b513ba6852b .github/stage7-payload/part-05 \
+          56aebd0ca80cd5488ee8c84dc9cbf8757936892c0604b866bc221fb7c51c8c32 .github/stage7-payload/fix-05-00 \
+          5dedf4b70edeea184118e2d3d10f5d9d8db926bca069014a348cdf8ff4a61e6c .github/stage7-payload/fix-05-01 \
+          245ca12154fb63ce521d3d575a9dfedfd44788273f61cd20354b3083bcf1989b .github/stage7-payload/fix-05-02 \
           01bf0dc2a2532368814acb86d821784e1e6cfae9a0efb8a9fe03cce60a0aeefa .github/stage7-payload/part-06 | sha256sum -c -
-        cat .github/stage7-payload/part-* > /tmp/stage7-source.b64
+        cat \
+          .github/stage7-payload/part-00 \
+          .github/stage7-payload/fix-01-00-00 .github/stage7-payload/fix-01-00-01 .github/stage7-payload/fix-01-00-02 .github/stage7-payload/fix-01-00-03 \
+          .github/stage7-payload/fix-01-01 .github/stage7-payload/fix-01-02 \
+          .github/stage7-payload/part-02 .github/stage7-payload/part-03 .github/stage7-payload/part-04 \
+          .github/stage7-payload/fix-05-00 .github/stage7-payload/fix-05-01 .github/stage7-payload/fix-05-02 \
+          .github/stage7-payload/part-06 > /tmp/stage7-source.b64
         python3 - <<'PY'
         import base64, hashlib, zlib
         from pathlib import Path
@@ -124,7 +137,7 @@ jobs:
         set -euo pipefail
         git fetch origin main
         test "$(git rev-parse origin/main)" = "$GITHUB_SHA"
-        git rm -f .github/stage7-inspect-trigger .github/workflows/stage7-inspect.yml .github/stage7-finalize-trigger .github/workflows/stage7-planner-correctness.yml .github/stage7-payload/part-*
+        git rm -f .github/stage7-inspect-trigger .github/workflows/stage7-inspect.yml .github/stage7-finalize-trigger .github/workflows/stage7-planner-correctness.yml .github/stage7-payload/*
         git add \
           cmd/space-compute-mission-planner/main_test.go \
           contrib/space-compute/pkg/apis/v1alpha1 \
