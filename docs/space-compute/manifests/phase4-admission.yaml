@@ -11,7 +11,7 @@ spec:
       operations: [CREATE, UPDATE]
       resources: [spacemissions]
   validations:
-  - expression: "object.spec.maximumDurationSeconds >= object.spec.expectedDurationSeconds && object.spec.expectedDurationSeconds + object.spec.durationUncertaintySeconds <= object.spec.maximumDurationSeconds"
+  - expression: "object.spec.maximumDurationSeconds >= object.spec.expectedDurationSeconds && object.spec.durationUncertaintySeconds <= object.spec.maximumDurationSeconds - object.spec.expectedDurationSeconds"
     message: mission duration bounds are contradictory
   - expression: "!object.spec.resultReturnRequired || size(object.spec.resultDestinations) > 0"
     message: result-return missions require a destination

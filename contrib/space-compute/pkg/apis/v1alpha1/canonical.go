@@ -142,7 +142,9 @@ func canonicalResourceSummary(summary *SpaceDomainResourceSummary) ([]byte, erro
 	w.provenance(summary.Spec.Provenance)
 
 	devices := append([]DeviceCapacity(nil), summary.Spec.Devices...)
-	sort.Slice(devices, func(i, j int) bool { return devices[i].Class < devices[j].Class })
+	sort.Slice(devices, func(i, j int) bool {
+		return deviceCapacityCanonicalKey(devices[i]) < deviceCapacityCanonicalKey(devices[j])
+	})
 	w.integer("devices.count", int64(len(devices)))
 	for index, device := range devices {
 		prefix := fmt.Sprintf("devices.%d", index)

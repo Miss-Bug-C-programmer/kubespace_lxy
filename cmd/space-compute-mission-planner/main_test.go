@@ -84,6 +84,18 @@ func TestPhase4AndPhase6ManifestsHaveAdmissionIsolationAndLeastPrivilege(t *test
 					t.Fatalf("%s missing %s", name, kind)
 				}
 			}
+			for _, required := range []string{
+				"count: {type: integer, format: int64, minimum: 0, maximum: 1000000}",
+				"computeMilli: {type: integer, format: int64, minimum: 0, maximum: 1000000000}",
+				"queueDelaySeconds: {type: integer, format: int64, minimum: 0, maximum: 2592000}",
+				"maximumSnapshotAgeSeconds: {type: integer, format: int64, minimum: 1, maximum: 604800}",
+				"items: &missionDataLocation",
+				"self.durationUncertaintySeconds <= self.maximumDurationSeconds - self.expectedDurationSeconds",
+			} {
+				if !strings.Contains(text, required) {
+					t.Fatalf("phase7 CRD bound/location schema missing %q", required)
+				}
+			}
 		}
 		if name == "phase4-admission.yaml" {
 			for _, required := range []string{
@@ -95,6 +107,7 @@ func TestPhase4AndPhase6ManifestsHaveAdmissionIsolationAndLeastPrivilege(t *test
 				"resources: [spacelinksnapshots]",
 				"resources: [spacedomainresourcesummaries]",
 				"resources: [spaceplacementintents]",
+				"object.spec.durationUncertaintySeconds <= object.spec.maximumDurationSeconds - object.spec.expectedDurationSeconds",
 			} {
 				if !strings.Contains(text, required) {
 					t.Fatalf("admission policy missing %q", required)

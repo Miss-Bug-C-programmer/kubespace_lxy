@@ -86,7 +86,7 @@ func TestCanDispatchRequiresTransferReceiptComputeTimeAndLease(t *testing.T) {
 	m, p, l := fenceFixture(now)
 	digest := strings.Repeat("d", 64)
 	src := spacev1.DomainReference{Name: "ground", ClusterID: "ground", OrbitClass: spacev1.OrbitGround}
-	m.Spec.Inputs = []spacev1.DataObject{{ID: "sensor", SizeBytes: 10, Locations: []string{"ground"}, PayloadDigest: digest}}
+	m.Spec.Inputs = []spacev1.DataObject{{ID: "sensor", SizeBytes: 10, Locations: []spacev1.DataLocation{{Domain: src}}, PayloadDigest: digest}}
 	p.Spec.InputTransfers = []spacev1.TransferEpoch{{DataID: "sensor", Source: src, Destination: p.Spec.Target, Start: metav1.NewTime(now.Add(-time.Minute)), End: metav1.NewTime(now), Bytes: 10}}
 	p.Spec.ComputeStart = metav1.NewTime(now.Add(time.Minute))
 	p.Spec.NotBefore = p.Spec.ComputeStart

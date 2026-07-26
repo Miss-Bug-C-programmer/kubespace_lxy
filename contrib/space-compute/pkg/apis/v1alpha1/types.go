@@ -167,12 +167,17 @@ type CapabilitySet struct {
 	AllOf []CapabilityRequirement `json:"allOf"`
 }
 
+type DataLocation struct {
+	Domain DomainReference `json:"domain"`
+	URI    string          `json:"uri,omitempty"`
+}
+
 type DataObject struct {
-	ID        string   `json:"id"`
-	SizeBytes int64    `json:"sizeBytes"`
-	Locations []string `json:"locations"`
+	ID        string         `json:"id"`
+	SizeBytes int64          `json:"sizeBytes"`
+	Locations []DataLocation `json:"locations"`
 	// PayloadDigest is required before a non-local input can be transferred.
-	// Local-only legacy inputs remain valid without it.
+	// Local-only inputs remain valid without it.
 	PayloadDigest string `json:"payloadDigest,omitempty"`
 }
 
@@ -197,7 +202,7 @@ type SpaceMissionSpec struct {
 	RequiredSoftware        map[string]string       `json:"requiredSoftware,omitempty"`
 	Inputs                  []DataObject            `json:"inputs,omitempty"`
 	OutputSizeBytes         int64                   `json:"outputSizeBytes"`
-	ResultDestinations      []string                `json:"resultDestinations,omitempty"`
+	ResultDestinations      []DataLocation          `json:"resultDestinations,omitempty"`
 	Deadline                metav1.Time             `json:"deadline"`
 	ExpectedDurationSeconds int64                   `json:"expectedDurationSeconds"`
 	MaximumDurationSeconds  int64                   `json:"maximumDurationSeconds"`
@@ -369,7 +374,9 @@ type TransferEpoch struct {
 	WindowID         string          `json:"windowID"`
 	DataID           string          `json:"dataID,omitempty"`
 	Source           DomainReference `json:"source,omitempty"`
+	SourceURI        string          `json:"sourceURI,omitempty"`
 	Destination      DomainReference `json:"destination,omitempty"`
+	DestinationURI   string          `json:"destinationURI,omitempty"`
 	Start            metav1.Time     `json:"start"`
 	End              metav1.Time     `json:"end"`
 	Bytes            int64           `json:"bytes"`

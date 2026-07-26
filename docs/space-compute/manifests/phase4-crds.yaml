@@ -132,21 +132,21 @@ spec:
                   required: [class, count, computeMilli, fragmentationMilli]
                   properties:
                     class: {type: string, minLength: 1, maxLength: 63}
-                    count: {type: integer, format: int64, minimum: 0}
-                    architectures: {type: array, maxItems: 64, items: {type: string}}
-                    models: {type: array, maxItems: 64, items: {type: string}}
-                    precision: {type: array, maxItems: 32, items: {type: string}}
-                    computeMilli: {type: integer, format: int64, minimum: 0}
+                    count: {type: integer, format: int64, minimum: 0, maximum: 1000000}
+                    architectures: {type: array, maxItems: 64, items: {type: string, maxLength: 128}}
+                    models: {type: array, maxItems: 64, items: {type: string, maxLength: 128}}
+                    precision: {type: array, maxItems: 32, items: {type: string, maxLength: 128}}
+                    computeMilli: {type: integer, format: int64, minimum: 0, maximum: 1000000000}
                     fragmentationMilli: {type: integer, format: int32, minimum: 0, maximum: 1000}
-              software: {type: object, maxProperties: 64, additionalProperties: {type: string}}
+              software: {type: object, maxProperties: 64, additionalProperties: {type: string, maxLength: 128}}
               dataLocations: {type: array, maxItems: 64, items: {type: string}}
-              queueDelaySeconds: {type: integer, format: int64, minimum: 0}
+              queueDelaySeconds: {type: integer, format: int64, minimum: 0, maximum: 2592000}
               energyHeadroomMilli: {type: integer, format: int32, minimum: 0, maximum: 1000}
               thermalHeadroomMilli: {type: integer, format: int32, minimum: 0, maximum: 1000}
               resilienceMilli: {type: integer, format: int32, minimum: 0, maximum: 1000}
               minimumEnergyMilli: {type: integer, format: int32, minimum: 0, maximum: 1000}
               minimumThermalMilli: {type: integer, format: int32, minimum: 0, maximum: 1000}
-              maximumSnapshotAgeSeconds: {type: integer, format: int64, minimum: 1}
+              maximumSnapshotAgeSeconds: {type: integer, format: int64, minimum: 1, maximum: 604800}
               exporterSnapshotDigest: {type: string, pattern: '^[a-f0-9]{64}$'}
           status: {type: object, x-kubernetes-preserve-unknown-fields: true}
 ---
@@ -177,7 +177,7 @@ spec:
             x-kubernetes-validations:
             - rule: "self.maximumDurationSeconds >= self.expectedDurationSeconds"
               message: maximumDurationSeconds must be at least expectedDurationSeconds
-            - rule: "self.expectedDurationSeconds + self.durationUncertaintySeconds <= self.maximumDurationSeconds"
+            - rule: "self.durationUncertaintySeconds <= self.maximumDurationSeconds - self.expectedDurationSeconds"
               message: duration uncertainty must fit within maximum duration
             - rule: "!self.resultReturnRequired || size(self.resultDestinations) > 0"
               message: result destinations are required when result return is required
@@ -200,8 +200,8 @@ spec:
                     quantity: {type: integer, format: int64, minimum: 1, maximum: 1000000}
                     architecture: {type: string, maxLength: 128}
                     model: {type: string, maxLength: 128}
-                    precision: {type: array, maxItems: 32, items: {type: string}}
-                    software: {type: object, maxProperties: 64, additionalProperties: {type: string}}
+                    precision: {type: array, maxItems: 32, items: {type: string, maxLength: 63}}
+                    software: {type: object, maxProperties: 64, additionalProperties: {type: string, maxLength: 128}}
               alternativeCapabilities:
                 type: array
                 maxItems: 64
@@ -211,7 +211,7 @@ spec:
                   properties:
                     name: {type: string, maxLength: 63}
                     allOf: *capabilities
-              requiredSoftware: {type: object, maxProperties: 64, additionalProperties: {type: string}}
+              requiredSoftware: {type: object, maxProperties: 64, additionalProperties: {type: string, maxLength: 128}}
               inputs:
                 type: array
                 maxItems: 128
@@ -221,13 +221,30 @@ spec:
                   properties:
                     id: {type: string, maxLength: 253}
                     sizeBytes: {type: integer, format: int64, minimum: 0, maximum: 1125899906842624}
-                    locations: {type: array, maxItems: 64, items: {type: string}}
+                    locations:
+                      type: array
+                      maxItems: 64
+                      items: &missionDataLocation
+                        type: object
+                        required: [domain]
+                        properties:
+                          domain:
+                            type: object
+                            required: [name, clusterID, orbitClass]
+                            properties:
+                              name: {type: string, minLength: 1, maxLength: 253, pattern: '^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$'}
+                              clusterID: {type: string, minLength: 1, maxLength: 253, pattern: '^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$'}
+                              orbitClass: {type: string, enum: [ground, leo, meo, geo, heo]}
+                          uri: {type: string, maxLength: 2048}
               outputSizeBytes: {type: integer, format: int64, minimum: 0, maximum: 1125899906842624}
-              resultDestinations: {type: array, maxItems: 64, items: {type: string}}
+              resultDestinations:
+                type: array
+                maxItems: 64
+                items: *missionDataLocation
               deadline: {type: string, format: date-time}
               expectedDurationSeconds: {type: integer, format: int64, minimum: 1, maximum: 2592000}
               maximumDurationSeconds: {type: integer, format: int64, minimum: 1, maximum: 2592000}
-              durationUncertaintySeconds: {type: integer, format: int64, minimum: 0}
+              durationUncertaintySeconds: {type: integer, format: int64, minimum: 0, maximum: 2592000}
               safetyMarginSeconds: {type: integer, format: int64, minimum: 0, maximum: 86400}
               maximumClockSkewSeconds: {type: integer, format: int64, minimum: 0, maximum: 600}
               resultReturnRequired: {type: boolean}

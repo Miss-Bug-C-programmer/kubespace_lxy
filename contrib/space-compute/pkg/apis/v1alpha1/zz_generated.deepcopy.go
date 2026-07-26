@@ -64,9 +64,9 @@ func (in *SpaceMission) DeepCopy() *SpaceMission {
 	out.Spec.Inputs = make([]DataObject, len(in.Spec.Inputs))
 	for i := range in.Spec.Inputs {
 		out.Spec.Inputs[i] = in.Spec.Inputs[i]
-		out.Spec.Inputs[i].Locations = append([]string(nil), in.Spec.Inputs[i].Locations...)
+		out.Spec.Inputs[i].Locations = append([]DataLocation(nil), in.Spec.Inputs[i].Locations...)
 	}
-	out.Spec.ResultDestinations = append([]string(nil), in.Spec.ResultDestinations...)
+	out.Spec.ResultDestinations = append([]DataLocation(nil), in.Spec.ResultDestinations...)
 	out.Spec.WorkloadTemplate = *in.Spec.WorkloadTemplate.DeepCopy()
 	out.Status.Conditions = append([]metav1.Condition(nil), in.Status.Conditions...)
 	return &out

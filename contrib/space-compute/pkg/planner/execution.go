@@ -2,7 +2,6 @@ package planner
 
 import (
 	"fmt"
-	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
@@ -21,7 +20,15 @@ func ApplyExecutionObservation(placement *spacev1.SpacePlacementIntent, mission 
 	if observation.Sequence <= placement.Status.LastObservationSequence {
 		return false, nil
 	}
-	if observation.ObservedAt.After(clock.Now().Add(time.Duration(mission.Spec.MaximumClockSkewSeconds) * time.Second)) {
+	skew, err := checkedSecondsDuration(mission.Spec.MaximumClockSkewSeconds)
+	if err != nil {
+		return false, fmt.Errorf("observation clock skew: %w", err)
+	}
+	latest, err := checkedTimeAdd(clock.Now(), skew)
+	if err != nil {
+		return false, fmt.Errorf("observation clock boundary: %w", err)
+	}
+	if observation.ObservedAt.After(latest) {
 		return false, fmt.Errorf("observation time exceeds allowed clock skew")
 	}
 	if terminalPlacement(placement.Status.Phase) {

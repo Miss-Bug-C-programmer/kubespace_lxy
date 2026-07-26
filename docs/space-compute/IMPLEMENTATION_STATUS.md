@@ -82,6 +82,17 @@ inspection or compilation.
 - Exact successful commands: `go test ./contrib/space-compute/pkg/admission ./contrib/space-compute/pkg/workload ./cmd/space-compute-mission-planner ./cmd/space-compute-mission-webhook -count=1`; the same package set with `go test -race`; `scripts/space-compute all`; YAML parse and explicit default-scheduler/RBAC invariants in `.github/workflows/stage6-mission-security.yml`.
 - No physical accelerator, full-agent K3s, or hardware qualification claim is added by this phase; the existing Phase 5 release blockers remain unless separately qualified.
 
+
+## Phase 7 planner correctness hardening
+
+- Executed on 2026-07-26 by GitHub Actions run `30193326012` from validation baseline `1874c7ed5c167adbf3ceb9cb73009c96baa68508`.
+- Capability matching normalizes and aggregates equivalent constraints, then allocates `RequiredCapabilities` plus one deterministic alternative set through a bounded max-flow. A physical capacity bucket is consumed once and selected set/allocation details are emitted in placement explanations.
+- Compute estimation uses the selected required+alternative allocation, including alternative-only missions.
+- Planner fixed-width arithmetic is checked for transfer bits/durations, queue and safety delays, compute scaling, byte totals, score weighting and timestamp addition; v1alpha1 validation/CRDs bound capacity, compute, queue, snapshot-age, software, topology and transfer counts.
+- Mission input/result locations are structured `DataLocation` values containing a full `DomainReference` plus optional URI. Directed-link indexing uses complete clusterID/name/orbitClass identities; same-named domains in different clusters are not interchangeable.
+- Exact successful gates: focused package tests including the Phase 4 scheduler integration fixture; planner/API race tests; `scripts/space-compute all`; YAML parse and explicit default-scheduler/Phase-7 invariants.
+- Default K3s scheduler production source/profile/manifest remained outside this diff; only its Phase 4 test fixture was migrated to the structured identity API. Existing legacy v1alpha1 Missions with string locations require explicit migration to structured `DataLocation` objects.
+
 ## Verified plugin catalogue
 
 - Entry points are `New`, `PreFilter`, `Filter`, `PreScore`, `Score`, `Close`,

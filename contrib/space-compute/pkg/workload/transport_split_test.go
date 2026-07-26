@@ -16,7 +16,7 @@ func TestBuildInputTransferIntentsIsPureAndTransportOwned(t *testing.T) {
 	digest := strings.Repeat("a", 64)
 	source := spacev1.DomainReference{Name: "ground-a", ClusterID: "ground", OrbitClass: spacev1.OrbitGround}
 	coordinator := spacev1.DomainReference{Name: "ground-control", ClusterID: "control", OrbitClass: spacev1.OrbitGround}
-	mission.Spec.Inputs = []spacev1.DataObject{{ID: "sensor", SizeBytes: 7, Locations: []string{"ground-a"}, PayloadDigest: digest}}
+	mission.Spec.Inputs = []spacev1.DataObject{{ID: "sensor", SizeBytes: 7, Locations: []spacev1.DataLocation{{Domain: source}}, PayloadDigest: digest}}
 	placement.Spec.InputTransfers = []spacev1.TransferEpoch{{DataID: "sensor", Source: source, Destination: placement.Spec.Target, Start: metav1.NewTime(now), End: metav1.NewTime(now.Add(time.Minute)), Bytes: 7}}
 	intents, err := BuildInputTransferIntents(mission, placement, coordinator)
 	if err != nil {

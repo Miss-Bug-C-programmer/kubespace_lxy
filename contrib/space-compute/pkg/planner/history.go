@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
-	"time"
 
 	apiMeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -51,7 +50,10 @@ func ReconcileLinkStatus(incoming, previous *spacev1.SpaceLinkSnapshot, clock sp
 			if incoming.Spec.Provenance.Sequence <= last.Sequence {
 				err = fmt.Errorf("spec.provenance.sequence must increase beyond %d", last.Sequence)
 			}
-			if incoming.Spec.ObservedAt.Time.Sub(last.ObservedAt.Time) < time.Duration(incoming.Spec.MinimumUpdateSeconds)*time.Second && entry.WindowDigest == last.WindowDigest {
+			minimumUpdate, durationErr := checkedSecondsDuration(incoming.Spec.MinimumUpdateSeconds)
+			if durationErr != nil {
+				err = fmt.Errorf("spec.minimumUpdateSeconds: %w", durationErr)
+			} else if incoming.Spec.ObservedAt.Time.Sub(last.ObservedAt.Time) < minimumUpdate && entry.WindowDigest == last.WindowDigest {
 				err = fmt.Errorf("spec.observedAt unchanged update is faster than minimumUpdateSeconds")
 			}
 			break

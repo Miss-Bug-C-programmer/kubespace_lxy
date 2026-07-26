@@ -43,7 +43,7 @@ spec:
               source: *domain
               destination: *domain
               dataID: {type: string, minLength: 1, maxLength: 253}
-              bytes: {type: integer, format: int64, minimum: 0}
+              bytes: {type: integer, format: int64, minimum: 0, maximum: 1125899906842624}
               payloadDigest: {type: string, pattern: '^[0-9a-f]{64}$'}
               leaseEpoch: {type: integer, format: int64, minimum: 0}
               tokenHash: {type: string, pattern: '^(|[0-9a-f]{64})$'}
@@ -55,10 +55,12 @@ spec:
                   windowID: {type: string}
                   dataID: {type: string}
                   source: *domain
+                  sourceURI: {type: string, maxLength: 2048}
                   destination: *domain
+                  destinationURI: {type: string, maxLength: 2048}
                   start: {type: string, format: date-time}
                   end: {type: string, format: date-time}
-                  bytes: {type: integer, format: int64, minimum: 0}
+                  bytes: {type: integer, format: int64, minimum: 0, maximum: 1125899906842624}
               expiresAt: {type: string, format: date-time}
           status:
             type: object

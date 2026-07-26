@@ -2,6 +2,7 @@ package v1alpha1
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -165,8 +166,106 @@ func validLink(now time.Time) *SpaceLinkSnapshot {
 
 func validMission(now time.Time) *SpaceMission {
 	return &SpaceMission{ObjectMeta: metav1.ObjectMeta{Name: "mission-a", Namespace: "missions"}, Spec: SpaceMissionSpec{MissionClass: "science", Priority: 500, StatePolicy: PolicyStrict,
-		RequiredCapabilities: []CapabilityRequirement{{Class: "gpu", Quantity: 1}}, Inputs: []DataObject{{ID: "image-a", SizeBytes: 1000, Locations: []string{"ground-a"}}}, OutputSizeBytes: 100,
+		RequiredCapabilities: []CapabilityRequirement{{Class: "gpu", Quantity: 1}}, Inputs: []DataObject{{ID: "image-a", SizeBytes: 1000, Locations: []DataLocation{{Domain: DomainReference{Name: "ground-a", ClusterID: "ground-cluster", OrbitClass: OrbitGround}}}}}, OutputSizeBytes: 100,
 		Deadline: metav1.NewTime(now.Add(time.Hour)), ExpectedDurationSeconds: 60, MaximumDurationSeconds: 120, DurationUncertaintySecs: 30, SafetyMarginSeconds: 10, MaximumClockSkewSeconds: 5,
 		Retry: RetryPolicy{MaxAttempts: 2, AllowMigration: true, MaxConcurrentExecutions: 1}, Checkpoint: CheckpointPolicy{Checkpointable: true, MinimumIntervalSecs: 30, MaximumStateBytes: 1024},
 		WorkloadTemplate: corev1.PodTemplateSpec{Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "processor", Image: "example.invalid/processor:v1"}}}}}}
+}
+
+func TestPhase7ResourceBoundsAndDistinctCapacityBuckets(t *testing.T) {
+	now := time.Date(2026, 7, 26, 0, 0, 0, 0, time.UTC)
+	base := &SpaceDomainResourceSummary{Spec: SpaceDomainResourceSummarySpec{
+		Domain: DomainReference{Name: "leo-a", ClusterID: "leo-cluster", OrbitClass: OrbitLEO}, ObservedAt: metav1.NewTime(now), ValidUntil: metav1.NewTime(now.Add(time.Hour)),
+		Provenance: Provenance{ReporterID: "reporter", Source: "exporter", Digest: strings.Repeat("a", 64), Sequence: 1},
+		Devices: []DeviceCapacity{
+			{Class: "gpu", Count: 2, Models: []string{"model-a"}, ComputeMilli: 1000, FragmentationMilli: 500},
+			{Class: "gpu", Count: 3, Models: []string{"model-b"}, ComputeMilli: 2000, FragmentationMilli: 500},
+		},
+		QueueDelaySeconds: 0, EnergyHeadroomMilli: 800, ThermalHeadroomMilli: 800, ResilienceMilli: 800,
+		MaximumSnapshotAgeSecs: 60, ExporterSnapshotDigest: strings.Repeat("b", 64),
+	}}
+	if err := ValidateResourceSummary(base, fakeClock{now}); err != nil {
+		t.Fatalf("same class with distinct model buckets must be valid: %v", err)
+	}
+
+	cases := []struct {
+		name     string
+		mutate   func(*SpaceDomainResourceSummary)
+		fragment string
+	}{
+		{"count", func(v *SpaceDomainResourceSummary) { v.Spec.Devices[0].Count = MaxDeviceCapacityCount + 1 }, "count"},
+		{"compute", func(v *SpaceDomainResourceSummary) { v.Spec.Devices[0].ComputeMilli = MaxComputeMilli + 1 }, "computeMilli"},
+		{"queue", func(v *SpaceDomainResourceSummary) { v.Spec.QueueDelaySeconds = MaxQueueDelaySecs + 1 }, "queueDelaySeconds"},
+		{"snapshot-age", func(v *SpaceDomainResourceSummary) { v.Spec.MaximumSnapshotAgeSecs = MaxMaximumSnapshotAgeSecs + 1 }, "maximumSnapshotAgeSeconds"},
+		{"software-length", func(v *SpaceDomainResourceSummary) {
+			v.Spec.Software = map[string]string{"runtime.example/version": strings.Repeat("x", MaxSoftwareValueBytes+1)}
+		}, "value cannot exceed"},
+		{"device-topology", func(v *SpaceDomainResourceSummary) {
+			v.Spec.Devices[0].Models = make([]string, MaxDeviceTopologyValues+1)
+			for i := range v.Spec.Devices[0].Models {
+				v.Spec.Devices[0].Models[i] = fmt.Sprintf("model-%d", i)
+			}
+		}, "models"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			value := base.DeepCopy()
+			tc.mutate(value)
+			err := ValidateResourceSummary(value, fakeClock{now})
+			if err == nil || !strings.Contains(err.Error(), tc.fragment) {
+				t.Fatalf("bound %s error=%v, want fragment %q", tc.name, err, tc.fragment)
+			}
+		})
+	}
+
+	duplicate := base.DeepCopy()
+	duplicate.Spec.Devices = append(duplicate.Spec.Devices, duplicate.Spec.Devices[0])
+	if err := ValidateResourceSummary(duplicate, fakeClock{now}); err == nil || !strings.Contains(err.Error(), "duplicate device capacity bucket") {
+		t.Fatalf("duplicate bucket accepted: %v", err)
+	}
+}
+
+func TestPhase7StructuredLocationsRequireFullDomainIdentity(t *testing.T) {
+	now := time.Date(2026, 7, 26, 0, 0, 0, 0, time.UTC)
+	mission := validMission(now)
+	mission.Spec.Inputs[0].Locations = []DataLocation{
+		{Domain: DomainReference{Name: "ground-a", ClusterID: "cluster-a", OrbitClass: OrbitGround}, URI: "s3://cluster-a/frame"},
+		{Domain: DomainReference{Name: "ground-a", ClusterID: "cluster-b", OrbitClass: OrbitGround}, URI: "s3://cluster-b/frame"},
+	}
+	mission.Spec.ResultReturnRequired = true
+	mission.Spec.ResultDestinations = []DataLocation{{Domain: DomainReference{Name: "ground-a", ClusterID: "cluster-a", OrbitClass: OrbitGround}, URI: "s3://cluster-a/results"}}
+	if err := ValidateMission(mission, fakeClock{now}); err != nil {
+		t.Fatalf("same domain name in distinct clusters should remain distinct: %v", err)
+	}
+
+	ambiguous := mission.DeepCopy()
+	ambiguous.Spec.Inputs[0].Locations[0].Domain.ClusterID = ""
+	if err := ValidateMission(ambiguous, fakeClock{now}); err == nil || !strings.Contains(err.Error(), "clusterID") {
+		t.Fatalf("ambiguous domain identity accepted: %v", err)
+	}
+	badURI := mission.DeepCopy()
+	badURI.Spec.ResultDestinations[0].URI = "relative/path"
+	if err := ValidateMission(badURI, fakeClock{now}); err == nil || !strings.Contains(err.Error(), "absolute URI") {
+		t.Fatalf("relative data URI accepted: %v", err)
+	}
+}
+
+func TestPhase7PlacementTransferEpochBound(t *testing.T) {
+	now := time.Date(2026, 7, 26, 0, 0, 0, 0, time.UTC)
+	mission := validMission(now)
+	mission.UID = types.UID("mission-uid")
+	start := metav1.NewTime(now.Add(time.Minute))
+	end := metav1.NewTime(now.Add(2 * time.Minute))
+	placement := &SpacePlacementIntent{Spec: SpacePlacementIntentSpec{
+		MissionRef: corev1.ObjectReference{Name: mission.Name, Namespace: mission.Namespace, UID: mission.UID}, PlanID: "plan-123", Attempt: 1,
+		Target: DomainReference{Name: "leo-a", ClusterID: "leo-cluster", OrbitClass: OrbitLEO}, NotBefore: start, ExpiresAt: metav1.NewTime(now.Add(20 * time.Minute)),
+		ComputeStart: start, ComputeEnd: end, MaterialInputDigest: strings.Repeat("c", 64), SnapshotSequences: map[string]int64{},
+	}}
+	placement.Spec.InputTransfers = make([]TransferEpoch, MaxTransferEpochs+1)
+	for i := range placement.Spec.InputTransfers {
+		placement.Spec.InputTransfers[i] = TransferEpoch{Start: start, End: end, Bytes: 1}
+	}
+	if err := ValidatePlacement(placement, mission); err == nil || !strings.Contains(err.Error(), "inputTransfers") {
+		t.Fatalf("oversized transfer epoch list accepted: %v", err)
+	}
 }

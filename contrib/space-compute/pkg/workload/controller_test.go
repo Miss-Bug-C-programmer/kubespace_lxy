@@ -65,7 +65,7 @@ func TestTransferReceiptThenLeaseAreBothRequired(t *testing.T) {
 	now := time.Date(2026, 7, 21, 0, 0, 0, 0, time.UTC)
 	mission, placement := dispatchFixture(now)
 	digest := strings.Repeat("a", 64)
-	mission.Spec.Inputs = []spacev1.DataObject{{ID: "sensor", SizeBytes: 1024, Locations: []string{"ground-a"}, PayloadDigest: digest}}
+	mission.Spec.Inputs = []spacev1.DataObject{{ID: "sensor", SizeBytes: 1024, Locations: []spacev1.DataLocation{{Domain: spacev1.DomainReference{Name: "ground-a", ClusterID: "ground-cluster", OrbitClass: spacev1.OrbitGround}}}, PayloadDigest: digest}}
 	source := spacev1.DomainReference{Name: "ground-a", ClusterID: "ground-cluster", OrbitClass: spacev1.OrbitGround}
 	placement.Spec.InputTransfers = []spacev1.TransferEpoch{{LinkSnapshotName: "ground-leo", WindowID: "w1", DataID: "sensor", Source: source, Destination: placement.Spec.Target, Start: metav1.NewTime(now.Add(-time.Minute)), End: metav1.NewTime(now), Bytes: 1024}}
 	placement.Spec.NotBefore = metav1.NewTime(now)
@@ -99,7 +99,7 @@ func TestTransferReceiptThenLeaseAreBothRequired(t *testing.T) {
 func TestCrossDomainTransferWithoutDeclaredDigestFailsClosed(t *testing.T) {
 	now := time.Date(2026, 7, 21, 0, 0, 0, 0, time.UTC)
 	mission, placement := dispatchFixture(now)
-	mission.Spec.Inputs = []spacev1.DataObject{{ID: "sensor", SizeBytes: 1, Locations: []string{"ground-a"}}}
+	mission.Spec.Inputs = []spacev1.DataObject{{ID: "sensor", SizeBytes: 1, Locations: []spacev1.DataLocation{{Domain: spacev1.DomainReference{Name: "ground-a", ClusterID: "g", OrbitClass: spacev1.OrbitGround}}}}}
 	source := spacev1.DomainReference{Name: "ground-a", ClusterID: "g", OrbitClass: spacev1.OrbitGround}
 	placement.Spec.InputTransfers = []spacev1.TransferEpoch{{DataID: "sensor", Source: source, Destination: placement.Spec.Target, Start: metav1.NewTime(now), End: metav1.NewTime(now.Add(time.Minute)), Bytes: 1}}
 	coordinator := spacev1.DomainReference{Name: "ground-control", ClusterID: "ground-control", OrbitClass: spacev1.OrbitGround}
@@ -114,7 +114,7 @@ func TestMissingTransferCoordinatorStaysPendingWithoutPod(t *testing.T) {
 	mission, placement := dispatchFixture(now)
 	digest := strings.Repeat("a", 64)
 	source := spacev1.DomainReference{Name: "ground-a", ClusterID: "ground", OrbitClass: spacev1.OrbitGround}
-	mission.Spec.Inputs = []spacev1.DataObject{{ID: "sensor", SizeBytes: 1, Locations: []string{"ground-a"}, PayloadDigest: digest}}
+	mission.Spec.Inputs = []spacev1.DataObject{{ID: "sensor", SizeBytes: 1, Locations: []spacev1.DataLocation{{Domain: source}}, PayloadDigest: digest}}
 	placement.Spec.InputTransfers = []spacev1.TransferEpoch{{DataID: "sensor", Source: source, Destination: placement.Spec.Target, Start: metav1.NewTime(now), End: metav1.NewTime(now.Add(time.Minute)), Bytes: 1}}
 	placement.Spec.NotBefore = metav1.NewTime(now)
 	placement.Spec.ComputeStart = metav1.NewTime(now)
@@ -146,7 +146,7 @@ func TestLegacyResultAndCheckpointAnnotationsAreUntrustedHints(t *testing.T) {
 	now := time.Date(2026, 7, 21, 0, 0, 0, 0, time.UTC)
 	mission, placement := dispatchFixture(now)
 	mission.Spec.ResultReturnRequired = true
-	mission.Spec.ResultDestinations = []string{"ground-a"}
+	mission.Spec.ResultDestinations = []spacev1.DataLocation{{Domain: spacev1.DomainReference{Name: "ground-a", ClusterID: "ground", OrbitClass: spacev1.OrbitGround}}}
 	mission.Spec.OutputSizeBytes = 1
 	placement.Spec.ResultTransfer = &spacev1.TransferEpoch{WindowID: "result", DataID: "result", Source: placement.Spec.Target, Destination: spacev1.DomainReference{Name: "ground-a", ClusterID: "ground", OrbitClass: spacev1.OrbitGround}, Start: placement.Spec.ComputeEnd, End: metav1.NewTime(placement.Spec.ComputeEnd.Add(time.Minute)), Bytes: 1}
 	clock := &mutableClock{now: now.Add(time.Minute)}

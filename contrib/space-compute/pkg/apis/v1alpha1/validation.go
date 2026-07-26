@@ -136,7 +136,11 @@ func ValidateLinkSnapshot(snapshot *SpaceLinkSnapshot, previous *SpaceLinkSnapsh
 	observed := snapshot.Spec.ObservedAt.Time
 	validUntil := snapshot.Spec.ValidUntil.Time
 	now := clock.Now()
-	skew := time.Duration(snapshot.Spec.MaximumClockSkewSeconds) * time.Second
+	skew, skewErr := checkedSecondsDurationAPI(snapshot.Spec.MaximumClockSkewSeconds)
+	if skewErr != nil {
+		errs.add("spec.maximumClockSkewSeconds", "duration conversion overflow")
+		skew = 0
+	}
 	if observed.IsZero() {
 		errs.add("spec.observedAt", "is required")
 	}
@@ -205,8 +209,11 @@ func ValidateLinkSnapshot(snapshot *SpaceLinkSnapshot, previous *SpaceLinkSnapsh
 		if snapshot.Spec.Provenance.Sequence <= previous.Spec.Provenance.Sequence {
 			errs.addf("spec.provenance.sequence", "must increase beyond %d", previous.Spec.Provenance.Sequence)
 		}
-		minimum := time.Duration(snapshot.Spec.MinimumUpdateSeconds) * time.Second
-		if observed.Sub(previous.Spec.ObservedAt.Time) < minimum && contactWindowsDigest(snapshot.Spec.Windows) == contactWindowsDigest(previous.Spec.Windows) {
+		minimum, minimumErr := checkedSecondsDurationAPI(snapshot.Spec.MinimumUpdateSeconds)
+		if minimumErr != nil {
+			errs.add("spec.minimumUpdateSeconds", "duration conversion overflow")
+		}
+		if minimumErr == nil && observed.Sub(previous.Spec.ObservedAt.Time) < minimum && contactWindowsDigest(snapshot.Spec.Windows) == contactWindowsDigest(previous.Spec.Windows) {
 			errs.add("spec.observedAt", "unchanged update is faster than minimumUpdateSeconds")
 		}
 	}
@@ -269,6 +276,8 @@ func ValidateMission(mission *SpaceMission, clock Clock) error {
 		seenSets[set.Name] = struct{}{}
 		if len(set.AllOf) == 0 {
 			errs.add(path+".allOf", "cannot be empty")
+		} else if len(set.AllOf) > MaxCapabilities {
+			errs.addf(path+".allOf", "cannot exceed %d entries", MaxCapabilities)
 		}
 		validateCapabilities(path+".allOf", set.AllOf, &errs)
 	}
@@ -280,6 +289,7 @@ func ValidateMission(mission *SpaceMission, clock Clock) error {
 		errs.addf("spec.inputs", "cannot exceed %d entries", MaxDataObjects)
 	}
 	seenData := map[string]struct{}{}
+	totalInputBytes := int64(0)
 	for i, input := range spec.Inputs {
 		path := fmt.Sprintf("spec.inputs[%d]", i)
 		if values := utilvalidation.IsDNS1123Subdomain(input.ID); len(values) > 0 {
@@ -291,6 +301,10 @@ func ValidateMission(mission *SpaceMission, clock Clock) error {
 		seenData[input.ID] = struct{}{}
 		if input.SizeBytes < 0 || input.SizeBytes > MaxDataBytes {
 			errs.addf(path+".sizeBytes", "must be between 0 and %d", MaxDataBytes)
+		} else if total, err := checkedAddInt64API(totalInputBytes, input.SizeBytes); err != nil {
+			errs.add("spec.inputs", "total input bytes overflow int64")
+		} else {
+			totalInputBytes = total
 		}
 		if input.SizeBytes > 0 && len(input.Locations) == 0 {
 			errs.add(path+".locations", "is required for non-empty input")
@@ -298,7 +312,7 @@ func ValidateMission(mission *SpaceMission, clock Clock) error {
 		if input.PayloadDigest != "" {
 			validateLowerSHA256(path+".payloadDigest", input.PayloadDigest, &errs)
 		}
-		validateLocations(path+".locations", input.Locations, &errs)
+		validateDataLocations(path+".locations", input.Locations, &errs)
 	}
 	if spec.OutputSizeBytes < 0 || spec.OutputSizeBytes > MaxDataBytes {
 		errs.addf("spec.outputSizeBytes", "must be between 0 and %d", MaxDataBytes)
@@ -306,7 +320,7 @@ func ValidateMission(mission *SpaceMission, clock Clock) error {
 	if spec.ResultReturnRequired && len(spec.ResultDestinations) == 0 {
 		errs.add("spec.resultDestinations", "is required when resultReturnRequired is true")
 	}
-	validateLocations("spec.resultDestinations", spec.ResultDestinations, &errs)
+	validateDataLocations("spec.resultDestinations", spec.ResultDestinations, &errs)
 	if spec.Deadline.IsZero() || !spec.Deadline.After(clock.Now()) {
 		errs.add("spec.deadline", "must be in the future")
 	}
@@ -316,8 +330,10 @@ func ValidateMission(mission *SpaceMission, clock Clock) error {
 	if spec.MaximumDurationSeconds < spec.ExpectedDurationSeconds || spec.MaximumDurationSeconds > MaxMissionDurationSecs {
 		errs.addf("spec.maximumDurationSeconds", "must be at least expectedDurationSeconds and at most %d", MaxMissionDurationSecs)
 	}
-	if spec.DurationUncertaintySecs < 0 || spec.ExpectedDurationSeconds+spec.DurationUncertaintySecs > spec.MaximumDurationSeconds {
+	if spec.DurationUncertaintySecs < 0 {
 		errs.add("spec.durationUncertaintySeconds", "must be non-negative and fit within maximumDurationSeconds")
+	} else if durationWithUncertainty, err := checkedAddInt64API(spec.ExpectedDurationSeconds, spec.DurationUncertaintySecs); err != nil || durationWithUncertainty > spec.MaximumDurationSeconds {
+		errs.add("spec.durationUncertaintySeconds", "must be non-negative, non-overflowing and fit within maximumDurationSeconds")
 	}
 	if spec.SafetyMarginSeconds < 0 || spec.SafetyMarginSeconds > MaxSafetyMarginSecs {
 		errs.addf("spec.safetyMarginSeconds", "must be between 0 and %d", MaxSafetyMarginSecs)
@@ -325,9 +341,20 @@ func ValidateMission(mission *SpaceMission, clock Clock) error {
 	if spec.MaximumClockSkewSeconds < 0 || spec.MaximumClockSkewSeconds > MaxClockSkewSecs {
 		errs.addf("spec.maximumClockSkewSeconds", "must be between 0 and %d", MaxClockSkewSecs)
 	}
-	minimumFinish := clock.Now().Add(time.Duration(spec.MaximumDurationSeconds+spec.SafetyMarginSeconds+spec.MaximumClockSkewSeconds) * time.Second)
-	if !spec.Deadline.After(minimumFinish) {
-		errs.add("spec.deadline", "cannot accommodate maximum duration, safety margin and clock skew")
+	minimumSeconds, durationErr := checkedAddInt64API(spec.MaximumDurationSeconds, spec.SafetyMarginSeconds)
+	if durationErr == nil {
+		minimumSeconds, durationErr = checkedAddInt64API(minimumSeconds, spec.MaximumClockSkewSeconds)
+	}
+	minimumDuration, conversionErr := checkedSecondsDurationAPI(minimumSeconds)
+	if durationErr != nil || conversionErr != nil {
+		errs.add("spec.deadline", "duration arithmetic overflow")
+	} else {
+		minimumFinish := clock.Now().Add(minimumDuration)
+		if minimumFinish.Year() < 1 || minimumFinish.Year() > 9999 {
+			errs.add("spec.deadline", "minimum finish timestamp is outside RFC3339 range")
+		} else if !spec.Deadline.After(minimumFinish) {
+			errs.add("spec.deadline", "cannot accommodate maximum duration, safety margin and clock skew")
+		}
 	}
 	if spec.Retry.MaxAttempts < 1 || spec.Retry.MaxAttempts > 100 {
 		errs.add("spec.retry.maxAttempts", "must be between 1 and 100")
@@ -391,10 +418,16 @@ func validateCapabilities(path string, values []CapabilityRequirement, errs *Val
 }
 
 func validateStringMap(path string, values map[string]string, errs *ValidationErrors) {
-	if len(values) > 64 {
-		errs.add(path, "cannot exceed 64 entries")
+	if len(values) > MaxSoftwareEntries {
+		errs.addf(path, "cannot exceed %d entries", MaxSoftwareEntries)
 	}
 	for key, value := range values {
+		if len(key) > MaxSoftwareKeyBytes {
+			errs.addf(path+"."+key, "key cannot exceed %d bytes", MaxSoftwareKeyBytes)
+		}
+		if len(value) > MaxSoftwareValueBytes {
+			errs.addf(path+"."+key, "value cannot exceed %d bytes", MaxSoftwareValueBytes)
+		}
 		if problems := utilvalidation.IsQualifiedName(key); len(problems) > 0 {
 			errs.add(path+"."+key, strings.Join(problems, ", "))
 		}
@@ -404,7 +437,7 @@ func validateStringMap(path string, values map[string]string, errs *ValidationEr
 	}
 }
 
-func validateLocations(path string, values []string, errs *ValidationErrors) {
+func validateStringLocations(path string, values []string, errs *ValidationErrors) {
 	if len(values) > 64 {
 		errs.add(path, "cannot exceed 64 entries")
 	}
@@ -450,22 +483,30 @@ func ValidateResourceSummary(summary *SpaceDomainResourceSummary, clock Clock) e
 	seen := map[string]struct{}{}
 	for i, device := range summary.Spec.Devices {
 		path := fmt.Sprintf("spec.devices[%d]", i)
-		if device.Class == "" {
+		if strings.TrimSpace(device.Class) == "" {
 			errs.add(path+".class", "is required")
 		}
-		if _, ok := seen[device.Class]; ok {
-			errs.add(path+".class", "duplicate device class")
+		identity := deviceCapacityBucketIdentityKey(device)
+		if _, ok := seen[identity]; ok {
+			errs.add(path, "duplicate device capacity bucket")
 		}
-		seen[device.Class] = struct{}{}
-		if device.Count < 0 || device.ComputeMilli < 0 {
-			errs.add(path, "count and computeMilli cannot be negative")
+		seen[identity] = struct{}{}
+		if device.Count < 0 || device.Count > MaxDeviceCapacityCount {
+			errs.addf(path+".count", "must be between 0 and %d", MaxDeviceCapacityCount)
+		}
+		if device.ComputeMilli < 0 || device.ComputeMilli > MaxComputeMilli {
+			errs.addf(path+".computeMilli", "must be between 0 and %d", MaxComputeMilli)
 		}
 		if device.FragmentationMilli < 0 || device.FragmentationMilli > 1000 {
 			errs.add(path+".fragmentationMilli", "must be between 0 and 1000")
 		}
 		for field, values := range map[string][]string{"architectures": device.Architectures, "models": device.Models, "precision": device.Precision} {
-			if len(values) > 64 {
-				errs.add(path+"."+field, "cannot exceed 64 entries")
+			limit := MaxDeviceTopologyValues
+			if field == "precision" {
+				limit = MaxDevicePrecisionValues
+			}
+			if len(values) > limit {
+				errs.addf(path+"."+field, "cannot exceed %d entries", limit)
 			}
 			seenValues := map[string]struct{}{}
 			for j, value := range values {
@@ -480,14 +521,17 @@ func ValidateResourceSummary(summary *SpaceDomainResourceSummary, clock Clock) e
 		}
 	}
 	validateStringMap("spec.software", summary.Spec.Software, &errs)
-	validateLocations("spec.dataLocations", summary.Spec.DataLocations, &errs)
+	validateStringLocations("spec.dataLocations", summary.Spec.DataLocations, &errs)
 	for field, value := range map[string]int32{"energyHeadroomMilli": summary.Spec.EnergyHeadroomMilli, "thermalHeadroomMilli": summary.Spec.ThermalHeadroomMilli, "resilienceMilli": summary.Spec.ResilienceMilli, "minimumEnergyMilli": summary.Spec.MinimumEnergyMilli, "minimumThermalMilli": summary.Spec.MinimumThermalMilli} {
 		if value < 0 || value > 1000 {
 			errs.add("spec."+field, "must be between 0 and 1000")
 		}
 	}
-	if summary.Spec.QueueDelaySeconds < 0 || summary.Spec.MaximumSnapshotAgeSecs < 1 {
-		errs.add("spec", "queueDelaySeconds cannot be negative and maximumSnapshotAgeSeconds must be positive")
+	if summary.Spec.QueueDelaySeconds < 0 || summary.Spec.QueueDelaySeconds > MaxQueueDelaySecs {
+		errs.addf("spec.queueDelaySeconds", "must be between 0 and %d", MaxQueueDelaySecs)
+	}
+	if summary.Spec.MaximumSnapshotAgeSecs < 1 || summary.Spec.MaximumSnapshotAgeSecs > MaxMaximumSnapshotAgeSecs {
+		errs.addf("spec.maximumSnapshotAgeSeconds", "must be between 1 and %d", MaxMaximumSnapshotAgeSecs)
 	}
 	decoded, err := hex.DecodeString(summary.Spec.ExporterSnapshotDigest)
 	if err != nil || len(decoded) != sha256.Size || summary.Spec.ExporterSnapshotDigest != strings.ToLower(summary.Spec.ExporterSnapshotDigest) {
@@ -531,5 +575,29 @@ func ValidatePlacement(placement *SpacePlacementIntent, mission *SpaceMission) e
 	if mission.Spec.ResultReturnRequired && placement.Spec.ResultTransfer == nil {
 		errs.add("spec.resultTransfer", "is required by the mission")
 	}
+	if len(placement.Spec.InputTransfers) > MaxTransferEpochs {
+		errs.addf("spec.inputTransfers", "cannot exceed %d entries", MaxTransferEpochs)
+	}
+	for i, epoch := range placement.Spec.InputTransfers {
+		validateTransferEpoch(fmt.Sprintf("spec.inputTransfers[%d]", i), epoch, &errs)
+	}
+	if placement.Spec.ResultTransfer != nil {
+		validateTransferEpoch("spec.resultTransfer", *placement.Spec.ResultTransfer, &errs)
+	}
+	if len(placement.Spec.SnapshotSequences) > MaxSnapshotSequenceEntries {
+		errs.addf("spec.snapshotSequences", "cannot exceed %d entries", MaxSnapshotSequenceEntries)
+	}
 	return errs.errOrNil()
+}
+
+func validateTransferEpoch(path string, epoch TransferEpoch, errs *ValidationErrors) {
+	if epoch.Bytes < 0 || epoch.Bytes > MaxDataBytes {
+		errs.addf(path+".bytes", "must be between 0 and %d", MaxDataBytes)
+	}
+	if epoch.Start.IsZero() || epoch.End.IsZero() || epoch.End.Before(&epoch.Start) {
+		errs.add(path, "start/end must be present and end cannot precede start")
+	}
+	for field, value := range map[string]string{"sourceURI": epoch.SourceURI, "destinationURI": epoch.DestinationURI} {
+		validateDataURI(path+"."+field, value, errs)
+	}
 }

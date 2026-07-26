@@ -127,3 +127,31 @@ func TestReporterBindingValidationUsesPrincipalDerivedNameAndImmutableDomain(t *
 		t.Fatalf("domain immutability error=%v", err)
 	}
 }
+
+func TestCanonicalResourceSummarySameClassBucketsAreOrderIndependent(t *testing.T) {
+	now := time.Date(2026, 7, 26, 0, 0, 0, 0, time.UTC)
+	domain := DomainReference{Name: "leo-a", ClusterID: "leo-cluster", OrbitClass: OrbitLEO}
+	base := &SpaceDomainResourceSummary{ObjectMeta: metav1.ObjectMeta{Name: DomainResourceSummaryName(domain)}, Spec: SpaceDomainResourceSummarySpec{
+		Domain: domain, ObservedAt: metav1.NewTime(now), ValidUntil: metav1.NewTime(now.Add(time.Hour)), Provenance: Provenance{ReporterID: "reporter", Source: "exporter", Sequence: 1},
+		Devices: []DeviceCapacity{
+			{Class: "gpu", Count: 2, Models: []string{"model-b"}, Architectures: []string{"arch-b", "arch-a"}, Precision: []string{"fp32", "fp16"}, ComputeMilli: 1800, FragmentationMilli: 300},
+			{Class: "gpu", Count: 1, Models: []string{"model-a"}, Architectures: []string{"arch-a"}, Precision: []string{"fp16"}, ComputeMilli: 1200, FragmentationMilli: 700},
+		},
+		EnergyHeadroomMilli: 800, ThermalHeadroomMilli: 800, ResilienceMilli: 800, MaximumSnapshotAgeSecs: 60, ExporterSnapshotDigest: strings.Repeat("d", 64),
+	}}
+	first, err := CanonicalReporterBytes(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reordered := base.DeepCopy()
+	reordered.Spec.Devices[0], reordered.Spec.Devices[1] = reordered.Spec.Devices[1], reordered.Spec.Devices[0]
+	reordered.Spec.Devices[1].Architectures[0], reordered.Spec.Devices[1].Architectures[1] = reordered.Spec.Devices[1].Architectures[1], reordered.Spec.Devices[1].Architectures[0]
+	reordered.Spec.Devices[1].Precision[0], reordered.Spec.Devices[1].Precision[1] = reordered.Spec.Devices[1].Precision[1], reordered.Spec.Devices[1].Precision[0]
+	second, err := CanonicalReporterBytes(reordered)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(first, second) {
+		t.Fatalf("same-class capacity bucket order changed canonical reporter bytes:\n%s\n---\n%s", first, second)
+	}
+}

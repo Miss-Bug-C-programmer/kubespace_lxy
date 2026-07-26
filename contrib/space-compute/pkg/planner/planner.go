@@ -39,20 +39,23 @@ type Decision struct {
 }
 
 type candidate struct {
-	summary          *spacev1.SpaceDomainResourceSummary
-	inputTransfers   []spacev1.TransferEpoch
-	resultTransfer   *spacev1.TransferEpoch
-	computeStart     time.Time
-	computeEnd       time.Time
-	completion       time.Time
-	notBefore        time.Time
-	expiresAt        time.Time
-	sequences        map[string]int64
-	score            spacev1.DecisionScore
-	explanations     []spacev1.ConstraintExplanation
-	linkQualityMilli int32
-	localBytes       int64
-	totalBytes       int64
+	summary              *spacev1.SpaceDomainResourceSummary
+	selectedCapabilities []spacev1.CapabilityRequirement
+	selectedSetName      string
+	capacityAllocations  []capacityAllocation
+	inputTransfers       []spacev1.TransferEpoch
+	resultTransfer       *spacev1.TransferEpoch
+	computeStart         time.Time
+	computeEnd           time.Time
+	completion           time.Time
+	notBefore            time.Time
+	expiresAt            time.Time
+	sequences            map[string]int64
+	score                spacev1.DecisionScore
+	explanations         []spacev1.ConstraintExplanation
+	linkQualityMilli     int32
+	localBytes           int64
+	totalBytes           int64
 }
 
 // Plan chooses a domain and complete transfer/compute/return epoch. Inputs are
@@ -60,6 +63,9 @@ type candidate struct {
 // equivalent placement decisions.
 func Plan(mission *spacev1.SpaceMission, summaries []*spacev1.SpaceDomainResourceSummary, links []*spacev1.SpaceLinkSnapshot, clock spacev1.Clock) (Decision, error) {
 	if err := spacev1.ValidateMission(mission, clock); err != nil {
+		return Decision{}, err
+	}
+	if err := validatePlannerTopology(summaries, links); err != nil {
 		return Decision{}, err
 	}
 	now := clock.Now().UTC()
@@ -74,7 +80,10 @@ func Plan(mission *spacev1.SpaceMission, summaries []*spacev1.SpaceDomainResourc
 		if summary == nil {
 			continue
 		}
-		current, rejection := evaluateCandidate(mission, summary, linkIndex, clock, now)
+		current, rejection, err := evaluateCandidate(mission, summary, linkIndex, clock, now)
+		if err != nil {
+			return decision, fmt.Errorf("evaluate domain %s: %w", fullDomainKey(summary.Spec.Domain), err)
+		}
 		if len(rejection) > 0 {
 			decision.Rejected = append(decision.Rejected, CandidateRejection{Domain: summary.Spec.Domain, Explanations: rejection})
 			continue
@@ -124,19 +133,37 @@ func Plan(mission *spacev1.SpaceMission, summaries []*spacev1.SpaceDomainResourc
 	return decision, nil
 }
 
-func evaluateCandidate(mission *spacev1.SpaceMission, summary *spacev1.SpaceDomainResourceSummary, links map[string][]*spacev1.SpaceLinkSnapshot, clock spacev1.Clock, now time.Time) (candidate, []spacev1.ConstraintExplanation) {
+func evaluateCandidate(mission *spacev1.SpaceMission, summary *spacev1.SpaceDomainResourceSummary, links map[string][]*spacev1.SpaceLinkSnapshot, clock spacev1.Clock, now time.Time) (candidate, []spacev1.ConstraintExplanation, error) {
 	result := candidate{summary: summary, sequences: map[string]int64{}, notBefore: now, expiresAt: mission.Spec.Deadline.Time.UTC(), linkQualityMilli: 1000}
 	var rejected []spacev1.ConstraintExplanation
 	if !resourceSummaryAccepted(summary) {
-		return result, []spacev1.ConstraintExplanation{reject("resource_snapshot_unaccepted", "resource-controller acceptance", fmt.Sprint(summary.Status.ObservedGeneration), fmt.Sprint(summary.Generation), "domain resource summary generation has not been accepted")}
+		return result, []spacev1.ConstraintExplanation{reject("resource_snapshot_unaccepted", "resource-controller acceptance", fmt.Sprint(summary.Status.ObservedGeneration), fmt.Sprint(summary.Generation), "domain resource summary generation has not been accepted")}, nil
 	}
 	if err := spacev1.ValidateResourceSummary(summary, clock); err != nil {
-		return result, []spacev1.ConstraintExplanation{reject("resource_snapshot_invalid", "resource snapshot validation", err.Error(), "fresh validated summary", "domain resource summary is invalid or stale")}
+		return result, []spacev1.ConstraintExplanation{reject("resource_snapshot_invalid", "resource snapshot validation", err.Error(), "fresh validated summary", "domain resource summary is invalid or stale")}, nil
 	}
 	result.sequences["resource/"+summary.Name] = summary.Spec.Provenance.Sequence
 	result.expiresAt = earlier(result.expiresAt, summary.Spec.ValidUntil.Time.UTC())
-	if explanations := capabilityExplanations(mission.Spec, summary.Spec); len(explanations) > 0 {
-		rejected = append(rejected, explanations...)
+	selection, capacityReason, err := selectCapabilitySet(mission.Spec, summary.Spec)
+	if err != nil {
+		return result, nil, fmt.Errorf("capacity allocation: %w", err)
+	}
+	if capacityReason != "" {
+		code := "required_capability_missing"
+		constraint := "required capabilities"
+		required := "all required capabilities"
+		message := "domain cannot satisfy required device capabilities without capacity reuse"
+		if len(mission.Spec.AlternativeCapabilities) > 0 {
+			code = "alternative_capability_missing"
+			constraint = "required plus alternative capability set"
+			required = "required capabilities plus one complete alternative set"
+			message = "domain cannot satisfy a complete capability set without capacity reuse"
+		}
+		rejected = append(rejected, reject(code, constraint, capacityReason, required, message))
+	} else {
+		result.selectedCapabilities = copyCapabilities(selection.selectedCapabilities)
+		result.selectedSetName = selection.selectedSetName
+		result.capacityAllocations = append([]capacityAllocation(nil), selection.allocations...)
 	}
 	if missing := softwareMismatch(mission.Spec.RequiredSoftware, summary.Spec.Software); missing != "" {
 		rejected = append(rejected, reject("software_incompatible", "required software", missing, "all required versions", "domain software stack is incompatible"))
@@ -150,22 +177,34 @@ func evaluateCandidate(mission *spacev1.SpaceMission, summary *spacev1.SpaceDoma
 		rejected = append(rejected, reject("thermal_below_minimum", "thermal headroom", fmt.Sprint(summary.Spec.ThermalHeadroomMilli), fmt.Sprint(summary.Spec.MinimumThermalMilli), "strict policy rejects insufficient thermal headroom"))
 	}
 	if len(rejected) > 0 {
-		return result, rejected
+		return result, rejected, nil
 	}
 
 	cursor := now
 	for _, input := range mission.Spec.Inputs {
-		result.totalBytes += input.SizeBytes
+		result.totalBytes, err = checkedAddInt64(result.totalBytes, input.SizeBytes)
+		if err != nil {
+			return result, nil, fmt.Errorf("total input bytes: %w", err)
+		}
 		if input.SizeBytes == 0 || locationMatchesDomain(input.Locations, summary.Spec.Domain) || contains(summary.Spec.DataLocations, input.ID) {
-			result.localBytes += input.SizeBytes
+			result.localBytes, err = checkedAddInt64(result.localBytes, input.SizeBytes)
+			if err != nil {
+				return result, nil, fmt.Errorf("local input bytes: %w", err)
+			}
 			continue
 		}
-		transfer, snapshot, ok, reasons := findIngress(input, summary.Spec.Domain, cursor, mission.Spec, links, now)
+		transfer, snapshot, ok, reasons, transferErr := findIngress(input, summary.Spec.Domain, cursor, mission.Spec, links, now)
+		if transferErr != nil {
+			return result, nil, transferErr
+		}
 		if !ok {
 			rejected = append(rejected, reasons...)
 			continue
 		}
 		result.inputTransfers = append(result.inputTransfers, transfer)
+		if len(result.inputTransfers) > spacev1.MaxTransferEpochs {
+			return result, nil, fmt.Errorf("planned input transfer epochs exceed %d", spacev1.MaxTransferEpochs)
+		}
 		result.sequences["link/"+snapshot.Name] = snapshot.Spec.Provenance.Sequence
 		result.expiresAt = earlier(result.expiresAt, snapshot.Spec.ValidUntil.Time.UTC())
 		result.linkQualityMilli = min32(result.linkQualityMilli, linkQuality(snapshot, transfer.WindowID))
@@ -175,17 +214,44 @@ func evaluateCandidate(mission *spacev1.SpaceMission, summary *spacev1.SpaceDoma
 		}
 	}
 	if len(rejected) > 0 {
-		return result, rejected
+		return result, rejected, nil
 	}
-	safety := time.Duration(mission.Spec.SafetyMarginSeconds) * time.Second
-	result.computeStart = cursor.Add(safety).Add(time.Duration(summary.Spec.QueueDelaySeconds) * time.Second)
-	computeSeconds := predictedComputeSeconds(mission.Spec, summary.Spec)
-	result.computeEnd = result.computeStart.Add(time.Duration(computeSeconds) * time.Second)
+	safety, err := checkedSecondsDuration(mission.Spec.SafetyMarginSeconds)
+	if err != nil {
+		return result, nil, fmt.Errorf("safety margin: %w", err)
+	}
+	queueDelay, err := checkedSecondsDuration(summary.Spec.QueueDelaySeconds)
+	if err != nil {
+		return result, nil, fmt.Errorf("queue delay: %w", err)
+	}
+	result.computeStart, err = checkedTimeAdd(cursor, safety)
+	if err != nil {
+		return result, nil, fmt.Errorf("compute start safety margin: %w", err)
+	}
+	result.computeStart, err = checkedTimeAdd(result.computeStart, queueDelay)
+	if err != nil {
+		return result, nil, fmt.Errorf("compute start queue delay: %w", err)
+	}
+	computeSeconds, err := predictedComputeSeconds(mission.Spec, result.capacityAllocations)
+	if err != nil {
+		return result, nil, err
+	}
+	computeDuration, err := checkedSecondsDuration(computeSeconds)
+	if err != nil {
+		return result, nil, fmt.Errorf("compute duration: %w", err)
+	}
+	result.computeEnd, err = checkedTimeAdd(result.computeStart, computeDuration)
+	if err != nil {
+		return result, nil, fmt.Errorf("compute end: %w", err)
+	}
 	result.completion = result.computeEnd
 	if mission.Spec.ResultReturnRequired {
-		transfer, snapshot, ok, reasons := findEgress(mission.Spec.OutputSizeBytes, summary.Spec.Domain, mission.Spec.ResultDestinations, result.computeEnd, mission.Spec, links, now)
+		transfer, snapshot, ok, reasons, transferErr := findEgress(mission.Spec.OutputSizeBytes, summary.Spec.Domain, mission.Spec.ResultDestinations, result.computeEnd, mission.Spec, links, now)
+		if transferErr != nil {
+			return result, nil, transferErr
+		}
 		if !ok {
-			return result, append(rejected, reasons...)
+			return result, append(rejected, reasons...), nil
 		}
 		result.resultTransfer = &transfer
 		result.sequences["link/"+snapshot.Name] = snapshot.Spec.Provenance.Sequence
@@ -193,137 +259,107 @@ func evaluateCandidate(mission *spacev1.SpaceMission, summary *spacev1.SpaceDoma
 		result.linkQualityMilli = min32(result.linkQualityMilli, linkQuality(snapshot, transfer.WindowID))
 		result.completion = transfer.End.Time.UTC()
 	}
-	deadlineGuard := time.Duration(mission.Spec.SafetyMarginSeconds+mission.Spec.MaximumClockSkewSeconds) * time.Second
-	if result.completion.Add(deadlineGuard).After(mission.Spec.Deadline.Time) {
-		return result, []spacev1.ConstraintExplanation{reject("deadline_missed", "mission deadline", result.completion.Add(deadlineGuard).Format(time.RFC3339Nano), mission.Spec.Deadline.Time.Format(time.RFC3339Nano), "execution or result return cannot complete before the guarded deadline")}
+	guardSeconds, err := checkedAddInt64(mission.Spec.SafetyMarginSeconds, mission.Spec.MaximumClockSkewSeconds)
+	if err != nil {
+		return result, nil, fmt.Errorf("deadline guard: %w", err)
+	}
+	deadlineGuard, err := checkedSecondsDuration(guardSeconds)
+	if err != nil {
+		return result, nil, fmt.Errorf("deadline guard: %w", err)
+	}
+	guardedCompletion, err := checkedTimeAdd(result.completion, deadlineGuard)
+	if err != nil {
+		return result, nil, fmt.Errorf("guarded completion: %w", err)
+	}
+	if guardedCompletion.After(mission.Spec.Deadline.Time) {
+		return result, []spacev1.ConstraintExplanation{reject("deadline_missed", "mission deadline", guardedCompletion.Format(time.RFC3339Nano), mission.Spec.Deadline.Time.Format(time.RFC3339Nano), "execution or result return cannot complete before the guarded deadline")}, nil
 	}
 	if !result.expiresAt.After(result.completion) {
-		return result, []spacev1.ConstraintExplanation{reject("plan_inputs_expire", "snapshot validity", result.expiresAt.Format(time.RFC3339Nano), result.completion.Format(time.RFC3339Nano), "material snapshot expires before planned completion")}
+		return result, []spacev1.ConstraintExplanation{reject("plan_inputs_expire", "snapshot validity", result.expiresAt.Format(time.RFC3339Nano), result.completion.Format(time.RFC3339Nano), "material snapshot expires before planned completion")}, nil
 	}
-	result.score = scoreCandidate(result, mission, energyLow, thermalLow, now)
-	result.explanations = []spacev1.ConstraintExplanation{
-		accept("capabilities_satisfied", "device and software capabilities", "compatible", "compatible"),
-		accept("deadline_feasible", "guarded completion", result.completion.Add(deadlineGuard).Format(time.RFC3339Nano), mission.Spec.Deadline.Time.Format(time.RFC3339Nano)),
+	result.score, err = scoreCandidate(result, mission, energyLow, thermalLow, now)
+	if err != nil {
+		return result, nil, err
+	}
+	result.explanations = append(selectionExplanations(selection),
+		accept("deadline_feasible", "guarded completion", guardedCompletion.Format(time.RFC3339Nano), mission.Spec.Deadline.Time.Format(time.RFC3339Nano)),
 		scoreExplanation("predicted_completion", result.score.PredictedCompletion),
 		scoreExplanation("data_locality", result.score.DataLocality),
 		scoreExplanation("link_risk", result.score.LinkRisk),
 		scoreExplanation("energy_thermal", result.score.EnergyThermal),
 		scoreExplanation("resilience", result.score.Resilience),
 		scoreExplanation("fragmentation", result.score.Fragmentation),
-	}
-	return result, nil
+	)
+	return result, nil, nil
 }
 
-func capabilityExplanations(mission spacev1.SpaceMissionSpec, summary spacev1.SpaceDomainResourceSummarySpec) []spacev1.ConstraintExplanation {
-	if reason := capacityMismatch(mission.RequiredCapabilities, summary.Devices); reason != "" {
-		return []spacev1.ConstraintExplanation{reject("required_capability_missing", "required capabilities", reason, "all required capabilities", "domain cannot satisfy required device capabilities")}
-	}
-	if len(mission.AlternativeCapabilities) == 0 {
-		return nil
-	}
-	for _, alternative := range mission.AlternativeCapabilities {
-		if capacityMismatch(alternative.AllOf, summary.Devices) == "" {
-			return nil
-		}
-	}
-	return []spacev1.ConstraintExplanation{reject("alternative_capability_missing", "alternative capability set", "no set satisfied", "one complete alternative set", "domain cannot satisfy any declared alternative")}
-}
-
-func capacityMismatch(requirements []spacev1.CapabilityRequirement, capacities []spacev1.DeviceCapacity) string {
-	for _, requirement := range requirements {
-		matched := int64(0)
-		for _, capacity := range capacities {
-			if capacity.Class != requirement.Class || !optionalContains(capacity.Architectures, requirement.Architecture) || !optionalContains(capacity.Models, requirement.Model) || !containsAll(capacity.Precision, requirement.Precision) {
-				continue
-			}
-			matched += capacity.Count
-		}
-		if matched < requirement.Quantity {
-			return fmt.Sprintf("class %s has %d compatible, requires %d", requirement.Class, matched, requirement.Quantity)
-		}
-	}
-	return ""
-}
-
-func predictedComputeSeconds(mission spacev1.SpaceMissionSpec, summary spacev1.SpaceDomainResourceSummarySpec) int64 {
-	computeMilli := int64(0)
-	classes := map[string]struct{}{}
-	for _, requirement := range mission.RequiredCapabilities {
-		classes[requirement.Class] = struct{}{}
-	}
-	for _, capacity := range summary.Devices {
-		if _, needed := classes[capacity.Class]; needed && capacity.ComputeMilli > computeMilli {
-			computeMilli = capacity.ComputeMilli
-		}
-	}
-	if computeMilli < 1 {
-		return mission.MaximumDurationSeconds
-	}
-	seconds := ceilDiv(mission.MaximumDurationSeconds*1000, computeMilli)
-	if seconds < mission.ExpectedDurationSeconds {
-		seconds = mission.ExpectedDurationSeconds
-	}
-	if seconds > mission.MaximumDurationSeconds {
-		seconds = mission.MaximumDurationSeconds
-	}
-	return seconds
-}
-
-func findIngress(input spacev1.DataObject, target spacev1.DomainReference, earliest time.Time, mission spacev1.SpaceMissionSpec, links map[string][]*spacev1.SpaceLinkSnapshot, now time.Time) (spacev1.TransferEpoch, *spacev1.SpaceLinkSnapshot, bool, []spacev1.ConstraintExplanation) {
-	locations := append([]string(nil), input.Locations...)
-	sort.Strings(locations)
+func findIngress(input spacev1.DataObject, target spacev1.DomainReference, earliest time.Time, mission spacev1.SpaceMissionSpec, links map[string][]*spacev1.SpaceLinkSnapshot, now time.Time) (spacev1.TransferEpoch, *spacev1.SpaceLinkSnapshot, bool, []spacev1.ConstraintExplanation, error) {
+	locations := sortedDataLocations(input.Locations)
 	var best spacev1.TransferEpoch
 	var bestSnapshot *spacev1.SpaceLinkSnapshot
-	for _, source := range locations {
-		for _, snapshot := range links[source+"->"+target.Name] {
-			if snapshot.Spec.Destination != target {
+	for _, location := range locations {
+		for _, snapshot := range links[directedDomainKey(location.Domain, target)] {
+			if snapshot.Spec.Source != location.Domain || snapshot.Spec.Destination != target {
 				continue
 			}
-			if transfer, ok := fitTransfer(snapshot, input.SizeBytes, earliest, mission, now); ok && (bestSnapshot == nil || transfer.End.Before(&best.End) || (transfer.End.Equal(&best.End) && snapshot.Name < bestSnapshot.Name)) {
+			transfer, ok, err := fitTransfer(snapshot, input.SizeBytes, earliest, mission, now)
+			if err != nil {
+				return spacev1.TransferEpoch{}, nil, false, nil, fmt.Errorf("input %s transfer arithmetic: %w", input.ID, err)
+			}
+			better := ok && (bestSnapshot == nil || transfer.End.Before(&best.End) || (transfer.End.Equal(&best.End) && (snapshot.Name < bestSnapshot.Name || (snapshot.Name == bestSnapshot.Name && location.URI < best.SourceURI))))
+			if better {
 				transfer.DataID = input.ID
 				transfer.Source = snapshot.Spec.Source
+				transfer.SourceURI = location.URI
 				transfer.Destination = target
 				best, bestSnapshot = transfer, snapshot
 			}
 		}
 	}
 	if bestSnapshot == nil {
-		return spacev1.TransferEpoch{}, nil, false, []spacev1.ConstraintExplanation{reject("input_transfer_window_missing", "input transfer for "+input.ID, strings.Join(input.Locations, ","), target.Name, "no validated contact window can transfer input before it closes")}
+		return spacev1.TransferEpoch{}, nil, false, []spacev1.ConstraintExplanation{reject("input_transfer_window_missing", "input transfer for "+input.ID, formatDataLocations(input.Locations), fullDomainKey(target), "no validated contact window can transfer input before it closes")}, nil
 	}
-	return best, bestSnapshot, true, nil
+	return best, bestSnapshot, true, nil, nil
 }
 
-func findEgress(size int64, source spacev1.DomainReference, destinations []string, earliest time.Time, mission spacev1.SpaceMissionSpec, links map[string][]*spacev1.SpaceLinkSnapshot, now time.Time) (spacev1.TransferEpoch, *spacev1.SpaceLinkSnapshot, bool, []spacev1.ConstraintExplanation) {
-	values := append([]string(nil), destinations...)
-	sort.Strings(values)
-	if locationMatchesDomain(values, source) {
-		at := metav1.NewTime(earliest)
-		return spacev1.TransferEpoch{WindowID: "local-result", DataID: "result", Source: source, Destination: source, Start: at, End: at, Bytes: size}, &spacev1.SpaceLinkSnapshot{ObjectMeta: metav1.ObjectMeta{Name: "local"}, Spec: spacev1.SpaceLinkSnapshotSpec{Provenance: spacev1.Provenance{Sequence: 1}, ValidUntil: mission.Deadline}}, true, nil
+func findEgress(size int64, source spacev1.DomainReference, destinations []spacev1.DataLocation, earliest time.Time, mission spacev1.SpaceMissionSpec, links map[string][]*spacev1.SpaceLinkSnapshot, now time.Time) (spacev1.TransferEpoch, *spacev1.SpaceLinkSnapshot, bool, []spacev1.ConstraintExplanation, error) {
+	values := sortedDataLocations(destinations)
+	for _, destination := range values {
+		if destination.Domain == source {
+			at := metav1.NewTime(earliest)
+			return spacev1.TransferEpoch{WindowID: "local-result", DataID: "result", Source: source, Destination: source, DestinationURI: destination.URI, Start: at, End: at, Bytes: size}, &spacev1.SpaceLinkSnapshot{ObjectMeta: metav1.ObjectMeta{Name: "local"}, Spec: spacev1.SpaceLinkSnapshotSpec{Provenance: spacev1.Provenance{Sequence: 1}, ValidUntil: mission.Deadline}}, true, nil, nil
+		}
 	}
 	var best spacev1.TransferEpoch
 	var bestSnapshot *spacev1.SpaceLinkSnapshot
 	for _, destination := range values {
-		for _, snapshot := range links[source.Name+"->"+destination] {
-			if snapshot.Spec.Source != source {
+		for _, snapshot := range links[directedDomainKey(source, destination.Domain)] {
+			if snapshot.Spec.Source != source || snapshot.Spec.Destination != destination.Domain {
 				continue
 			}
-			if transfer, ok := fitTransfer(snapshot, size, earliest, mission, now); ok && (bestSnapshot == nil || transfer.End.Before(&best.End) || (transfer.End.Equal(&best.End) && snapshot.Name < bestSnapshot.Name)) {
+			transfer, ok, err := fitTransfer(snapshot, size, earliest, mission, now)
+			if err != nil {
+				return spacev1.TransferEpoch{}, nil, false, nil, fmt.Errorf("result transfer arithmetic: %w", err)
+			}
+			better := ok && (bestSnapshot == nil || transfer.End.Before(&best.End) || (transfer.End.Equal(&best.End) && (snapshot.Name < bestSnapshot.Name || (snapshot.Name == bestSnapshot.Name && destination.URI < best.DestinationURI))))
+			if better {
 				transfer.DataID = "result"
 				transfer.Source = source
 				transfer.Destination = snapshot.Spec.Destination
+				transfer.DestinationURI = destination.URI
 				best, bestSnapshot = transfer, snapshot
 			}
 		}
 	}
 	if bestSnapshot == nil {
-		return spacev1.TransferEpoch{}, nil, false, []spacev1.ConstraintExplanation{reject("result_return_window_missing", "result return", source.Name, strings.Join(destinations, ","), "execution fits but no validated return window completes before deadline")}
+		return spacev1.TransferEpoch{}, nil, false, []spacev1.ConstraintExplanation{reject("result_return_window_missing", "result return", fullDomainKey(source), formatDataLocations(destinations), "execution fits but no validated return window completes before deadline")}, nil
 	}
-	return best, bestSnapshot, true, nil
+	return best, bestSnapshot, true, nil, nil
 }
 
-func fitTransfer(snapshot *spacev1.SpaceLinkSnapshot, size int64, earliest time.Time, mission spacev1.SpaceMissionSpec, now time.Time) (spacev1.TransferEpoch, bool) {
+func fitTransfer(snapshot *spacev1.SpaceLinkSnapshot, size int64, earliest time.Time, mission spacev1.SpaceMissionSpec, now time.Time) (spacev1.TransferEpoch, bool, error) {
 	if snapshot == nil || !snapshot.Spec.ValidUntil.After(now) {
-		return spacev1.TransferEpoch{}, false
+		return spacev1.TransferEpoch{}, false, nil
 	}
 	windows := append([]spacev1.ContactWindow(nil), snapshot.Spec.Windows...)
 	sort.SliceStable(windows, func(i, j int) bool {
@@ -336,26 +372,70 @@ func fitTransfer(snapshot *spacev1.SpaceLinkSnapshot, size int64, earliest time.
 		if window.Predicted && snapshot.Spec.Provenance.Sequence == 0 {
 			continue
 		}
-		skew := time.Duration(mission.MaximumClockSkewSeconds+snapshot.Spec.MaximumClockSkewSeconds) * time.Second
-		start := later(earliest, window.Start.Time.Add(skew), now)
-		seconds := ceilDiv(size*8, window.BandwidthBitsPerSec) + ceilDiv(window.RTTMicroseconds, 1_000_000)
+		skewSeconds, err := checkedAddInt64(mission.MaximumClockSkewSeconds, snapshot.Spec.MaximumClockSkewSeconds)
+		if err != nil {
+			return spacev1.TransferEpoch{}, false, fmt.Errorf("clock skew: %w", err)
+		}
+		skew, err := checkedSecondsDuration(skewSeconds)
+		if err != nil {
+			return spacev1.TransferEpoch{}, false, fmt.Errorf("clock skew: %w", err)
+		}
+		windowStart, err := checkedTimeAdd(window.Start.Time, skew)
+		if err != nil {
+			return spacev1.TransferEpoch{}, false, fmt.Errorf("window start: %w", err)
+		}
+		start := later(earliest, windowStart, now)
+		bits, err := checkedMulInt64(size, 8)
+		if err != nil {
+			return spacev1.TransferEpoch{}, false, fmt.Errorf("transfer bytes to bits: %w", err)
+		}
+		payloadSeconds, err := checkedCeilDiv(bits, window.BandwidthBitsPerSec)
+		if err != nil {
+			return spacev1.TransferEpoch{}, false, err
+		}
+		rttSeconds, err := checkedCeilDiv(window.RTTMicroseconds, 1_000_000)
+		if err != nil {
+			return spacev1.TransferEpoch{}, false, err
+		}
+		seconds, err := checkedAddInt64(payloadSeconds, rttSeconds)
+		if err != nil {
+			return spacev1.TransferEpoch{}, false, fmt.Errorf("transfer duration: %w", err)
+		}
 		if seconds < 1 {
 			seconds = 1
 		}
-		end := start.Add(time.Duration(seconds) * time.Second)
-		usableEnd := window.End.Time.Add(-skew).Add(-time.Duration(mission.SafetyMarginSeconds) * time.Second)
+		transferDuration, err := checkedSecondsDuration(seconds)
+		if err != nil {
+			return spacev1.TransferEpoch{}, false, fmt.Errorf("transfer duration: %w", err)
+		}
+		end, err := checkedTimeAdd(start, transferDuration)
+		if err != nil {
+			return spacev1.TransferEpoch{}, false, fmt.Errorf("transfer end: %w", err)
+		}
+		usableEnd, err := checkedTimeAdd(window.End.Time, -skew)
+		if err != nil {
+			return spacev1.TransferEpoch{}, false, fmt.Errorf("usable window end: %w", err)
+		}
+		safety, err := checkedSecondsDuration(mission.SafetyMarginSeconds)
+		if err != nil {
+			return spacev1.TransferEpoch{}, false, fmt.Errorf("transfer safety margin: %w", err)
+		}
+		usableEnd, err = checkedTimeAdd(usableEnd, -safety)
+		if err != nil {
+			return spacev1.TransferEpoch{}, false, fmt.Errorf("usable window safety margin: %w", err)
+		}
 		if !end.After(usableEnd) && !end.After(mission.Deadline.Time) {
-			return spacev1.TransferEpoch{LinkSnapshotName: snapshot.Name, WindowID: window.ID, Start: metav1.NewTime(start.UTC()), End: metav1.NewTime(end.UTC()), Bytes: size}, true
+			return spacev1.TransferEpoch{LinkSnapshotName: snapshot.Name, WindowID: window.ID, Start: metav1.NewTime(start.UTC()), End: metav1.NewTime(end.UTC()), Bytes: size}, true, nil
 		}
 	}
-	return spacev1.TransferEpoch{}, false
+	return spacev1.TransferEpoch{}, false, nil
 }
 
 func buildLinkIndex(links []*spacev1.SpaceLinkSnapshot, clock spacev1.Clock) map[string][]*spacev1.SpaceLinkSnapshot {
 	result := map[string][]*spacev1.SpaceLinkSnapshot{}
 	for _, link := range links {
 		if link != nil && linkSnapshotAccepted(link) && spacev1.ValidateLinkSnapshot(link, nil, clock) == nil {
-			key := link.Spec.Source.Name + "->" + link.Spec.Destination.Name
+			key := directedDomainKey(link.Spec.Source, link.Spec.Destination)
 			result[key] = append(result[key], link)
 		}
 	}
@@ -389,32 +469,99 @@ func resourceSummaryAccepted(summary *spacev1.SpaceDomainResourceSummary) bool {
 	return summary.Status.ObservedGeneration == summary.Generation && condition != nil && condition.ObservedGeneration == summary.Generation && condition.Status == metav1.ConditionTrue
 }
 
-func scoreCandidate(value candidate, mission *spacev1.SpaceMission, energyLow, thermalLow bool, now time.Time) spacev1.DecisionScore {
+func scoreCandidate(value candidate, mission *spacev1.SpaceMission, energyLow, thermalLow bool, now time.Time) (spacev1.DecisionScore, error) {
 	totalHorizon := mission.Spec.Deadline.Time.Sub(now)
 	slack := mission.Spec.Deadline.Time.Sub(value.completion)
-	completion := int32(0)
+	completion := int64(0)
+	var err error
 	if totalHorizon > 0 {
-		completion = clampMilli(int64(slack) * 1000 / int64(totalHorizon))
-	}
-	locality := int32(1000)
-	if value.totalBytes > 0 {
-		locality = clampMilli(value.localBytes * 1000 / value.totalBytes)
-	}
-	energy := (value.summary.Spec.EnergyHeadroomMilli + value.summary.Spec.ThermalHeadroomMilli) / 2
-	if (energyLow || thermalLow) && mission.Spec.StatePolicy != spacev1.PolicyStrict {
-		energy /= 2
-	}
-	fragmentation := int32(0)
-	if len(value.summary.Spec.Devices) > 0 {
-		for _, device := range value.summary.Spec.Devices {
-			fragmentation += device.FragmentationMilli
+		completion, err = checkedRatioMilli(int64(slack), int64(totalHorizon))
+		if err != nil {
+			return spacev1.DecisionScore{}, fmt.Errorf("predicted completion score: %w", err)
 		}
-		fragmentation /= int32(len(value.summary.Spec.Devices))
 	}
-	result := spacev1.DecisionScore{PredictedCompletion: completion / 10, DataLocality: locality / 10, LinkRisk: value.linkQualityMilli / 10, EnergyThermal: energy / 10, Resilience: value.summary.Spec.ResilienceMilli / 10, Fragmentation: fragmentation / 10}
-	weightedMilli := completion*completionWeight + locality*localityWeight + value.linkQualityMilli*linkRiskWeight + energy*energyWeight + value.summary.Spec.ResilienceMilli*resilienceWeight + fragmentation*fragmentationWeight
-	result.Total = weightedMilli / 1000
-	return result
+	locality := int64(1000)
+	if value.totalBytes > 0 {
+		locality, err = checkedRatioMilli(value.localBytes, value.totalBytes)
+		if err != nil {
+			return spacev1.DecisionScore{}, fmt.Errorf("data locality score: %w", err)
+		}
+	}
+	energySum, err := checkedAddInt64(int64(value.summary.Spec.EnergyHeadroomMilli), int64(value.summary.Spec.ThermalHeadroomMilli))
+	if err != nil {
+		return spacev1.DecisionScore{}, fmt.Errorf("energy score: %w", err)
+	}
+	energy, err := checkedDivInt64(energySum, 2)
+	if err != nil {
+		return spacev1.DecisionScore{}, fmt.Errorf("energy score: %w", err)
+	}
+	if (energyLow || thermalLow) && mission.Spec.StatePolicy != spacev1.PolicyStrict {
+		energy, err = checkedDivInt64(energy, 2)
+		if err != nil {
+			return spacev1.DecisionScore{}, fmt.Errorf("degraded energy score: %w", err)
+		}
+	}
+	fragmentation := int64(0)
+	allocatedUnits := int64(0)
+	for _, allocation := range value.capacityAllocations {
+		term, err := checkedMulInt64(allocation.Quantity, int64(allocation.Bucket.FragmentationMilli))
+		if err != nil {
+			return spacev1.DecisionScore{}, fmt.Errorf("fragmentation score: %w", err)
+		}
+		fragmentation, err = checkedAddInt64(fragmentation, term)
+		if err != nil {
+			return spacev1.DecisionScore{}, fmt.Errorf("fragmentation score: %w", err)
+		}
+		allocatedUnits, err = checkedAddInt64(allocatedUnits, allocation.Quantity)
+		if err != nil {
+			return spacev1.DecisionScore{}, fmt.Errorf("fragmentation allocation count: %w", err)
+		}
+	}
+	if allocatedUnits > 0 {
+		fragmentation, err = checkedDivInt64(fragmentation, allocatedUnits)
+		if err != nil {
+			return spacev1.DecisionScore{}, fmt.Errorf("fragmentation score: %w", err)
+		}
+	}
+	result := spacev1.DecisionScore{
+		PredictedCompletion: int32(clampMilli(completion) / 10),
+		DataLocality:        int32(clampMilli(locality) / 10),
+		LinkRisk:            value.linkQualityMilli / 10,
+		EnergyThermal:       int32(clampMilli(energy) / 10),
+		Resilience:          value.summary.Spec.ResilienceMilli / 10,
+		Fragmentation:       int32(clampMilli(fragmentation) / 10),
+	}
+	components := []struct {
+		value  int64
+		weight int64
+	}{
+		{completion, int64(completionWeight)},
+		{locality, int64(localityWeight)},
+		{int64(value.linkQualityMilli), int64(linkRiskWeight)},
+		{energy, int64(energyWeight)},
+		{int64(value.summary.Spec.ResilienceMilli), int64(resilienceWeight)},
+		{fragmentation, int64(fragmentationWeight)},
+	}
+	weightedMilli := int64(0)
+	for _, component := range components {
+		term, err := checkedMulInt64(component.value, component.weight)
+		if err != nil {
+			return spacev1.DecisionScore{}, fmt.Errorf("weighted score multiplication: %w", err)
+		}
+		weightedMilli, err = checkedAddInt64(weightedMilli, term)
+		if err != nil {
+			return spacev1.DecisionScore{}, fmt.Errorf("weighted score addition: %w", err)
+		}
+	}
+	total, err := checkedDivInt64(weightedMilli, 1000)
+	if err != nil {
+		return spacev1.DecisionScore{}, fmt.Errorf("weighted score division: %w", err)
+	}
+	if total < 0 || total > int64(^uint32(0)>>1) {
+		return spacev1.DecisionScore{}, fmt.Errorf("weighted score %d is outside int32 range", total)
+	}
+	result.Total = int32(total)
+	return result, nil
 }
 
 func linkQuality(snapshot *spacev1.SpaceLinkSnapshot, windowID string) int32 {
@@ -437,12 +584,19 @@ func materialDigest(mission *spacev1.SpaceMission, summaries []*spacev1.SpaceDom
 		Resources         []spacev1.SpaceDomainResourceSummarySpec `json:"resources"`
 		Links             []spacev1.SpaceLinkSnapshotSpec          `json:"links"`
 	}
-	value := material{Mission: mission.Spec, MissionGeneration: mission.Generation}
+	normalizedMission, err := normalizedMissionSpecForDigest(mission.Spec)
+	if err != nil {
+		return "", err
+	}
+	value := material{Mission: normalizedMission, MissionGeneration: mission.Generation}
 	for _, summary := range summaries {
 		if summary != nil {
-			value.Resources = append(value.Resources, summary.Spec)
+			value.Resources = append(value.Resources, normalizedResourceSummarySpecForDigest(summary.Spec))
 		}
 	}
+	sort.SliceStable(value.Resources, func(i, j int) bool {
+		return fullDomainKey(value.Resources[i].Domain) < fullDomainKey(value.Resources[j].Domain)
+	})
 	sortedLinks := append([]*spacev1.SpaceLinkSnapshot(nil), links...)
 	sort.SliceStable(sortedLinks, func(i, j int) bool {
 		if sortedLinks[i] == nil {
@@ -451,11 +605,13 @@ func materialDigest(mission *spacev1.SpaceMission, summaries []*spacev1.SpaceDom
 		if sortedLinks[j] == nil {
 			return true
 		}
-		return sortedLinks[i].Name < sortedLinks[j].Name
+		left := directedDomainKey(sortedLinks[i].Spec.Source, sortedLinks[i].Spec.Destination) + "\x00" + sortedLinks[i].Name
+		right := directedDomainKey(sortedLinks[j].Spec.Source, sortedLinks[j].Spec.Destination) + "\x00" + sortedLinks[j].Name
+		return left < right
 	})
 	for _, link := range sortedLinks {
 		if link != nil {
-			value.Links = append(value.Links, link.Spec)
+			value.Links = append(value.Links, normalizedLinkSpecForDigest(link.Spec))
 		}
 	}
 	raw, err := json.Marshal(value)
@@ -483,9 +639,6 @@ func initialPlacementPhase(value candidate, now time.Time) spacev1.PlacementPhas
 }
 func domainKey(value spacev1.DomainReference) string {
 	return string(value.OrbitClass) + "/" + value.ClusterID + "/" + value.Name
-}
-func locationMatchesDomain(values []string, domain spacev1.DomainReference) bool {
-	return contains(values, domain.Name) || contains(values, domain.ClusterID)
 }
 func contains(values []string, target string) bool {
 	for _, value := range values {

@@ -100,7 +100,11 @@ func ValidateExecutionLease(lease *SpaceExecutionLease, clock Clock) error {
 	if lease.Spec.MaximumClockSkewSeconds < 0 || lease.Spec.MaximumClockSkewSeconds > MaxClockSkewSecs {
 		errs.add("spec.maximumClockSkewSeconds", fmt.Sprintf("must be between 0 and %d", MaxClockSkewSecs))
 	}
-	skew := time.Duration(lease.Spec.MaximumClockSkewSeconds) * time.Second
+	skew, skewErr := checkedSecondsDurationAPI(lease.Spec.MaximumClockSkewSeconds)
+	if skewErr != nil {
+		errs.add("spec.maximumClockSkewSeconds", "duration conversion overflow")
+		skew = 0
+	}
 	if lease.Spec.HeartbeatAt.After(clock.Now().Add(skew)) {
 		errs.add("spec.heartbeatAt", "is beyond allowed clock skew")
 	}
