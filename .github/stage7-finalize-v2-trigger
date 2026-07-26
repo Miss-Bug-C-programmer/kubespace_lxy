@@ -1,0 +1,4 @@
+phase7 planner correctness full gate v2
+production baseline: c6f31a2521cb0c2615fb72794496e5c64035d9d4
+verified patch sha256: f75f3dc8a052ab1db83f5016aeb37bb81b2215670f13f123b3881832dc8b007a
+previous full gate failure: legacy gpustability phase4 fixture used string mission locations
