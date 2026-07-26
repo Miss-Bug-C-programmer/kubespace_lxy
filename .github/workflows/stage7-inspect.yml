@@ -19,18 +19,30 @@ jobs:
       run: |
         set -euo pipefail
         {
-          printf '%s\n' '=== FILES ==='
-          find contrib/space-compute cmd tests docs/space-compute -type f 2>/dev/null | sort || true
           printf '%s\n' '=== CALLSITES ==='
-          grep -R -n -E 'ResultDestinations|\.Locations|DataObject|DeviceCapacity|QueueDelaySeconds|MaximumSnapshotAgeSecs|TransferEpoch|predictedComputeSeconds|capacityMismatch|buildLinkIndex|locationMatchesDomain' contrib/space-compute cmd tests docs/space-compute 2>/dev/null || true
+          grep -R -n -E 'ResultDestinations|\.Locations|DataObject|DeviceCapacity|QueueDelaySeconds|MaximumSnapshotAgeSecs|TransferEpoch|predictedComputeSeconds|capacityMismatch|buildLinkIndex|locationMatchesDomain' contrib/space-compute cmd tests/integration/spacecomputescheduler docs/space-compute 2>/dev/null || true
           printf '%s\n' '=== TOPOLOGY ==='
           grep -R -n -i 'topology' contrib/space-compute docs/space-compute 2>/dev/null || true
         } | tee /tmp/stage7-inspect.txt
+    - name: Build source snapshot
+      run: |
+        tar -czf /tmp/stage7-source-snapshot.tgz \
+          go.mod go.sum Makefile scripts/space-compute \
+          contrib/space-compute \
+          cmd/space-compute-mission-planner cmd/space-compute-domain-agent cmd/space-compute-mission-webhook cmd/space-compute-reporter-webhook cmd/space-compute-scheduler \
+          tests/integration/spacecomputescheduler \
+          docs/space-compute docs/gpu-scheduler/manifests/space-compute-scheduler.yaml
     - name: Upload inspection artifact
       uses: actions/upload-artifact@v4
       with:
         name: stage7-callsite-inspection
         path: /tmp/stage7-inspect.txt
+        if-no-files-found: error
+    - name: Upload source snapshot
+      uses: actions/upload-artifact@v4
+      with:
+        name: stage7-source-snapshot
+        path: /tmp/stage7-source-snapshot.tgz
         if-no-files-found: error
     - name: Publish inspection success
       if: success()
