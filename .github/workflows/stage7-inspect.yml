@@ -23,7 +23,7 @@ jobs:
           wc -c .github/stage7-payload/part-*
           cat .github/stage7-payload/part-* > /tmp/stage7-source.b64
           printf 'combined-bytes '; wc -c < /tmp/stage7-source.b64
-          python3 -c "import base64,hashlib,zlib,pathlib; p=pathlib.Path('/tmp/stage7-source.b64').read_bytes(); print('combined-sha256',hashlib.sha256(p).hexdigest()); r=zlib.decompress(base64.b64decode(p,validate=True)); print('decoded-bytes',len(r)); print('patch-sha256',hashlib.sha256(r).hexdigest())"
+          python3 -c "import base64,hashlib,zlib,pathlib; p=pathlib.Path('/tmp/stage7-source.b64').read_bytes(); print('combined-sha256',hashlib.sha256(p).hexdigest()); r=zlib.decompress(base64.b64decode(p,validate=True)); print('decoded-bytes',len(r)); print('patch-sha256',hashlib.sha256(r).hexdigest())" || echo 'decode-command-failed'
         } | tee /tmp/stage7-payload-diagnostic.txt
     - uses: actions/upload-artifact@v4
       with:
