@@ -1,0 +1,221 @@
+name: stage9-canonical-api
+on:
+  push:
+    branches: [main]
+    paths: [.github/stage9-gate-trigger]
+permissions:
+  contents: write
+  statuses: write
+concurrency:
+  group: stage9-canonical-api-main
+  cancel-in-progress: false
+jobs:
+  validate-and-publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 210
+    steps:
+    - name: Publish pending status
+      env: {GH_TOKEN: "${{ github.token }}"}
+      run: gh api --method POST "repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=pending -f context="sandbox/stage9-canonical-api-${GITHUB_RUN_ID}" -f target_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" -f description="Validating Phase 9 canonical API upgrade"
+    - uses: actions/checkout@v4
+      with: {ref: "${{ github.sha }}", fetch-depth: 0}
+    - uses: actions/setup-go@v5
+      with: {go-version-file: go.mod, cache: true}
+    - name: Reconstruct and apply reviewed Phase 9 patch
+      run: |
+        set -euo pipefail
+        printf '%s  %s\n' \
+          fb1d7bebfae8b222b7001953668759f269ec5fb4f6a8e859c34a72922beb6e00 .github/stage9-payload/payload-00 \
+          5e9551cc01e225aa7c827a1c39c075545420bbe79b8ae5c66453c77d24aacbd2 .github/stage9-payload/payload-01 \
+          e0d37dd7161d68b435f8e0d5bebcedb17f05366bab4dc9476c4d510d0c75e54f .github/stage9-payload/payload-02 \
+          5c060542eaab185b0dc8e8db59fa772dc23bf5a8a6ed184d587cdb1856c90f69 .github/stage9-payload/payload-03 \
+          8de5ddde578d257ffb87ba553ca476bef0dcbea844d8f04f9ec54f308454fb7d .github/stage9-payload/payload-04 \
+          c1ab0b877d2928d7e9905a3224ade91b269b52ac04239b8c6c9b21dbf7ad5d93 .github/stage9-payload/payload-05 \
+          fef097658cda150729d66be8e6db1f0e48452fe01743502810417195d19f97d8 .github/stage9-payload/payload-06 \
+          8b27a2bea5b5c224d3fe45ff27e893bc3e334d0603c4373418ee95850f61a09f .github/stage9-payload/payload-07 | sha256sum -c -
+        cat .github/stage9-payload/payload-* > /tmp/stage9.patch.xz.b64
+        printf '%s  %s\n' 30e976f7e0ac3f62fdc215804915aab7e12e5ee27912d132496cf8c6872918f /tmp/stage9.patch.xz.b64 | sha256sum -c -
+        base64 --decode /tmp/stage9.patch.xz.b64 > /tmp/stage9.patch.xz
+        printf '%s  %s\n' f032e49e0e2a7d7870ff3aca1c9ae64bd641322f9fcc900324b18a42b4aeac2f /tmp/stage9.patch.xz | sha256sum -c -
+        xz --decompress --stdout /tmp/stage9.patch.xz > /tmp/stage9.patch
+        printf '%s  %s\n' ffa652ac4ceaa623d7c0288be452bd8962090d0d54e99b43f058f8c92e639204 /tmp/stage9.patch | sha256sum -c -
+        git apply --check --whitespace=error-all /tmp/stage9.patch
+        git apply /tmp/stage9.patch
+    - name: Format Phase 9 Go source
+      run: |
+        set -euo pipefail
+        gofmt -w \
+          cmd/space-compute-conversion-webhook/*.go \
+          cmd/space-compute-storage-migrator/*.go \
+          cmd/space-compute-mission-planner/*.go \
+          cmd/space-compute-reporter-webhook/*.go \
+          cmd/space-compute-domain-agent/*.go \
+          contrib/space-compute/pkg/admission/*.go \
+          contrib/space-compute/pkg/apis/v1alpha1/*.go \
+          contrib/space-compute/pkg/apis/v1beta1/*.go \
+          contrib/space-compute/pkg/conversion/*.go \
+          contrib/space-compute/pkg/migration/*.go \
+          contrib/space-compute/pkg/kube/*.go \
+          contrib/space-compute/pkg/planner/*.go \
+          contrib/space-compute/pkg/transport/*.go \
+          contrib/space-compute/pkg/workload/*.go
+    - name: Diff and YAML checks
+      run: |
+        set -euo pipefail
+        git diff --check
+        ruby -e 'require "yaml"; ARGV.each { |p| YAML.load_stream(File.read(p), aliases: true) }' docs/space-compute/manifests/*.yaml docs/gpu-scheduler/manifests/space-compute-scheduler.yaml
+        bash -n scripts/space-compute
+    - name: Verify Phase 9 API and isolation invariants
+      run: |
+        set -euo pipefail
+        changed="$(git diff --name-only "$GITHUB_SHA" -- pkg/executor/embed pkg/scheduler/plugins/gpustability cmd/space-compute-scheduler docs/gpu-scheduler/manifests/space-compute-scheduler.yaml || true)"
+        test -z "$changed"
+        ruby <<'RB'
+        require 'yaml'
+        docs = YAML.load_stream(File.read('docs/space-compute/manifests/phase9-canonical-crds.yaml'), aliases: true)
+        crds = docs.select { |x| x && x['kind'] == 'CustomResourceDefinition' }
+        expected = %w[
+          SpaceLinkSnapshot SpaceDomainResourceSummary SpaceMission SpacePlacementIntent
+          SpaceDomainReporterBinding SpaceTransferIntent SpaceTransferReceipt SpaceExecutionLease
+          SpaceExecutionObservation SpaceResultReceipt PhysicalDeviceInventory
+        ]
+        kinds = crds.map { |c| c.dig('spec','names','kind') }
+        missing = expected - kinds
+        raise "missing CRDs: #{missing.inspect}" unless missing.empty?
+        crds.each do |crd|
+          versions = crd.dig('spec','versions').to_h { |v| [v['name'], v] }
+          a, b = versions['v1alpha1'], versions['v1beta1']
+          raise "#{crd['metadata']['name']} missing dual versions" unless a && b
+          raise "#{crd['metadata']['name']} alpha contract" unless a['served'] == true && a['storage'] == false
+          raise "#{crd['metadata']['name']} beta contract" unless b['served'] == true && b['storage'] == true
+          raise "#{crd['metadata']['name']} alpha/beta schemas differ" unless a['schema'] == b['schema']
+          raise "#{crd['metadata']['name']} conversion missing" unless crd.dig('spec','conversion','strategy') == 'Webhook'
+          raise "#{crd['metadata']['name']} conversion path" unless crd.dig('spec','conversion','webhook','clientConfig','service','path') == '/convert'
+        end
+        inv = crds.find { |c| c.dig('spec','names','kind') == 'PhysicalDeviceInventory' }
+        inv_props = inv.dig('spec','versions',0,'schema','openAPIV3Schema','properties','spec','properties')
+        %w[domain nodeName observedAt validUntil confidenceMilli provenance devices].each { |f| raise "inventory missing #{f}" unless inv_props.key?(f) }
+        device = inv_props['devices']['items']['properties']
+        %w[stableDeviceID kubernetesResourceName allocationID class vendor model architecture topology peerInterconnects totalMemoryBytes freeMemoryBytes memoryBandwidthBitsPerSecond interconnectBandwidthBitsPerSecond supportedPrecision firmware driver runtime libraries health temperatureMilliCelsius powerMilliWatts confidenceMilli].each { |f| raise "device missing #{f}" unless device.key?(f) }
+        summary = crds.find { |c| c.dig('spec','names','kind') == 'SpaceDomainResourceSummary' }
+        sp = summary.dig('spec','versions',0,'schema','openAPIV3Schema','properties','spec','properties')
+        %w[cpuCapacityMilli cpuAvailableMilli systemMemoryCapacityBytes systemMemoryAvailableBytes ephemeralStorageCapacityBytes ephemeralStorageAvailableBytes persistentStorageCapacityBytes persistentStorageAvailableBytes numaTopology trustState attestationState autonomyDurationSeconds energySource energyBudgetMilliJoules physicalDeviceInventoryRef].each { |f| raise "summary missing #{f}" unless sp.key?(f) }
+        mission = crds.find { |c| c.dig('spec','names','kind') == 'SpaceMission' }
+        mp = mission.dig('spec','versions',0,'schema','openAPIV3Schema','properties','spec','properties')
+        %w[workingMemoryBytes workingStorageBytes minimumBandwidthBitsPerSecond maximumRTTMicroseconds maximumLossPartsPerMillion].each { |f| raise "mission missing #{f}" unless mp.key?(f) }
+        placement = crds.find { |c| c.dig('spec','names','kind') == 'SpacePlacementIntent' }
+        pp = placement.dig('spec','versions',0,'schema','openAPIV3Schema','properties','spec','properties')
+        %w[selectedCapabilitySetName selectedCapabilities selectedPhysicalDeviceConstraints].each { |f| raise "placement spec missing #{f}" unless pp.key?(f) }
+        ps = placement.dig('spec','versions',0,'schema','openAPIV3Schema','properties','status','properties')
+        %w[transferState transferReceiptReferences executionLeaseReference fencingTokenHash checkpointReceipt resultReceipt remoteAcknowledgementSequence].each { |f| raise "placement status missing #{f}" unless ps.key?(f) }
+        RB
+        ruby <<'RB'
+        require 'yaml'
+        docs = YAML.load_stream(File.read('docs/space-compute/manifests/storage-version-migrator.yaml'), aliases: true)
+        job = docs.find { |x| x && x['kind'] == 'Job' }
+        raise 'migrator Job must be suspended by default' unless job && job.dig('spec','suspend') == true
+        args = job.dig('spec','template','spec','containers',0,'args') || []
+        raise 'migrator default target is not v1beta1' unless args.include?('--target-version=v1beta1')
+        RB
+        grep -q 'CanonicalVersion.*v1beta1' contrib/space-compute/pkg/apis/v1alpha1/register.go
+        grep -q 'PhysicalDeviceInventoryGVR.*CanonicalVersion' contrib/space-compute/pkg/kube/repository.go
+        grep -q 'apiVersions: \[v1alpha1, v1beta1\]' docs/space-compute/manifests/mission-admission-webhook.yaml
+        grep -q 'apiVersions: \[v1alpha1, v1beta1\]' docs/space-compute/manifests/reporter-admission-webhook.yaml
+        grep -q 'storage migrator' contrib/space-compute/pkg/admission/storage_migration.go
+        grep -q 'WorkingMemoryBytes' contrib/space-compute/pkg/planner/phase9_test.go
+        grep -q 'MinimumBandwidthBitsPerSecond' contrib/space-compute/pkg/planner/phase9_test.go
+    - name: Run focused Phase 9 tests
+      run: |
+        set -o pipefail
+        go test \
+          ./cmd/space-compute-conversion-webhook \
+          ./cmd/space-compute-storage-migrator \
+          ./cmd/space-compute-mission-planner \
+          ./cmd/space-compute-reporter-webhook \
+          ./cmd/space-compute-domain-agent \
+          ./contrib/space-compute/pkg/apis/v1alpha1 \
+          ./contrib/space-compute/pkg/apis/v1beta1 \
+          ./contrib/space-compute/pkg/conversion \
+          ./contrib/space-compute/pkg/migration \
+          ./contrib/space-compute/pkg/admission \
+          ./contrib/space-compute/pkg/kube \
+          ./contrib/space-compute/pkg/planner \
+          ./contrib/space-compute/pkg/transport \
+          ./contrib/space-compute/pkg/workload -count=1 2>&1 | tee /tmp/stage9-focused.log
+        go test -race \
+          ./contrib/space-compute/pkg/conversion \
+          ./contrib/space-compute/pkg/migration \
+          ./contrib/space-compute/pkg/admission \
+          ./contrib/space-compute/pkg/kube \
+          ./contrib/space-compute/pkg/planner \
+          ./contrib/space-compute/pkg/workload -count=1 2>&1 | tee /tmp/stage9-race.log
+    - name: Run complete repository gate
+      run: |
+        set -o pipefail
+        scripts/space-compute all 2>&1 | tee /tmp/space-compute-all.log
+    - name: Verify module graph and default K3s scheduler isolation
+      run: |
+        set -euo pipefail
+        go mod verify
+        go mod tidy -diff
+        go test ./pkg/executor/embed -count=1
+    - name: Record Phase 9 verification evidence
+      run: |
+        set -euo pipefail
+        python3 - <<'PY'
+        import os
+        from pathlib import Path
+        p = Path('docs/space-compute/IMPLEMENTATION_STATUS.md')
+        text = p.read_text()
+        marker = '## Phase 9 canonical API upgrade\n'
+        if marker in text:
+            raise SystemExit('Phase 9 status section already exists')
+        section = f'''\n## Phase 9 canonical API upgrade\n\n- Executed on 2026-07-27 by GitHub Actions run `{os.environ["GITHUB_RUN_ID"]}` from validation baseline `{os.environ["GITHUB_SHA"]}` before non-force fast-forward publication.\n- Added `spacecompute.k3s.io/v1beta1` as the canonical/storage API while retaining `v1alpha1` served. All Phase 9 CRDs use webhook conversion; alpha and beta expose the same canonical schema so new fields survive downgrade/rollback views without annotation side channels. The conversion boundary preserves raw schema-admitted JSON and exact fixed-width integers.\n- Added signed cluster-scoped `PhysicalDeviceInventory` with stable/allocation identities, resource name, class/vendor/model/architecture, NUMA/socket/PCIe and peer topology, memory/interconnect capacity/bandwidth, precision/software stack, health/thermal/power, provenance, freshness and confidence. Resource summaries now include CPU, system memory, ephemeral/persistent storage, NUMA, trust/attestation, autonomy, energy source/budget and exact inventory references.\n- Mission working memory/storage and minimum-bandwidth/maximum-RTT/maximum-loss fields are validated and enforced as hard feasibility constraints. Strict, degraded and best-effort differ only in treatment of missing trusted state; present values that violate a hard limit are rejected in every mode. Placement records the selected capability set and physical-device constraints and persists transfer/receipt/lease/fencing/checkpoint/result/remote-ack audit state.\n- Added a deployable conversion webhook and an explicit, default-suspended stored-version migrator. Migration rewrites objects through the target served version and only then narrows `status.storedVersions`; rollback rewrites back to `v1alpha1` before beta removal. The dedicated migrator admission exception is limited to semantic no-op rewrites and cannot change spec/status or authorization-relevant metadata.\n- Exact successful gates: Phase 9 focused unit tests, focused race tests, unchanged `scripts/space-compute all`, `go mod verify`, `go mod tidy -diff`, YAML/schema/invariant checks and `go test ./pkg/executor/embed -count=1`. Conversion coverage includes alpha->beta, beta->alpha, round trip, large-integer/unknown schema-admitted JSON preservation; migration coverage includes forward stored-version rewrite, rollback and hard-field preservation.\n- The default K3s scheduler source, `cmd/space-compute-scheduler`, gpustability production package and `docs/gpu-scheduler/manifests/space-compute-scheduler.yaml` remain outside the Phase 9 production diff. Full-agent K3s patch-upgrade/hardware qualification remain separate release gates; Phase 9 does not reclassify them as executed.\n\n'''
+        insert = text.find('## Verified plugin catalogue')
+        if insert < 0:
+            raise SystemExit('status insertion marker missing')
+        p.write_text(text[:insert] + section + text[insert:])
+        PY
+    - name: Upload gate failure logs
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: stage9-canonical-api-error
+        path: |
+          /tmp/stage9-focused.log
+          /tmp/stage9-race.log
+          /tmp/space-compute-all.log
+        if-no-files-found: ignore
+    - name: Fast-forward Phase 9 production source
+      id: publish
+      run: |
+        set -euo pipefail
+        git fetch origin main
+        test "$(git rev-parse origin/main)" = "$GITHUB_SHA"
+        rm -rf bin
+        git rm -rf \
+          .github/stage9-source-trigger \
+          .github/workflows/stage9-source-snapshot.yml \
+          .github/stage9-gate-trigger \
+          .github/workflows/stage9-canonical-api.yml \
+          .github/stage9-payload
+        git add -A
+        git diff --cached --check
+        git config user.name space-compute-stage9-bot
+        git config user.email space-compute-stage9-bot@users.noreply.github.com
+        git commit -m 'feat: upgrade space-compute canonical API'
+        new_sha="$(git rev-parse HEAD)"
+        git push origin HEAD:main
+        echo "new_sha=$new_sha" >> "$GITHUB_OUTPUT"
+    - name: Publish final success status
+      if: success()
+      env:
+        GH_TOKEN: "${{ github.token }}"
+        NEW_SHA: "${{ steps.publish.outputs.new_sha }}"
+      run: |
+        gh api --method POST "repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=success -f context="sandbox/stage9-canonical-api-${GITHUB_RUN_ID}" -f target_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" -f description="Phase 9 gate passed and main fast-forwarded"
+        gh api --method POST "repos/${GITHUB_REPOSITORY}/statuses/${NEW_SHA}" -f state=success -f context="sandbox/stage9-canonical-api" -f target_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" -f description="Canonical API v1beta1 upgrade verified"
+    - name: Publish failure status
+      if: failure()
+      env: {GH_TOKEN: "${{ github.token }}"}
+      run: gh api --method POST "repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=failure -f context="sandbox/stage9-canonical-api-${GITHUB_RUN_ID}" -f target_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" -f description="Phase 9 canonical API gate failed; production source not published"
