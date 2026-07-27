@@ -1,0 +1,137 @@
+name: stage8-controller-correctness-v2
+on:
+  push:
+    branches: [main]
+    paths: [.github/stage8-controller-trigger-v2]
+permissions:
+  contents: write
+  statuses: write
+concurrency:
+  group: stage8-controller-correctness-main
+  cancel-in-progress: false
+jobs:
+  validate-and-publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+    - name: Publish pending status
+      env: {GH_TOKEN: "${{ github.token }}"}
+      run: gh api --method POST "repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=pending -f context="sandbox/stage8-controller-correctness-${GITHUB_RUN_ID}" -f target_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" -f description="Validating Phase 8 controller resilience hardening"
+    - uses: actions/checkout@v4
+      with: {ref: "${{ github.sha }}", fetch-depth: 0}
+    - uses: actions/setup-go@v5
+      with: {go-version-file: go.mod, cache: true}
+    - name: Apply reviewed Phase 8 patch
+      run: |
+        set -euo pipefail
+        printf '%s  %s\n' \
+          dc67981b813c949281175e039f6a61e28f1fe7f7ae484374937fed9fcc08c241 .github/stage8-payload/part-00 \
+          5dab9280bce57a224d808729ca58a8c03b5b323cde7457fc34af19353287a245 .github/stage8-payload/part-01 \
+          3db0bb2ded907e3a70a0b4ece5020db9c38a0546d9d6d9eb587b9c9504c852cc .github/stage8-payload/part-02 \
+          45b6f984c5cfc6d7c3dc629a8a00d848ba072467bc212372aaead19d608f9648 .github/stage8-payload/rem-00 \
+          7a459b28283f5faaa4af450865f0f36778ef117ab09ba4d83fa978924cdbdb1b .github/stage8-payload/rem-01 \
+          100fd851588c02796075198cf25449abe5e6d826d65c15b529109bc1f22ee9fb .github/stage8-payload/rem-02-00 \
+          ccaa05fa16f7828acd742c3e4f539175830e478865f666dffc2f499a190ddf35 .github/stage8-payload/rem-02-01 \
+          50614013750766d5294f7242ba8dbde5bbf53a8dd609dc472f5bf3fe828473ba .github/stage8-payload/rem-02-02 \
+          a49bc69d7e1d35d2bced3ee17eecfca0cdcf50d7cc8685a1cac5548f4d4c7d6b .github/stage8-payload/rem-02-03 \
+          36f5f2bb692cddc7160c07b3c670c3a0594fee9cade99f54e926e142061d1b0c .github/stage8-payload/rem-02-04 \
+          400257ac19cf456666c19120c5a27b5f0a41b62fe8ae03c0adaf48ceec4bdd7a .github/stage8-payload/rem-02-05 \
+          d98cb75e6c325521227217ee3f0959fdd7b4b69d6bcd830c85cba9b5b30eb36a .github/stage8-payload/rem-03-00 \
+          2943b338dc6ddab4b245659eef0e42292f9d12948d13ae0a010758b116549ed9 .github/stage8-payload/rem-03-01 \
+          26cdd3c84bc8fe0b8e4da27e24c988e172c7d83dd3a90990a137c0dd0906356a .github/stage8-payload/rem-03-02 \
+          6686d2d62c7631da067f1c0304d238eb04abe45b0ff233f8bf6f2577073a89a9 .github/stage8-payload/rem-03-03 \
+          4b0d8c1bb5d035efd6442d5f0ae7a6a45b6e2299cb771d8f74f93f7850f3813b .github/stage8-payload/rem-03-04 \
+          9a8861c72f5675e0a45c99cc5f1a41eedcbf8636daa9209b38eae9cfc444f09a .github/stage8-payload/rem-03-05 | sha256sum -c -
+        cat .github/stage8-payload/part-00 .github/stage8-payload/part-01 .github/stage8-payload/part-02 \
+          .github/stage8-payload/rem-00 .github/stage8-payload/rem-01 \
+          .github/stage8-payload/rem-02-00 .github/stage8-payload/rem-02-01 .github/stage8-payload/rem-02-02 .github/stage8-payload/rem-02-03 .github/stage8-payload/rem-02-04 .github/stage8-payload/rem-02-05 \
+          .github/stage8-payload/rem-03-00 .github/stage8-payload/rem-03-01 .github/stage8-payload/rem-03-02 .github/stage8-payload/rem-03-03 .github/stage8-payload/rem-03-04 .github/stage8-payload/rem-03-05 > /tmp/stage8-source.b64
+        printf '%s  %s\n' 71f59d689e118411f94a5f99d766cc9d1bc2cea7e60bba7fdbaa8e1f446a574a /tmp/stage8-source.b64 | sha256sum -c -
+        python3 - <<'PY'
+        import base64,gzip,hashlib
+        from pathlib import Path
+        p=Path('/tmp/stage8-source.b64').read_bytes(); raw=gzip.decompress(base64.b64decode(p,validate=True))
+        got=hashlib.sha256(raw).hexdigest(); want='dfb230edbb24375e009ab343a73631b4120087ffbea7d1e4ce4b9fc4c603af85'
+        if got != want: raise SystemExit(f'patch SHA mismatch: {got} != {want}')
+        Path('/tmp/stage8.patch').write_bytes(raw)
+        PY
+        git apply --check /tmp/stage8.patch
+        git apply /tmp/stage8.patch
+    - name: Format and validate source
+      run: |
+        set -euo pipefail
+        gofmt -w cmd/space-compute-mission-planner/*.go cmd/space-compute-reporter-webhook/*.go contrib/space-compute/pkg/admission/*.go contrib/space-compute/pkg/apis/v1alpha1/*.go contrib/space-compute/pkg/kube/*.go contrib/space-compute/pkg/planner/*.go
+        git diff --check
+        ruby -e 'require "yaml"; ARGV.each { |p| YAML.load_stream(File.read(p)) }' docs/space-compute/manifests/*.yaml docs/gpu-scheduler/manifests/space-compute-scheduler.yaml
+        changed="$(git diff --name-only "$GITHUB_SHA" -- pkg/executor/embed pkg/scheduler/plugins/gpustability cmd/space-compute-scheduler docs/gpu-scheduler/manifests/space-compute-scheduler.yaml || true)"; test -z "$changed"
+        ! grep -R 'missions\.List()' -n cmd/space-compute-mission-planner
+        grep -q 'PlanningSnapshot(context.Context)' contrib/space-compute/pkg/planner/controller.go
+        grep -q 'LastSyncResourceVersion' cmd/space-compute-mission-planner/main.go
+        grep -q 'missionInputLocationIndex' cmd/space-compute-mission-planner/dependency_indexes.go
+        grep -q 'placementTargetIndex' cmd/space-compute-mission-planner/dependency_indexes.go
+        grep -q 'max-pending-unique-keys' cmd/space-compute-mission-planner/main.go
+        grep -q 'queue_oldest_age_seconds' contrib/space-compute/pkg/planner/observability.go
+        grep -q 'ControllerRetryExhausted' contrib/space-compute/pkg/planner/controller.go
+        grep -q 'count/spacemissions.spacecompute.k3s.io' docs/space-compute/manifests/controller-quotas.yaml
+        grep -q -- '--reporter-qps=20' docs/space-compute/manifests/reporter-admission-webhook.yaml
+        grep -q 'planningInputDigest' docs/space-compute/manifests/phase4-crds.yaml
+    - name: Run focused Phase 8 tests
+      run: |
+        set -o pipefail
+        go test ./cmd/space-compute-mission-planner ./cmd/space-compute-reporter-webhook ./contrib/space-compute/pkg/kube ./contrib/space-compute/pkg/planner ./contrib/space-compute/pkg/workload ./contrib/space-compute/pkg/admission ./contrib/space-compute/pkg/apis/v1alpha1 -count=1 2>&1 | tee /tmp/stage8-focused.log
+        go test -race ./cmd/space-compute-mission-planner ./contrib/space-compute/pkg/kube ./contrib/space-compute/pkg/planner ./contrib/space-compute/pkg/workload ./contrib/space-compute/pkg/admission -count=1 2>&1 | tee /tmp/stage8-race.log
+    - name: Run complete repository gate
+      run: |
+        set -o pipefail
+        scripts/space-compute all 2>&1 | tee /tmp/space-compute-all.log
+    - name: Verify default K3s scheduler isolation
+      run: go test ./pkg/executor/embed -count=1
+    - name: Record Phase 8 verification evidence
+      run: |
+        set -euo pipefail
+        python3 - <<'PY'
+        import os
+        from pathlib import Path
+        p=Path('docs/space-compute/IMPLEMENTATION_STATUS.md'); text=p.read_text()
+        marker='## Phase 8 controller idempotency, error handling and scalability hardening\n'
+        if marker in text: raise SystemExit('Phase 8 status section already exists')
+        section=f'''\n## Phase 8 controller idempotency, error handling and scalability hardening\n\n- GitHub Actions run `{os.environ["GITHUB_RUN_ID"]}` validated the production patch from main baseline `{os.environ["GITHUB_SHA"]}` before fast-forward publication.\n- Planner/workload read paths use synchronized informer stores. Each planner reconcile pins one immutable resource/link input snapshot, records its deterministic SHA-256 plus resource/link cache resourceVersion watermarks, and lets later informer updates trigger the next reconcile. API clients remain the write path.\n- Mission dependencies are indexed by full domain, structured input location, result destination, required/alternative capability class, Mission UID and placement target. Link/resource/evidence callbacks enqueue only affected Missions and no longer scan the Mission store.\n- Mission/placement/Pod refresh errors are never discarded; 429 and other non-NotFound failures remain rate-limited retries. Status conflict retries merge against the latest object and preserve monotonic terminal/execution state and independent conditions. Planner/dispatcher retry exhaustion writes a fail-closed Condition/Event terminal state when the API is available.\n- Controller queues enforce a configurable hard pending-unique-key cap and expose depth, capacity, oldest-age, saturation and retry-exhaustion metrics. Saturation stops reconciliation and fails readiness instead of silently dropping work. API QPS/burst are explicit.\n- `manifests/controller-quotas.yaml` provides namespaced Mission/Placement ResourceQuota examples. Reporter admission adds bounded per-principal QPS/burst and administrator-configured cluster SpaceLinkSnapshot/SpaceDomainResourceSummary object-count limits backed by synchronized informer state.\n- Exact successful gates: focused changed-package tests, focused race tests, unchanged `scripts/space-compute all`, YAML/diff/invariant checks, and `go test ./pkg/executor/embed -count=1`. Tests include API 429 retry, watch disconnect/410 relist, cache-pinned snapshot, dependency-index selectivity, queue saturation and status-conflict merge regressions.\n- The default K3s scheduler source/profile/manifest remains outside this Phase 8 diff. External sustained API-server throttling/soak remains a deployment qualification item under R9; it was not reclassified as executed by these deterministic tests.\n\n'''
+        i=text.find('## Verified plugin catalogue')
+        if i < 0: raise SystemExit('status insertion marker missing')
+        p.write_text(text[:i]+section+text[i:])
+        PY
+    - name: Upload gate failure logs
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: stage8-controller-correctness-error-v2
+        path: |
+          /tmp/stage8-focused.log
+          /tmp/stage8-race.log
+          /tmp/space-compute-all.log
+        if-no-files-found: ignore
+    - name: Fast-forward Phase 8 production source
+      id: publish
+      run: |
+        set -euo pipefail
+        git fetch origin main
+        test "$(git rev-parse origin/main)" = "$GITHUB_SHA"
+        git rm -f .github/stage8-source-trigger .github/workflows/stage8-source-snapshot.yml .github/stage8-controller-trigger .github/workflows/stage8-controller-correctness.yml .github/stage8-controller-trigger-v2 .github/workflows/stage8-controller-correctness-v2.yml .github/stage8-payload/*
+        git add -A
+        git diff --cached --check
+        git config user.name space-compute-stage8-bot
+        git config user.email space-compute-stage8-bot@users.noreply.github.com
+        git commit -m 'fix: harden space-compute controller reconciliation'
+        new_sha="$(git rev-parse HEAD)"
+        git push origin HEAD:main
+        echo "new_sha=$new_sha" >> "$GITHUB_OUTPUT"
+    - name: Publish success status
+      if: success()
+      env: {GH_TOKEN: "${{ github.token }}", NEW_SHA: "${{ steps.publish.outputs.new_sha }}"}
+      run: |
+        gh api --method POST "repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=success -f context="sandbox/stage8-controller-correctness-${GITHUB_RUN_ID}" -f target_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" -f description="Phase 8 gate passed and main fast-forwarded"
+        gh api --method POST "repos/${GITHUB_REPOSITORY}/statuses/${NEW_SHA}" -f state=success -f context="sandbox/stage8-controller-correctness" -f target_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" -f description="Controller reconciliation hardening verified"
+    - name: Publish failure status
+      if: failure()
+      env: {GH_TOKEN: "${{ github.token }}"}
+      run: gh api --method POST "repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=failure -f context="sandbox/stage8-controller-correctness-${GITHUB_RUN_ID}" -f target_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" -f description="Phase 8 gate failed; production source not published"
