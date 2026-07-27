@@ -15,11 +15,11 @@ import (
 )
 
 var (
-	TransferIntentGVR       = schema.GroupVersionResource{Group: spacev1.GroupName, Version: "v1alpha1", Resource: "spacetransferintents"}
-	TransferReceiptGVR      = schema.GroupVersionResource{Group: spacev1.GroupName, Version: "v1alpha1", Resource: "spacetransferreceipts"}
-	ExecutionLeaseGVR       = schema.GroupVersionResource{Group: spacev1.GroupName, Version: "v1alpha1", Resource: "spaceexecutionleases"}
-	ExecutionObservationGVR = schema.GroupVersionResource{Group: spacev1.GroupName, Version: "v1alpha1", Resource: "spaceexecutionobservations"}
-	ResultReceiptGVR        = schema.GroupVersionResource{Group: spacev1.GroupName, Version: "v1alpha1", Resource: "spaceresultreceipts"}
+	TransferIntentGVR       = schema.GroupVersionResource{Group: spacev1.GroupName, Version: spacev1.CanonicalVersion, Resource: "spacetransferintents"}
+	TransferReceiptGVR      = schema.GroupVersionResource{Group: spacev1.GroupName, Version: spacev1.CanonicalVersion, Resource: "spacetransferreceipts"}
+	ExecutionLeaseGVR       = schema.GroupVersionResource{Group: spacev1.GroupName, Version: spacev1.CanonicalVersion, Resource: "spaceexecutionleases"}
+	ExecutionObservationGVR = schema.GroupVersionResource{Group: spacev1.GroupName, Version: spacev1.CanonicalVersion, Resource: "spaceexecutionobservations"}
+	ResultReceiptGVR        = schema.GroupVersionResource{Group: spacev1.GroupName, Version: spacev1.CanonicalVersion, Resource: "spaceresultreceipts"}
 )
 
 func (s *WorkloadStore) EnsureTransferIntent(ctx context.Context, desired *spacev1.SpaceTransferIntent) error {

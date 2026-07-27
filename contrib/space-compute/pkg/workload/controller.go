@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strconv"
 	"time"
 
@@ -78,10 +79,21 @@ func (c *Controller) ReconcileDispatch(ctx context.Context, mission *spacev1.Spa
 	if err != nil {
 		return 0, err
 	}
+	receiptRefs := make([]string, 0, len(intents))
 	for _, intent := range intents {
-		if !matchingTransferReceipt(intent, receipts) {
+		receipt := matchingTransferReceipt(intent, receipts)
+		if receipt == nil {
+			placement.Status.TransferState = spacev1.TransferStatePending
 			return c.wait(ctx, mission, placement, spacev1.PlacementTransferPending, "TransferReceiptPending", fmt.Sprintf("input %s has no trusted transfer receipt", intent.Spec.DataID))
 		}
+		receiptRefs = append(receiptRefs, receipt.Name)
+	}
+	sort.Strings(receiptRefs)
+	placement.Status.TransferReceiptReferences = receiptRefs
+	if len(intents) == 0 {
+		placement.Status.TransferState = spacev1.TransferStateNotRequired
+	} else {
+		placement.Status.TransferState = spacev1.TransferStateCompleted
 	}
 
 	leases, err := c.Evidence.ListExecutionLeases(ctx)
@@ -94,6 +106,11 @@ func (c *Controller) ReconcileDispatch(ctx context.Context, mission *spacev1.Spa
 	}
 	if lease == nil || lease.Spec.Source != placement.Spec.Target {
 		return c.wait(ctx, mission, placement, spacev1.PlacementExecutionLeasePending, "ExecutionLeasePending", "no current trusted execution lease from target domain")
+	}
+	placement.Status.ExecutionLeaseReference = lease.Name
+	placement.Status.FencingTokenHash = lease.Spec.Fence.TokenHash
+	if lease.Spec.Provenance.Sequence > placement.Status.RemoteAcknowledgementSequence {
+		placement.Status.RemoteAcknowledgementSequence = lease.Spec.Provenance.Sequence
 	}
 	if placement.Spec.Attempt > 1 {
 		previous := latestLeaseAnyPlan(leases, string(mission.UID), placement.Spec.Attempt-1)
@@ -280,6 +297,10 @@ func (c *Controller) ReconcileTrustedEvidence(ctx context.Context, mission *spac
 			}
 		}
 		if checkpoint != nil {
+			placement.Status.CheckpointReceipt = checkpoint.Name
+			if checkpoint.Spec.Provenance.Sequence > placement.Status.RemoteAcknowledgementSequence {
+				placement.Status.RemoteAcknowledgementSequence = checkpoint.Spec.Provenance.Sequence
+			}
 			obs := spacev1.ExecutionObservation{Sequence: placement.Status.LastObservationSequence + 1, Attempt: placement.Spec.Attempt, PodUID: remoteFenceUID(lease), Phase: "checkpointed", ObservedAt: checkpoint.Spec.ObservedAt, CheckpointID: checkpoint.Spec.CheckpointID}
 			changed, err := planner.ApplyExecutionObservation(placement, mission, obs, c.clock())
 			if err != nil {
@@ -301,6 +322,9 @@ func (c *Controller) ReconcileTrustedEvidence(ctx context.Context, mission *spac
 			}
 		}
 		if terminal != nil {
+			if terminal.Spec.Provenance.Sequence > placement.Status.RemoteAcknowledgementSequence {
+				placement.Status.RemoteAcknowledgementSequence = terminal.Spec.Provenance.Sequence
+			}
 			phase := "failed"
 			if terminal.Spec.Phase == spacev1.ExecutionObservationCompleted {
 				phase = "completed"
@@ -339,6 +363,10 @@ func (c *Controller) ReconcileTrustedEvidence(ctx context.Context, mission *spac
 			}
 			if changed {
 				placement.Status.ResultReturned = true
+				placement.Status.ResultReceipt = r.Name
+				if r.Spec.Provenance.Sequence > placement.Status.RemoteAcknowledgementSequence {
+					placement.Status.RemoteAcknowledgementSequence = r.Spec.Provenance.Sequence
+				}
 				return true, c.Store.UpdatePlacementStatus(ctx, placement)
 			}
 		}
@@ -353,17 +381,17 @@ func remoteFenceUID(lease *spacev1.SpaceExecutionLease) string {
 	return fmt.Sprintf("remote-%s-%d", lease.Spec.Source.Name, lease.Spec.Fence.LeaseEpoch)
 }
 
-func matchingTransferReceipt(intent *spacev1.SpaceTransferIntent, receipts []*spacev1.SpaceTransferReceipt) bool {
+func matchingTransferReceipt(intent *spacev1.SpaceTransferIntent, receipts []*spacev1.SpaceTransferReceipt) *spacev1.SpaceTransferReceipt {
 	for _, r := range receipts {
 		if r == nil {
 			continue
 		}
 		s := r.Spec
 		if s.TransferID == intent.Spec.TransferID && s.MissionUID == intent.Spec.MissionUID && s.PlanID == intent.Spec.PlanID && s.Attempt == intent.Spec.Attempt && s.Source == intent.Spec.Source && s.Destination == intent.Spec.Destination && s.DataID == intent.Spec.DataID && s.Bytes == intent.Spec.Bytes && s.PayloadDigest == intent.Spec.PayloadDigest {
-			return true
+			return r
 		}
 	}
-	return false
+	return nil
 }
 func latestLeaseAnyPlan(values []*spacev1.SpaceExecutionLease, uid string, attempt int32) *spacev1.SpaceExecutionLease {
 	var best *spacev1.SpaceExecutionLease
@@ -385,7 +413,7 @@ func BuildInputTransferIntents(mission *spacev1.SpaceMission, placement *spacev1
 		if payloadDigest == "" {
 			return nil, fmt.Errorf("cross-domain input %q requires a trusted payloadDigest", epoch.DataID)
 		}
-		intents = append(intents, &spacev1.SpaceTransferIntent{TypeMeta: metav1.TypeMeta{APIVersion: spacev1.SchemeGroupVersion.String(), Kind: "SpaceTransferIntent"}, ObjectMeta: metav1.ObjectMeta{Name: spacev1.TransferIntentName(epoch.Source, epoch.Destination, string(mission.UID), placement.Spec.PlanID, transferID)}, Spec: spacev1.SpaceTransferIntentSpec{TransferID: transferID, MissionUID: string(mission.UID), PlanID: placement.Spec.PlanID, Attempt: placement.Spec.Attempt, Purpose: spacev1.TransferPurposeInput, Coordinator: coordinator, Source: epoch.Source, Destination: epoch.Destination, DataID: epoch.DataID, Bytes: epoch.Bytes, PayloadDigest: payloadDigest, Window: epoch, ExpiresAt: placement.Spec.ExpiresAt}})
+		intents = append(intents, &spacev1.SpaceTransferIntent{TypeMeta: metav1.TypeMeta{APIVersion: spacev1.CanonicalAPIVersion, Kind: "SpaceTransferIntent"}, ObjectMeta: metav1.ObjectMeta{Name: spacev1.TransferIntentName(epoch.Source, epoch.Destination, string(mission.UID), placement.Spec.PlanID, transferID)}, Spec: spacev1.SpaceTransferIntentSpec{TransferID: transferID, MissionUID: string(mission.UID), PlanID: placement.Spec.PlanID, Attempt: placement.Spec.Attempt, Purpose: spacev1.TransferPurposeInput, Coordinator: coordinator, Source: epoch.Source, Destination: epoch.Destination, DataID: epoch.DataID, Bytes: epoch.Bytes, PayloadDigest: payloadDigest, Window: epoch, ExpiresAt: placement.Spec.ExpiresAt}})
 	}
 	return intents, nil
 }
@@ -455,7 +483,7 @@ func BuildAttemptPodWithLease(mission *spacev1.SpaceMission, placement *spacev1.
 	}
 	controller := true
 	block := true
-	pod.OwnerReferences = []metav1.OwnerReference{{APIVersion: spacev1.SchemeGroupVersion.String(), Kind: "SpaceMission", Name: mission.Name, UID: mission.UID, Controller: &controller, BlockOwnerDeletion: &block}}
+	pod.OwnerReferences = []metav1.OwnerReference{{APIVersion: spacev1.CanonicalAPIVersion, Kind: "SpaceMission", Name: mission.Name, UID: mission.UID, Controller: &controller, BlockOwnerDeletion: &block}}
 	return pod, nil
 }
 

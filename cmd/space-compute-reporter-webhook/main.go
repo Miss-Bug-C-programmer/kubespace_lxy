@@ -29,12 +29,12 @@ import (
 const componentName = "space-compute-reporter-webhook"
 
 type options struct {
-	kubeconfig, master, bindAddress, tlsCertFile, tlsKeyFile string
-	publicKeySecretNamespace, publicKeySecretName            string
-	maxBodyBytes                                             int64
-	maxLinkSnapshots, maxResourceSummaries                   int
-	reporterQPS                                              float64
-	reporterBurst, maxTrackedPrincipals                      int
+	kubeconfig, master, bindAddress, tlsCertFile, tlsKeyFile             string
+	publicKeySecretNamespace, publicKeySecretName                        string
+	maxBodyBytes                                                         int64
+	maxLinkSnapshots, maxResourceSummaries, maxPhysicalDeviceInventories int
+	reporterQPS                                                          float64
+	reporterBurst, maxTrackedPrincipals                                  int
 }
 
 func main() {
@@ -50,6 +50,7 @@ func main() {
 	flag.Int64Var(&opt.maxBodyBytes, "max-admission-body-bytes", spaceadmission.DefaultMaxAdmissionBodyBytes, "Maximum AdmissionReview request body")
 	flag.IntVar(&opt.maxLinkSnapshots, "max-link-snapshots", 10000, "Cluster-wide admission quota for SpaceLinkSnapshot objects")
 	flag.IntVar(&opt.maxResourceSummaries, "max-resource-summaries", 10000, "Cluster-wide admission quota for SpaceDomainResourceSummary objects")
+	flag.IntVar(&opt.maxPhysicalDeviceInventories, "max-physical-device-inventories", 10000, "Cluster-wide admission quota for PhysicalDeviceInventory objects")
 	flag.Float64Var(&opt.reporterQPS, "reporter-qps", 20, "Per authenticated reporter/gateway admission QPS")
 	flag.IntVar(&opt.reporterBurst, "reporter-burst", 40, "Per authenticated reporter/gateway admission burst")
 	flag.IntVar(&opt.maxTrackedPrincipals, "max-rate-limit-principals", 4096, "Maximum reporter principals tracked by the in-memory admission limiter")
@@ -63,8 +64,9 @@ func main() {
 }
 
 type informerReporterCounter struct {
-	links     atomic.Int64
-	resources atomic.Int64
+	links       atomic.Int64
+	resources   atomic.Int64
+	inventories atomic.Int64
 }
 
 func (c *informerReporterCounter) Count(resource string) int {
@@ -73,6 +75,8 @@ func (c *informerReporterCounter) Count(resource string) int {
 		return int(c.links.Load())
 	case "spacedomainresourcesummaries":
 		return int(c.resources.Load())
+	case "physicaldeviceinventories":
+		return int(c.inventories.Load())
 	default:
 		return 0
 	}
@@ -116,11 +120,13 @@ func run(ctx context.Context, opt options) error {
 	factory := dynamicinformer.NewDynamicSharedInformerFactory(dynamicClient, 10*time.Minute)
 	links := factory.ForResource(spacekube.LinkGVR).Informer()
 	resources := factory.ForResource(spacekube.ResourceSummaryGVR).Informer()
+	inventories := factory.ForResource(spacekube.PhysicalDeviceInventoryGVR).Informer()
 	counter := &informerReporterCounter{}
 	_, _ = links.AddEventHandler(cache.ResourceEventHandlerFuncs{AddFunc: incrementCounter(&counter.links), DeleteFunc: decrementCounter(&counter.links)})
 	_, _ = resources.AddEventHandler(cache.ResourceEventHandlerFuncs{AddFunc: incrementCounter(&counter.resources), DeleteFunc: decrementCounter(&counter.resources)})
+	_, _ = inventories.AddEventHandler(cache.ResourceEventHandlerFuncs{AddFunc: incrementCounter(&counter.inventories), DeleteFunc: decrementCounter(&counter.inventories)})
 	factory.Start(ctx.Done())
-	if !cache.WaitForCacheSync(ctx.Done(), links.HasSynced, resources.HasSynced) {
+	if !cache.WaitForCacheSync(ctx.Done(), links.HasSynced, resources.HasSynced, inventories.HasSynced) {
 		return fmt.Errorf("reporter quota informer cache synchronization failed")
 	}
 
@@ -133,7 +139,7 @@ func run(ctx context.Context, opt options) error {
 		return err
 	}
 	limitedValidator, err := spaceadmission.NewReporterLimitValidator(validator, spaceadmission.ReporterLimits{
-		MaxLinkSnapshots: opt.maxLinkSnapshots, MaxResourceSummaries: opt.maxResourceSummaries,
+		MaxLinkSnapshots: opt.maxLinkSnapshots, MaxResourceSummaries: opt.maxResourceSummaries, MaxPhysicalDeviceInventories: opt.maxPhysicalDeviceInventories,
 		QPS: opt.reporterQPS, Burst: opt.reporterBurst, MaxTrackedPrincipals: opt.maxTrackedPrincipals,
 	}, counter)
 	if err != nil {

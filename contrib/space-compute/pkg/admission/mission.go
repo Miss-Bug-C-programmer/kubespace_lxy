@@ -161,7 +161,10 @@ func (v *MissionValidator) Validate(ctx context.Context, request *admissionv1.Ad
 	if request.Operation != admissionv1.Create && request.Operation != admissionv1.Update {
 		return nil
 	}
-	if request.Resource.Group == spacev1.GroupName && request.Resource.Version == "v1alpha1" && request.Resource.Resource == "spacemissions" {
+	if request.Resource.Group == spacev1.GroupName && (request.Resource.Version == "v1alpha1" || request.Resource.Version == "v1beta1") && request.Resource.Resource == "spacemissions" {
+		if IsStorageMigrationNoop(request) {
+			return nil
+		}
 		return v.validateMission(ctx, request)
 	}
 	if request.Resource.Group == "" && request.Resource.Version == "v1" && request.Resource.Resource == "pods" {
@@ -643,7 +646,7 @@ func validateControlledPodRestricted(pod *corev1.Pod) error {
 		return fmt.Errorf("controlled attempt Pod requires exactly one SpaceMission controller ownerReference")
 	}
 	owner := pod.OwnerReferences[0]
-	if owner.APIVersion != spacev1.SchemeGroupVersion.String() || owner.Kind != "SpaceMission" || owner.Name == "" || owner.UID == "" || owner.Controller == nil || !*owner.Controller {
+	if (owner.APIVersion != spacev1.SchemeGroupVersion.String() && owner.APIVersion != spacev1.CanonicalAPIVersion) || owner.Kind != "SpaceMission" || owner.Name == "" || owner.UID == "" || owner.Controller == nil || !*owner.Controller {
 		return fmt.Errorf("controlled attempt Pod ownerReference must identify its SpaceMission controller")
 	}
 	if string(owner.UID) != pod.Labels[spacev1.LabelMissionUID] {

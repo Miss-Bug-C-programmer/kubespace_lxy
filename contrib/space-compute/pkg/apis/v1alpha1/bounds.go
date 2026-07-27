@@ -10,20 +10,34 @@ import (
 )
 
 const (
-	MaxDeviceCapacityCount     = int64(1_000_000)
-	MaxComputeMilli            = int64(1_000_000_000)
-	MaxQueueDelaySecs          = MaxMissionDurationSecs
-	MaxMaximumSnapshotAgeSecs  = MaxSnapshotLifetimeSecs
-	MaxDataLocations           = 64
-	MaxDataLocationURIBytes    = 2048
-	MaxDeviceTopologyValues    = 64
-	MaxDevicePrecisionValues   = 32
-	MaxSoftwareEntries         = 64
-	MaxSoftwareKeyBytes        = 253
-	MaxSoftwareValueBytes      = 128
-	MaxTransferEpochs          = 128
-	MaxPlannerTopologyEntries  = 20_000
-	MaxSnapshotSequenceEntries = 128
+	MaxDeviceCapacityCount      = int64(1_000_000)
+	MaxComputeMilli             = int64(1_000_000_000)
+	MaxQueueDelaySecs           = MaxMissionDurationSecs
+	MaxMaximumSnapshotAgeSecs   = MaxSnapshotLifetimeSecs
+	MaxDataLocations            = 64
+	MaxDataLocationURIBytes     = 2048
+	MaxDeviceTopologyValues     = 64
+	MaxDevicePrecisionValues    = 32
+	MaxSoftwareEntries          = 64
+	MaxSoftwareKeyBytes         = 253
+	MaxSoftwareValueBytes       = 128
+	MaxTransferEpochs           = 128
+	MaxPlannerTopologyEntries   = 20_000
+	MaxSnapshotSequenceEntries  = 128
+	MaxPhysicalDevices          = 4096
+	MaxPeerInterconnects        = 256
+	MaxPersistentStorageClasses = 64
+	MaxNUMANodes                = 1024
+	MaxCapacityBytes            = int64(1 << 60)
+	MaxCPUMilli                 = int64(1_000_000_000)
+	MaxBandwidthBitsPerSecond   = int64(1_000_000_000_000_000)
+	MaxRTTMicroseconds          = int64(86_400_000_000)
+	MaxAutonomyDurationSeconds  = int64(365 * 24 * 60 * 60)
+	MaxEnergyMilliWattHours     = int64(1 << 60)
+	MaxTemperatureMilliCelsius  = int64(500_000)
+	MinTemperatureMilliCelsius  = int64(-273_150)
+	MaxPowerMilliwatts          = int64(100_000_000)
+	MaxReferenceCount           = 256
 )
 
 func checkedAddInt64API(a, b int64) (int64, error) {

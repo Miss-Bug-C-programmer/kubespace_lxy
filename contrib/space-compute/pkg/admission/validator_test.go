@@ -339,6 +339,8 @@ func objectProvenance(t *testing.T, object runtime.Object) *spacev1.Provenance {
 		return &value.Spec.Provenance
 	case *spacev1.SpaceDomainResourceSummary:
 		return &value.Spec.Provenance
+	case *spacev1.PhysicalDeviceInventory:
+		return &value.Spec.Provenance
 	case *spacev1.SpaceTransferReceipt:
 		return &value.Spec.Provenance
 	case *spacev1.SpaceResultReceipt:

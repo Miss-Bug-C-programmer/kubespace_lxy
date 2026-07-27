@@ -150,9 +150,10 @@ func (s *kubeAgentStore) UpsertRemoteReporterObject(ctx context.Context, resourc
 	if err := json.Unmarshal(raw, &object.Object); err != nil {
 		return err
 	}
-	if object.GetAPIVersion() != spacev1.SchemeGroupVersion.String() || object.GetKind() != kind || object.GetName() == "" {
+	if (object.GetAPIVersion() != spacev1.SchemeGroupVersion.String() && object.GetAPIVersion() != spacev1.CanonicalAPIVersion) || object.GetKind() != kind || object.GetName() == "" {
 		return fmt.Errorf("remote reporter object GVK/name mismatch")
 	}
+	object.SetAPIVersion(spacev1.CanonicalAPIVersion)
 	return upsertU(ctx, s.dynamic, gvr, &object)
 }
 func (s *kubeAgentStore) PutFenceToken(ctx context.Context, namespace string, f spacev1.ExecutionFence, token string) error {

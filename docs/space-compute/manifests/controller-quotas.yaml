@@ -25,5 +25,6 @@ data:
   maxPendingUniqueKeys: "10000"
   maxLinkSnapshots: "10000"
   maxResourceSummaries: "10000"
+  maxPhysicalDeviceInventories: "10000"
   reporterQPS: "20"
   reporterBurst: "40"

@@ -22,7 +22,7 @@ func TestKubernetesTrustSourceUsesDerivedBindingAndSingleSecret(t *testing.T) {
 	domain := spacev1.DomainReference{Name: "leo-a", ClusterID: "leo-cluster", OrbitClass: spacev1.OrbitLEO}
 	ref := spacev1.SecretReference{Namespace: "kube-system", Name: "space-compute-reporter-public-keys", Key: "leo-a"}
 	binding := &spacev1.SpaceDomainReporterBinding{
-		TypeMeta:   metav1.TypeMeta{APIVersion: spacev1.SchemeGroupVersion.String(), Kind: "SpaceDomainReporterBinding"},
+		TypeMeta:   metav1.TypeMeta{APIVersion: spacev1.CanonicalAPIVersion, Kind: "SpaceDomainReporterBinding"},
 		ObjectMeta: metav1.ObjectMeta{Name: spacev1.ReporterBindingName(principal)},
 		Spec:       spacev1.SpaceDomainReporterBindingSpec{ReporterPrincipal: principal, Domain: domain, AllowedKinds: []string{"SpaceDomainResourceSummary"}, PublicKeyRef: ref},
 	}

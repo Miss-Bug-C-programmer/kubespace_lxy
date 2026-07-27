@@ -25,20 +25,20 @@ completion. Paths are repository-relative.
 | 3.4 exporter registry/discovery/no hard-coded IP | atomic profiles; watched Node addresses/metadata | address/lifecycle/multi-node tests | README | Pass; adapters incomplete |
 | 3.5 hard resource/type/assignability | resource mapping + conservative coverage | strict coverage/no-overcommit | README | Partial: no allocation linkage |
 | 3.5 architecture/model/precision/software | mission capabilities/resource summary | API/planner tests | Phase 4 API | Pass for summary model |
-| 3.5 memory/storage capacity | GPU free memory only | parser/filter tests | README | Gap for workload working storage/memory |
+| 3.5 memory/storage capacity | Phase 9 canonical summary plus Mission working-memory/storage hard constraints | API/planner Phase 9 regressions | Phase 9 canonical API | Pass for CPU-only canonical model; hardware inventory population still requires vendor qualification |
 | 3.5 trust/security constraint | Node labels/software/provenance admission | policy/admission e2e | security report | Partial: no canonical node trust field |
 | 3.5 snapshot/contact/deadline feasibility | planner and local policy | boundary/scenario tests | Phase 4 API | Pass |
 | 3.5 soft utilization/queue/thermal/energy/completion/link/locality/fragmentation/resilience | fixed score components | golden and scale tests | score tables | Pass |
 | 3.6 strict/degraded/best-effort | typed policies, never fabricate missing windows | stale/link scenario tests | Phase 4 API | Pass |
-| 4.1 device stable ID/class/vendor/model/arch | exporter-normalized ID/model/class/profile | two-GPU accuracy tests | README | Partial: vendor not canonical, only selected profiles |
-| 4.1 topology/capacity/memory/bandwidth/precision/software/health/provenance/time/confidence | split across Node, exporter snapshots and domain summary | parser/API tests | API docs | Gap: no full canonical physical-device record |
+| 4.1 device stable ID/class/vendor/model/arch | Phase 9 `PhysicalDeviceInventory` canonical fields plus existing exporter stable identity | conversion/inventory validation and canonical-digest tests | Phase 9 canonical API | Pass for API contract; physical vendor identity evidence remains Not run |
+| 4.1 topology/capacity/memory/bandwidth/precision/software/health/provenance/time/confidence | Phase 9 `PhysicalDeviceInventory` | validation/canonical/conversion/fuzz tests | Phase 9 canonical API | Pass for canonical API; live hardware accuracy remains Not run |
 | 4.2 domain/orbit identity | DomainReference and Node labels | planner/e2e | Phase 4 API | Pass |
-| 4.2 CPU/memory/storage/topology/software/trust/energy/autonomy | resource summary + Node static data | selected planner tests | Phase 4 API | Partial; several canonical fields absent |
+| 4.2 CPU/memory/storage/topology/software/trust/energy/autonomy | Phase 9 `SpaceDomainResourceSummary` canonical fields | validation/conversion/planner regressions | Phase 9 canonical API | Pass for API/planning model; live reporter qualification remains open |
 | 4.3 versioned link/contact model | SpaceLinkSnapshot | validation/fuzz/scenarios/real CRD | Phase 4 API | Pass |
 | 4.4 required/alternative capability + software | SpaceMission | validation/planner tests | Phase 4 API | Pass |
-| 4.4 working memory/storage | none explicit | none | risk R7 | Gap |
+| 4.4 working memory/storage | Phase 9 `SpaceMission` explicit byte constraints | validation/planner strict/degraded/best-effort tests | Phase 9 canonical API | Pass |
 | 4.4 I/O size/location/deadline/duration/priority/class | SpaceMission | scenario/e2e | Phase 4 API | Pass |
-| 4.4 minimum bandwidth/maximum latency | no mission fields | link model only | risk R7 | Gap |
+| 4.4 minimum bandwidth/maximum latency/loss | Phase 9 Mission min-bandwidth/max-RTT/max-loss fields enforced by planner contact-window feasibility | validation/planner policy-mode tests | Phase 9 canonical API | Pass |
 | 4.4 checkpoint/migration/retry/return/policy | SpaceMission and controllers | state/restart/partition tests | ADR/runbook | Pass locally; remote transport gap |
 | 5 scheduling decision/explanations/units | deterministic planner + scheduler explanations | golden/replay/scale | Phase 4 API | Pass |
 | 6 untrusted validation and identity | parser/API/CEL/RBAC | fuzz, forged reporter e2e | security report | Pass for implemented inputs |
@@ -54,7 +54,7 @@ completion. Paths are repository-relative.
 | 7.2 vendor discovery/allocation/runtime/thermal | opt-in Iluvatar suite | compiled but skipped | test report | Not run |
 | 8 build/unit/race/static/integration/e2e/fuzz | scripts and harness | final executed gates | test report | Pass for scoped CPU suite |
 | 8 security/vulnerability | controls implemented; patched Go 1.25.12, x/net v0.55.0 and OTel 1.40.0 | govulncheck exit 0, no reachable vulnerabilities; Punycode regression pass | security report | Pass (remaining supply-chain qualification open) |
-| 8 K3s upgrade/rollback | docs only | not run | compatibility | Not run |
+| 8 K3s API upgrade/rollback | Phase 9 dual-served CRDs, conversion webhook and explicit stored-version migrator/rollback path | conversion round-trip + migration/rollback unit tests; full K3s patch rollback remains separate | compatibility/Phase 9 API | Partial: CRD migration path implemented; supported K3s binary patch upgrade/rollback still Not run |
 | 8 release documentation/status honesty | Phase 5 reports/status | document checks | this matrix | Pass |
 
 ## Known-defect closure

@@ -1,0 +1,63 @@
+# Phase 9 CRD conversion webhook. Provision the TLS Secret for
+# space-compute-conversion-webhook.kube-system.svc and inject the issuing CA into
+# every CRD conversion.webhook.clientConfig.caBundle in phase9-canonical-crds.yaml
+# before applying that canonical CRD manifest.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: space-compute-conversion-webhook
+  namespace: kube-system
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: space-compute-conversion-webhook
+  namespace: kube-system
+spec:
+  replicas: 2
+  selector:
+    matchLabels: {app.kubernetes.io/name: space-compute-conversion-webhook}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: space-compute-conversion-webhook}
+    spec:
+      serviceAccountName: space-compute-conversion-webhook
+      priorityClassName: system-cluster-critical
+      securityContext: {seccompProfile: {type: RuntimeDefault}}
+      containers:
+      - name: webhook
+        image: space-compute-conversion-webhook:v1.33.7-k3s1
+        imagePullPolicy: IfNotPresent
+        args:
+        - --bind-address=:9445
+        - --tls-cert-file=/tls/tls.crt
+        - --tls-private-key-file=/tls/tls.key
+        - --max-conversion-body-bytes=4194304
+        ports: [{name: https, containerPort: 9445}]
+        readinessProbe: {httpGet: {scheme: HTTPS, path: /readyz, port: https}, initialDelaySeconds: 3}
+        livenessProbe: {httpGet: {scheme: HTTPS, path: /livez, port: https}, initialDelaySeconds: 10}
+        resources:
+          requests: {cpu: 25m, memory: 32Mi}
+          limits: {cpu: "1", memory: 256Mi}
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          runAsUser: 65532
+          runAsGroup: 65532
+          capabilities: {drop: [ALL]}
+        volumeMounts:
+        - {name: tls, mountPath: /tls, readOnly: true}
+      volumes:
+      - name: tls
+        secret: {secretName: space-compute-conversion-webhook-tls}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: space-compute-conversion-webhook
+  namespace: kube-system
+spec:
+  selector: {app.kubernetes.io/name: space-compute-conversion-webhook}
+  ports:
+  - {name: https, port: 443, targetPort: https}

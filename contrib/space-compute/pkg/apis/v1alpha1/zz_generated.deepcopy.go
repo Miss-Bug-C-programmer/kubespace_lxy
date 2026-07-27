@@ -99,6 +99,12 @@ func (in *SpaceDomainResourceSummary) DeepCopy() *SpaceDomainResourceSummary {
 	}
 	out.Spec.Software = copyStringMap(in.Spec.Software)
 	out.Spec.DataLocations = append([]string(nil), in.Spec.DataLocations...)
+	out.Spec.PersistentStorage = append([]StorageCapacity(nil), in.Spec.PersistentStorage...)
+	out.Spec.NUMATopology = append([]NUMAResource(nil), in.Spec.NUMATopology...)
+	if in.Spec.PhysicalDeviceInventoryRef != nil {
+		v := *in.Spec.PhysicalDeviceInventoryRef
+		out.Spec.PhysicalDeviceInventoryRef = &v
+	}
 	out.Status.Conditions = append([]metav1.Condition(nil), in.Status.Conditions...)
 	return &out
 }
@@ -109,6 +115,35 @@ func (in *SpaceDomainResourceSummaryList) DeepCopy() *SpaceDomainResourceSummary
 	}
 	out := *in
 	out.Items = make([]SpaceDomainResourceSummary, len(in.Items))
+	for i := range in.Items {
+		out.Items[i] = *in.Items[i].DeepCopy()
+	}
+	return &out
+}
+
+func (in *PhysicalDeviceInventory) DeepCopy() *PhysicalDeviceInventory {
+	if in == nil {
+		return nil
+	}
+	out := *in
+	out.ObjectMeta = *in.ObjectMeta.DeepCopy()
+	out.Spec.Devices = make([]PhysicalDevice, len(in.Spec.Devices))
+	for i := range in.Spec.Devices {
+		out.Spec.Devices[i] = in.Spec.Devices[i]
+		out.Spec.Devices[i].PeerInterconnects = append([]DevicePeerInterconnect(nil), in.Spec.Devices[i].PeerInterconnects...)
+		out.Spec.Devices[i].SupportedPrecision = append([]string(nil), in.Spec.Devices[i].SupportedPrecision...)
+		out.Spec.Devices[i].Libraries = copyStringMap(in.Spec.Devices[i].Libraries)
+	}
+	out.Status.Conditions = append([]metav1.Condition(nil), in.Status.Conditions...)
+	return &out
+}
+
+func (in *PhysicalDeviceInventoryList) DeepCopy() *PhysicalDeviceInventoryList {
+	if in == nil {
+		return nil
+	}
+	out := *in
+	out.Items = make([]PhysicalDeviceInventory, len(in.Items))
 	for i := range in.Items {
 		out.Items[i] = *in.Items[i].DeepCopy()
 	}
@@ -132,6 +167,14 @@ func (in *SpacePlacementIntent) DeepCopy() *SpacePlacementIntent {
 		out.Spec.SnapshotSequences[k] = v
 	}
 	out.Spec.Explanations = append([]ConstraintExplanation(nil), in.Spec.Explanations...)
+	out.Spec.SelectedCapabilities = copyCapabilities(in.Spec.SelectedCapabilities)
+	out.Spec.SelectedPhysicalDeviceConstraints = make([]PhysicalDeviceConstraint, len(in.Spec.SelectedPhysicalDeviceConstraints))
+	for i := range in.Spec.SelectedPhysicalDeviceConstraints {
+		out.Spec.SelectedPhysicalDeviceConstraints[i] = in.Spec.SelectedPhysicalDeviceConstraints[i]
+		out.Spec.SelectedPhysicalDeviceConstraints[i].Precision = append([]string(nil), in.Spec.SelectedPhysicalDeviceConstraints[i].Precision...)
+		out.Spec.SelectedPhysicalDeviceConstraints[i].StableDeviceIDs = append([]string(nil), in.Spec.SelectedPhysicalDeviceConstraints[i].StableDeviceIDs...)
+		out.Spec.SelectedPhysicalDeviceConstraints[i].AllocationIDs = append([]string(nil), in.Spec.SelectedPhysicalDeviceConstraints[i].AllocationIDs...)
+	}
 	if in.Status.ActivePod != nil {
 		v := *in.Status.ActivePod
 		out.Status.ActivePod = &v
@@ -140,6 +183,7 @@ func (in *SpacePlacementIntent) DeepCopy() *SpacePlacementIntent {
 		v := *in.Status.LastObservation
 		out.Status.LastObservation = &v
 	}
+	out.Status.TransferReceiptReferences = append([]string(nil), in.Status.TransferReceiptReferences...)
 	out.Status.Conditions = append([]metav1.Condition(nil), in.Status.Conditions...)
 	return &out
 }

@@ -26,6 +26,14 @@ kubectl wait --for=condition=Established --timeout=60s \
   crd/spacedomainresourcesummaries.spacecompute.k3s.io \
   crd/spacemissions.spacecompute.k3s.io \
   crd/spaceplacementintents.spacecompute.k3s.io
+# Phase 9 upgrades the API only after the conversion webhook TLS/CA is ready.
+# Apply the canonical CRDs before rolling out Phase-9 controller/reporter images,
+# because those writers use v1beta1 directly. Run the suspended storage migrator
+# only after representative alpha/beta reads and the new writers are healthy:
+# kubectl apply -f docs/space-compute/manifests/conversion-webhook.yaml
+# kubectl apply -f docs/space-compute/manifests/phase9-canonical-crds.yaml
+# <roll out Phase-9 planner/reporter/domain-agent images>
+# kubectl apply -f docs/space-compute/manifests/storage-version-migrator.yaml
 kubectl apply -f docs/space-compute/manifests/phase4-admission.yaml
 kubectl apply -f docs/space-compute/manifests/mission-planner.yaml
 kubectl apply -f docs/gpu-scheduler/manifests/space-compute-scheduler.yaml
@@ -37,14 +45,13 @@ objects in an audit sink before deleting CRDs.
 
 ## Versioned APIs
 
-All objects use `spacecompute.k3s.io/v1alpha1`. Unknown fields are pruned by the
-structural CRD schema and production Go validation rejects invalid identity,
-time, bounds and contradictions.
+Phase 9 serves both `spacecompute.k3s.io/v1alpha1` and `spacecompute.k3s.io/v1beta1`; `v1beta1` is the canonical storage version in `manifests/phase9-canonical-crds.yaml`. The fail-closed conversion webhook preserves raw JSON fields losslessly between the two served versions. All Phase-9 canonical fields are also representable in the alpha compatibility view so rollback does not silently discard them. Production Go validation rejects invalid identity, time, bounds and contradictions. See `PHASE9_CANONICAL_API.md` for the required conversion-webhook, stored-version migration and rollback sequence.
 
 | Kind | Scope | Writer and purpose |
 | --- | --- | --- |
 | `SpaceLinkSnapshot` | cluster | authenticated domain reporter; directed link measurements, bounded predicted contact windows and provenance |
 | `SpaceDomainResourceSummary` | cluster | authenticated resource reporter; bounded exporter-derived capabilities, queue, energy, thermal and resilience state |
+| `PhysicalDeviceInventory` | cluster | authenticated resource reporter; signed per-physical-device identity, topology, memory/bandwidth, software/runtime, health/thermal/power and allocation-linkage evidence |
 | `SpaceMission` | namespace | mission submitter; capability/data/deadline/retry/checkpoint/result policy and Pod template |
 | `SpacePlacementIntent` | namespace | planner; durable target domain, guarded epoch, exact transfer windows, material digest, score and explanations |
 

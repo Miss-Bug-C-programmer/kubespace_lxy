@@ -670,6 +670,10 @@ func normalizedResourceSummarySpecForDigest(spec spacev1.SpaceDomainResourceSumm
 		return capacityBucketKey(out.Devices[i]) < capacityBucketKey(out.Devices[j])
 	})
 	out.DataLocations = sortedUniqueStrings(spec.DataLocations)
+	out.PersistentStorage = append([]spacev1.StorageCapacity(nil), spec.PersistentStorage...)
+	sort.SliceStable(out.PersistentStorage, func(i, j int) bool { return out.PersistentStorage[i].Class < out.PersistentStorage[j].Class })
+	out.NUMATopology = append([]spacev1.NUMAResource(nil), spec.NUMATopology...)
+	sort.SliceStable(out.NUMATopology, func(i, j int) bool { return out.NUMATopology[i].ID < out.NUMATopology[j].ID })
 	return out
 }
 

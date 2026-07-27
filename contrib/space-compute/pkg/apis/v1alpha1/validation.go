@@ -257,6 +257,21 @@ func ValidateMission(mission *SpaceMission, clock Clock) error {
 	if !validPolicy(spec.StatePolicy) {
 		errs.add("spec.statePolicy", "must be strict, degraded, or best-effort")
 	}
+	if spec.WorkingMemoryBytes < 0 || spec.WorkingMemoryBytes > MaxCapacityBytes {
+		errs.addf("spec.workingMemoryBytes", "must be between 0 and %d", MaxCapacityBytes)
+	}
+	if spec.WorkingStorageBytes < 0 || spec.WorkingStorageBytes > MaxCapacityBytes {
+		errs.addf("spec.workingStorageBytes", "must be between 0 and %d", MaxCapacityBytes)
+	}
+	if spec.MinimumBandwidthBitsPerSecond < 0 || spec.MinimumBandwidthBitsPerSecond > MaxBandwidthBitsPerSecond {
+		errs.addf("spec.minimumBandwidthBitsPerSecond", "must be between 0 and %d", MaxBandwidthBitsPerSecond)
+	}
+	if spec.MaximumRTTMicroseconds < 0 || spec.MaximumRTTMicroseconds > MaxRTTMicroseconds {
+		errs.addf("spec.maximumRTTMicroseconds", "must be between 0 and %d", MaxRTTMicroseconds)
+	}
+	if spec.MaximumLossPartsPerMillion < 0 || spec.MaximumLossPartsPerMillion > 1_000_000 {
+		errs.add("spec.maximumLossPartsPerMillion", "must be between 0 and 1000000")
+	}
 	if len(spec.RequiredCapabilities) > MaxCapabilities {
 		errs.addf("spec.requiredCapabilities", "cannot exceed %d entries", MaxCapabilities)
 	}
@@ -360,7 +375,7 @@ func ValidateMission(mission *SpaceMission, clock Clock) error {
 		errs.add("spec.retry.maxAttempts", "must be between 1 and 100")
 	}
 	if spec.Retry.MaxConcurrentExecutions != 1 {
-		errs.add("spec.retry.maxConcurrentExecutions", "must be exactly 1 in v1alpha1")
+		errs.add("spec.retry.maxConcurrentExecutions", "must be exactly 1 in the current space-compute API")
 	}
 	if spec.Retry.AllowMigration && !spec.Checkpoint.Checkpointable {
 		errs.add("spec.retry.allowMigration", "requires checkpoint.checkpointable")
@@ -537,6 +552,200 @@ func ValidateResourceSummary(summary *SpaceDomainResourceSummary, clock Clock) e
 	if err != nil || len(decoded) != sha256.Size || summary.Spec.ExporterSnapshotDigest != strings.ToLower(summary.Spec.ExporterSnapshotDigest) {
 		errs.add("spec.exporterSnapshotDigest", "must be a lowercase hexadecimal SHA-256 digest")
 	}
+	validateScalarCapacity("spec.cpu", summary.Spec.CPU, MaxCPUMilli, &errs)
+	validateScalarCapacity("spec.systemMemoryBytes", summary.Spec.SystemMemoryBytes, MaxCapacityBytes, &errs)
+	validateScalarCapacity("spec.ephemeralStorageBytes", summary.Spec.EphemeralStorageBytes, MaxCapacityBytes, &errs)
+	if len(summary.Spec.PersistentStorage) > MaxPersistentStorageClasses {
+		errs.addf("spec.persistentStorage", "cannot exceed %d entries", MaxPersistentStorageClasses)
+	}
+	storageClasses := map[string]struct{}{}
+	for i, storage := range summary.Spec.PersistentStorage {
+		path := fmt.Sprintf("spec.persistentStorage[%d]", i)
+		if strings.TrimSpace(storage.Class) == "" || len(storage.Class) > 63 {
+			errs.add(path+".class", "must be non-empty and at most 63 bytes")
+		}
+		if _, exists := storageClasses[storage.Class]; exists {
+			errs.add(path+".class", "duplicate storage class")
+		}
+		storageClasses[storage.Class] = struct{}{}
+		validateScalarCapacity(path, ScalarCapacity{Capacity: storage.CapacityBytes, Available: storage.AvailableBytes}, MaxCapacityBytes, &errs)
+	}
+	if len(summary.Spec.NUMATopology) > MaxNUMANodes {
+		errs.addf("spec.numaTopology", "cannot exceed %d entries", MaxNUMANodes)
+	}
+	numaIDs := map[int32]struct{}{}
+	for i, node := range summary.Spec.NUMATopology {
+		path := fmt.Sprintf("spec.numaTopology[%d]", i)
+		if node.ID < 0 {
+			errs.add(path+".id", "must be non-negative")
+		}
+		if _, exists := numaIDs[node.ID]; exists {
+			errs.add(path+".id", "duplicate NUMA ID")
+		}
+		numaIDs[node.ID] = struct{}{}
+		validateScalarCapacity(path+".cpuMilli", ScalarCapacity{Capacity: node.CPUMilliCapacity, Available: node.CPUMilliAvailable}, MaxCPUMilli, &errs)
+		validateScalarCapacity(path+".memoryBytes", ScalarCapacity{Capacity: node.MemoryCapacityBytes, Available: node.MemoryAvailableBytes}, MaxCapacityBytes, &errs)
+	}
+	validateTrustState("spec.trust", summary.Spec.Trust, &errs)
+	if summary.Spec.AutonomyDurationSeconds < 0 || summary.Spec.AutonomyDurationSeconds > MaxAutonomyDurationSeconds {
+		errs.addf("spec.autonomyDurationSeconds", "must be between 0 and %d", MaxAutonomyDurationSeconds)
+	}
+	validateEnergyBudget("spec.energy", summary.Spec.Energy, &errs)
+	if ref := summary.Spec.PhysicalDeviceInventoryRef; ref != nil {
+		if values := utilvalidation.IsDNS1123Subdomain(ref.Name); len(values) > 0 {
+			errs.add("spec.physicalDeviceInventoryRef.name", strings.Join(values, ", "))
+		}
+		validateLowerSHA256("spec.physicalDeviceInventoryRef.digest", ref.Digest, &errs)
+		if len(ref.ResourceVersion) > 128 {
+			errs.add("spec.physicalDeviceInventoryRef.resourceVersion", "cannot exceed 128 bytes")
+		}
+	}
+	return errs.errOrNil()
+}
+
+func validateScalarCapacity(path string, value ScalarCapacity, maximum int64, errs *ValidationErrors) {
+	if value.Capacity < 0 || value.Capacity > maximum {
+		errs.addf(path+".capacity", "must be between 0 and %d", maximum)
+	}
+	if value.Available < 0 || value.Available > maximum {
+		errs.addf(path+".available", "must be between 0 and %d", maximum)
+	}
+	if value.Available > value.Capacity {
+		errs.add(path+".available", "cannot exceed capacity")
+	}
+}
+
+func validateTrustState(path string, value TrustAttestationState, errs *ValidationErrors) {
+	switch value.State {
+	case "", "unknown", "unverified", "verified", "failed":
+	default:
+		errs.add(path+".state", "must be unknown, unverified, verified, or failed")
+	}
+	if len(value.Provider) > 128 {
+		errs.add(path+".provider", "cannot exceed 128 bytes")
+	}
+	if value.EvidenceDigest != "" {
+		validateLowerSHA256(path+".evidenceDigest", value.EvidenceDigest, errs)
+	}
+	if !value.ObservedAt.IsZero() && !value.ValidUntil.IsZero() && !value.ValidUntil.After(value.ObservedAt.Time) {
+		errs.add(path+".validUntil", "must be after observedAt")
+	}
+}
+
+func validateEnergyBudget(path string, value EnergyBudget, errs *ValidationErrors) {
+	if len(value.Source) > 128 {
+		errs.add(path+".source", "cannot exceed 128 bytes")
+	}
+	validateScalarCapacity(path, ScalarCapacity{Capacity: value.CapacityMilliWattHours, Available: value.AvailableMilliWattHours}, MaxEnergyMilliWattHours, errs)
+}
+
+func ValidatePhysicalDeviceInventory(inventory *PhysicalDeviceInventory, clock Clock) error {
+	var errs ValidationErrors
+	if inventory == nil {
+		errs.add("inventory", "is required")
+		return errs
+	}
+	if clock == nil {
+		errs.add("clock", "is required")
+		return errs
+	}
+	validateDomain("spec.domain", inventory.Spec.Domain, &errs)
+	if problems := utilvalidation.IsDNS1123Subdomain(inventory.Spec.NodeName); len(problems) > 0 {
+		errs.add("spec.nodeName", strings.Join(problems, ", "))
+	} else if inventory.Name != PhysicalDeviceInventoryName(inventory.Spec.Domain, inventory.Spec.NodeName) {
+		errs.addf("metadata.name", "must be %q for domain and nodeName", PhysicalDeviceInventoryName(inventory.Spec.Domain, inventory.Spec.NodeName))
+	}
+	validateProvenance("spec.provenance", inventory.Spec.Provenance, &errs)
+	if inventory.Spec.ObservedAt.IsZero() || inventory.Spec.ValidUntil.IsZero() || !inventory.Spec.ValidUntil.After(inventory.Spec.ObservedAt.Time) {
+		errs.add("spec.validUntil", "must be after observedAt")
+	}
+	if !inventory.Spec.ValidUntil.After(clock.Now()) {
+		errs.add("spec.validUntil", "inventory is stale")
+	}
+	if inventory.Spec.ConfidenceMilli < 0 || inventory.Spec.ConfidenceMilli > 1000 {
+		errs.add("spec.confidenceMilli", "must be between 0 and 1000")
+	}
+	if len(inventory.Spec.Devices) > MaxPhysicalDevices {
+		errs.addf("spec.devices", "cannot exceed %d entries", MaxPhysicalDevices)
+	}
+	seen := map[string]struct{}{}
+	for i, device := range inventory.Spec.Devices {
+		path := fmt.Sprintf("spec.devices[%d]", i)
+		if strings.TrimSpace(device.StableDeviceID) == "" || len(device.StableDeviceID) > 253 {
+			errs.add(path+".stableDeviceID", "must be non-empty and at most 253 bytes")
+		}
+		if _, exists := seen[device.StableDeviceID]; exists {
+			errs.add(path+".stableDeviceID", "duplicate stable device ID")
+		}
+		seen[device.StableDeviceID] = struct{}{}
+		if problems := utilvalidation.IsQualifiedName(device.KubernetesResourceName); len(problems) > 0 {
+			errs.add(path+".kubernetesResourceName", strings.Join(problems, ", "))
+		}
+		for field, value := range map[string]string{"class": device.Class, "vendor": device.Vendor, "model": device.Model, "architecture": device.Architecture} {
+			if strings.TrimSpace(value) == "" || len(value) > 128 {
+				errs.add(path+"."+field, "must be non-empty and at most 128 bytes")
+			}
+		}
+		for field, value := range map[string]string{"allocationID": device.AllocationID, "draAllocationID": device.DRAAllocationID, "vendorAllocationID": device.VendorAllocationID} {
+			if len(value) > 512 {
+				errs.add(path+"."+field, "cannot exceed 512 bytes")
+			}
+		}
+		if len(device.Topology.SocketID) > 128 || len(device.Topology.PCIAddress) > 32 {
+			errs.add(path+".topology", "socketID or pciAddress is too long")
+		}
+		if len(device.PeerInterconnects) > MaxPeerInterconnects {
+			errs.addf(path+".peerInterconnects", "cannot exceed %d entries", MaxPeerInterconnects)
+		}
+		for j, peer := range device.PeerInterconnects {
+			pp := fmt.Sprintf("%s.peerInterconnects[%d]", path, j)
+			if strings.TrimSpace(peer.PeerStableDeviceID) == "" || len(peer.PeerStableDeviceID) > 253 {
+				errs.add(pp+".peerStableDeviceID", "must be non-empty and at most 253 bytes")
+			}
+			if strings.TrimSpace(peer.Type) == "" || len(peer.Type) > 64 {
+				errs.add(pp+".type", "must be non-empty and at most 64 bytes")
+			}
+			if peer.BandwidthBitsPerSecond < 0 || peer.BandwidthBitsPerSecond > MaxBandwidthBitsPerSecond {
+				errs.addf(pp+".bandwidthBitsPerSecond", "must be between 0 and %d", MaxBandwidthBitsPerSecond)
+			}
+		}
+		if device.TotalMemoryBytes < 0 || device.TotalMemoryBytes > MaxCapacityBytes || device.FreeMemoryBytes < 0 || device.FreeMemoryBytes > device.TotalMemoryBytes {
+			errs.add(path+".freeMemoryBytes", "memory must be non-negative and free cannot exceed total")
+		}
+		for field, value := range map[string]int64{"memoryBandwidthBitsPerSecond": device.MemoryBandwidthBitsPerSecond, "interconnectBandwidthBitsPerSecond": device.InterconnectBandwidthBitsPerSecond} {
+			if value < 0 || value > MaxBandwidthBitsPerSecond {
+				errs.addf(path+"."+field, "must be between 0 and %d", MaxBandwidthBitsPerSecond)
+			}
+		}
+		if len(device.SupportedPrecision) > MaxDevicePrecisionValues {
+			errs.addf(path+".supportedPrecision", "cannot exceed %d entries", MaxDevicePrecisionValues)
+		}
+		validateStringMap(path+".libraries", device.Libraries, &errs)
+		switch device.Health {
+		case "healthy", "degraded", "unhealthy", "unknown":
+		default:
+			errs.add(path+".health", "must be healthy, degraded, unhealthy, or unknown")
+		}
+		if device.TemperatureMilliCelsius < MinTemperatureMilliCelsius || device.TemperatureMilliCelsius > MaxTemperatureMilliCelsius {
+			errs.add(path+".temperatureMilliCelsius", "is outside supported physical range")
+		}
+		if device.PowerMilliwatts < 0 || device.PowerMilliwatts > MaxPowerMilliwatts {
+			errs.add(path+".powerMilliwatts", "is outside supported range")
+		}
+		if device.ConfidenceMilli < 0 || device.ConfidenceMilli > 1000 {
+			errs.add(path+".confidenceMilli", "must be between 0 and 1000")
+		}
+	}
+	for i, device := range inventory.Spec.Devices {
+		for j, peer := range device.PeerInterconnects {
+			path := fmt.Sprintf("spec.devices[%d].peerInterconnects[%d].peerStableDeviceID", i, j)
+			if peer.PeerStableDeviceID == device.StableDeviceID {
+				errs.add(path, "cannot refer to the same physical device")
+			} else if _, exists := seen[peer.PeerStableDeviceID]; !exists {
+				errs.add(path, "must reference a stableDeviceID present in this inventory")
+			}
+		}
+	}
 	return errs.errOrNil()
 }
 
@@ -603,6 +812,41 @@ func ValidatePlacement(placement *SpacePlacementIntent, mission *SpaceMission) e
 	}
 	if len(placement.Spec.SnapshotSequences) > MaxSnapshotSequenceEntries {
 		errs.addf("spec.snapshotSequences", "cannot exceed %d entries", MaxSnapshotSequenceEntries)
+	}
+	if len(placement.Spec.SelectedCapabilities) > MaxCapabilities {
+		errs.addf("spec.selectedCapabilities", "cannot exceed %d entries", MaxCapabilities)
+	}
+	validateCapabilities("spec.selectedCapabilities", placement.Spec.SelectedCapabilities, &errs)
+	if len(placement.Spec.SelectedPhysicalDeviceConstraints) > MaxCapabilities {
+		errs.addf("spec.selectedPhysicalDeviceConstraints", "cannot exceed %d entries", MaxCapabilities)
+	}
+	for i, value := range placement.Spec.SelectedPhysicalDeviceConstraints {
+		path := fmt.Sprintf("spec.selectedPhysicalDeviceConstraints[%d]", i)
+		if strings.TrimSpace(value.Class) == "" || value.Quantity < 1 || value.Quantity > MaxDeviceCapacityCount {
+			errs.add(path, "requires non-empty class and bounded positive quantity")
+		}
+		if len(value.Precision) > MaxDevicePrecisionValues || len(value.StableDeviceIDs) > MaxPhysicalDevices || len(value.AllocationIDs) > MaxPhysicalDevices {
+			errs.add(path, "contains too many precision/device/allocation values")
+		}
+	}
+	if len(placement.Status.TransferReceiptReferences) > MaxReferenceCount {
+		errs.addf("status.transferReceiptReferences", "cannot exceed %d entries", MaxReferenceCount)
+	}
+	for i, value := range placement.Status.TransferReceiptReferences {
+		if len(value) > 253 {
+			errs.addf(fmt.Sprintf("status.transferReceiptReferences[%d]", i), "cannot exceed 253 bytes")
+		}
+	}
+	for field, value := range map[string]string{"executionLeaseReference": placement.Status.ExecutionLeaseReference, "checkpointReceipt": placement.Status.CheckpointReceipt, "resultReceipt": placement.Status.ResultReceipt} {
+		if len(value) > 253 {
+			errs.add("status."+field, "cannot exceed 253 bytes")
+		}
+	}
+	if placement.Status.FencingTokenHash != "" {
+		validateLowerSHA256("status.fencingTokenHash", placement.Status.FencingTokenHash, &errs)
+	}
+	if placement.Status.RemoteAcknowledgementSequence < 0 {
+		errs.add("status.remoteAcknowledgementSequence", "cannot be negative")
 	}
 	return errs.errOrNil()
 }

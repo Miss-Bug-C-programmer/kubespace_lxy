@@ -13,7 +13,7 @@ rules:
   resources: [spacedomainreporterbindings]
   verbs: [get]
 - apiGroups: [spacecompute.k3s.io]
-  resources: [spacelinksnapshots, spacedomainresourcesummaries]
+  resources: [spacelinksnapshots, spacedomainresourcesummaries, physicaldeviceinventories]
   verbs: [get, list, watch]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -83,6 +83,7 @@ spec:
         - --reporter-public-key-secret-name=space-compute-reporter-public-keys
         - --max-link-snapshots=10000
         - --max-resource-summaries=10000
+        - --max-physical-device-inventories=10000
         - --reporter-qps=20
         - --reporter-burst=40
         - --max-rate-limit-principals=4096
@@ -146,11 +147,12 @@ webhooks:
   rules:
   - operations: [CREATE, UPDATE]
     apiGroups: [spacecompute.k3s.io]
-    apiVersions: [v1alpha1]
+    apiVersions: [v1alpha1, v1beta1]
     resources:
     - spacedomainreporterbindings
     - spacelinksnapshots
     - spacedomainresourcesummaries
+    - physicaldeviceinventories
     - spacetransferreceipts
     - spaceexecutionleases
     - spaceexecutionobservations

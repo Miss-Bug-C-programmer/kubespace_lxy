@@ -554,7 +554,7 @@ func (a *Agent) issueLease(ctx context.Context, assignment Assignment, destinati
 		return nil, "", err
 	}
 	f := spacev1.ExecutionFence{MissionUID: string(m.UID), PlanID: p.Spec.PlanID, Attempt: p.Spec.Attempt, LeaseEpoch: maxEpoch + 1, TokenHash: hash, ExpiresAt: metav1.NewTime(a.now().Add(a.LeaseTTL))}
-	lease := &spacev1.SpaceExecutionLease{TypeMeta: metav1.TypeMeta{APIVersion: spacev1.SchemeGroupVersion.String(), Kind: "SpaceExecutionLease"}, ObjectMeta: metav1.ObjectMeta{Name: spacev1.ExecutionLeaseName(f.MissionUID, f.PlanID, f.Attempt, f.LeaseEpoch)}, Spec: spacev1.SpaceExecutionLeaseSpec{Source: a.Local, Destination: destination, Fence: f, HeartbeatAt: metav1.NewTime(a.now()), MaximumClockSkewSeconds: int64(a.LeaseClockSkew / time.Second), Provenance: a.baseProvenance(1)}}
+	lease := &spacev1.SpaceExecutionLease{TypeMeta: metav1.TypeMeta{APIVersion: spacev1.CanonicalAPIVersion, Kind: "SpaceExecutionLease"}, ObjectMeta: metav1.ObjectMeta{Name: spacev1.ExecutionLeaseName(f.MissionUID, f.PlanID, f.Attempt, f.LeaseEpoch)}, Spec: spacev1.SpaceExecutionLeaseSpec{Source: a.Local, Destination: destination, Fence: f, HeartbeatAt: metav1.NewTime(a.now()), MaximumClockSkewSeconds: int64(a.LeaseClockSkew / time.Second), Provenance: a.baseProvenance(1)}}
 	if err := a.signLease(lease); err != nil {
 		return nil, "", err
 	}
@@ -629,7 +629,7 @@ func (a *Agent) acceptAck(ctx context.Context, e *Envelope, ack *TransferAck) er
 	if s.TransferID != ack.TransferID || s.MissionUID != ack.MissionUID || s.PlanID != ack.PlanID || s.Attempt != ack.Attempt || s.Purpose != ack.Purpose || s.Source != ack.Destination || s.Destination != ack.Source || s.DataID != ack.DataID || s.Bytes != ack.Bytes || s.PayloadDigest != ack.PayloadDigest || s.LeaseEpoch != ack.LeaseEpoch || s.TokenHash != ack.TokenHash {
 		return fmt.Errorf("transfer ACK does not exactly match local intent")
 	}
-	receipt := &spacev1.SpaceTransferReceipt{TypeMeta: metav1.TypeMeta{APIVersion: spacev1.SchemeGroupVersion.String(), Kind: "SpaceTransferReceipt"}, ObjectMeta: metav1.ObjectMeta{Name: spacev1.TransferReceiptName(s.Source, s.Destination, s.MissionUID, s.PlanID, s.TransferID)}, Spec: spacev1.SpaceTransferReceiptSpec{TransferID: s.TransferID, MissionUID: s.MissionUID, PlanID: s.PlanID, Attempt: s.Attempt, Source: s.Source, Destination: s.Destination, DataID: s.DataID, Bytes: s.Bytes, PayloadDigest: s.PayloadDigest, StartedAt: metav1.NewTime(ack.StartedAt), CompletedAt: metav1.NewTime(ack.CompletedAt), Provenance: a.baseProvenance(1)}}
+	receipt := &spacev1.SpaceTransferReceipt{TypeMeta: metav1.TypeMeta{APIVersion: spacev1.CanonicalAPIVersion, Kind: "SpaceTransferReceipt"}, ObjectMeta: metav1.ObjectMeta{Name: spacev1.TransferReceiptName(s.Source, s.Destination, s.MissionUID, s.PlanID, s.TransferID)}, Spec: spacev1.SpaceTransferReceiptSpec{TransferID: s.TransferID, MissionUID: s.MissionUID, PlanID: s.PlanID, Attempt: s.Attempt, Source: s.Source, Destination: s.Destination, DataID: s.DataID, Bytes: s.Bytes, PayloadDigest: s.PayloadDigest, StartedAt: metav1.NewTime(ack.StartedAt), CompletedAt: metav1.NewTime(ack.CompletedAt), Provenance: a.baseProvenance(1)}}
 	if err := a.signTransferReceipt(receipt); err != nil {
 		return err
 	}
@@ -645,7 +645,7 @@ func (a *Agent) acceptAck(ctx context.Context, e *Envelope, ack *TransferAck) er
 		}
 	}
 	if s.Purpose == spacev1.TransferPurposeResult {
-		result := &spacev1.SpaceResultReceipt{TypeMeta: metav1.TypeMeta{APIVersion: spacev1.SchemeGroupVersion.String(), Kind: "SpaceResultReceipt"}, ObjectMeta: metav1.ObjectMeta{Name: spacev1.ResultReceiptName(s.Source, s.Destination, s.MissionUID, s.PlanID, spacev1.ResultTransferID(s.Attempt))}, Spec: spacev1.SpaceResultReceiptSpec{ResultID: spacev1.ResultTransferID(s.Attempt), MissionUID: s.MissionUID, PlanID: s.PlanID, Attempt: s.Attempt, Source: s.Source, Destination: s.Destination, Bytes: s.Bytes, PayloadDigest: s.PayloadDigest, LeaseEpoch: s.LeaseEpoch, TokenHash: s.TokenHash, CompletedAt: metav1.NewTime(ack.CompletedAt), Provenance: a.baseProvenance(1)}}
+		result := &spacev1.SpaceResultReceipt{TypeMeta: metav1.TypeMeta{APIVersion: spacev1.CanonicalAPIVersion, Kind: "SpaceResultReceipt"}, ObjectMeta: metav1.ObjectMeta{Name: spacev1.ResultReceiptName(s.Source, s.Destination, s.MissionUID, s.PlanID, spacev1.ResultTransferID(s.Attempt))}, Spec: spacev1.SpaceResultReceiptSpec{ResultID: spacev1.ResultTransferID(s.Attempt), MissionUID: s.MissionUID, PlanID: s.PlanID, Attempt: s.Attempt, Source: s.Source, Destination: s.Destination, Bytes: s.Bytes, PayloadDigest: s.PayloadDigest, LeaseEpoch: s.LeaseEpoch, TokenHash: s.TokenHash, CompletedAt: metav1.NewTime(ack.CompletedAt), Provenance: a.baseProvenance(1)}}
 		if err := a.signResultReceipt(result); err != nil {
 			return err
 		}
@@ -714,7 +714,7 @@ func (a *Agent) ReportExecution(ctx context.Context, namespace string, report sp
 		return err
 	}
 	id := reportObservationID(report, a.now())
-	obs := &spacev1.SpaceExecutionObservation{TypeMeta: metav1.TypeMeta{APIVersion: spacev1.SchemeGroupVersion.String(), Kind: "SpaceExecutionObservation"}, ObjectMeta: metav1.ObjectMeta{Name: spacev1.ExecutionObservationName(a.Local, lease.Spec.Destination, report.MissionUID, report.PlanID, id)}, Spec: spacev1.SpaceExecutionObservationSpec{ObservationID: id, MissionUID: report.MissionUID, PlanID: report.PlanID, Attempt: report.Attempt, LeaseEpoch: report.LeaseEpoch, TokenHash: lease.Spec.Fence.TokenHash, Source: a.Local, Destination: lease.Spec.Destination, Phase: report.Phase, CheckpointID: report.CheckpointID, ObservedAt: metav1.NewTime(a.now()), Provenance: a.baseProvenance(1)}}
+	obs := &spacev1.SpaceExecutionObservation{TypeMeta: metav1.TypeMeta{APIVersion: spacev1.CanonicalAPIVersion, Kind: "SpaceExecutionObservation"}, ObjectMeta: metav1.ObjectMeta{Name: spacev1.ExecutionObservationName(a.Local, lease.Spec.Destination, report.MissionUID, report.PlanID, id)}, Spec: spacev1.SpaceExecutionObservationSpec{ObservationID: id, MissionUID: report.MissionUID, PlanID: report.PlanID, Attempt: report.Attempt, LeaseEpoch: report.LeaseEpoch, TokenHash: lease.Spec.Fence.TokenHash, Source: a.Local, Destination: lease.Spec.Destination, Phase: report.Phase, CheckpointID: report.CheckpointID, ObservedAt: metav1.NewTime(a.now()), Provenance: a.baseProvenance(1)}}
 	if err := a.signObservation(obs); err != nil {
 		return err
 	}

@@ -7,7 +7,7 @@ spec:
   matchConstraints:
     resourceRules:
     - apiGroups: [spacecompute.k3s.io]
-      apiVersions: [v1alpha1]
+      apiVersions: [v1alpha1, v1beta1]
       operations: [CREATE, UPDATE]
       resources: [spacemissions]
   validations:
@@ -35,33 +35,47 @@ spec:
   matchConstraints:
     resourceRules:
     - apiGroups: [spacecompute.k3s.io]
-      apiVersions: [v1alpha1]
+      apiVersions: [v1alpha1, v1beta1]
       operations: [CREATE, UPDATE]
       resources: [spacelinksnapshots]
+  variables:
+  - name: storageMigrationNoop
+    expression: >-
+      request.userInfo.username == 'system:serviceaccount:kube-system:space-compute-storage-migrator' &&
+      oldObject != null &&
+      object.metadata.name == oldObject.metadata.name &&
+      object.metadata.namespace == oldObject.metadata.namespace &&
+      object.metadata.uid == oldObject.metadata.uid &&
+      ((!has(object.metadata.labels) && !has(oldObject.metadata.labels)) || (has(object.metadata.labels) && has(oldObject.metadata.labels) && object.metadata.labels == oldObject.metadata.labels)) &&
+      ((!has(object.metadata.annotations) && !has(oldObject.metadata.annotations)) || (has(object.metadata.annotations) && has(oldObject.metadata.annotations) && object.metadata.annotations == oldObject.metadata.annotations)) &&
+      ((!has(object.metadata.finalizers) && !has(oldObject.metadata.finalizers)) || (has(object.metadata.finalizers) && has(oldObject.metadata.finalizers) && object.metadata.finalizers == oldObject.metadata.finalizers)) &&
+      ((!has(object.metadata.ownerReferences) && !has(oldObject.metadata.ownerReferences)) || (has(object.metadata.ownerReferences) && has(oldObject.metadata.ownerReferences) && object.metadata.ownerReferences == oldObject.metadata.ownerReferences)) &&
+      object.spec == oldObject.spec &&
+      ((!has(object.status) && !has(oldObject.status)) || (has(object.status) && has(oldObject.status) && object.status == oldObject.status))
   validations:
-  - expression: "object.spec.provenance.reporterID == request.userInfo.username"
+  - expression: "variables.storageMigrationNoop || (object.spec.provenance.reporterID == request.userInfo.username)"
     message: link provenance reporterID must equal the authenticated principal
-  - expression: "oldObject == null || object.spec.provenance.sequence == oldObject.spec.provenance.sequence + 1"
+  - expression: "variables.storageMigrationNoop || (oldObject == null || object.spec.provenance.sequence == oldObject.spec.provenance.sequence + 1)"
     message: link provenance sequence must increase on every update
-  - expression: "oldObject == null || oldObject.spec.provenance.reporterID == object.spec.provenance.reporterID"
+  - expression: "variables.storageMigrationNoop || (oldObject == null || oldObject.spec.provenance.reporterID == object.spec.provenance.reporterID)"
     message: provenance reporterID is immutable
-  - expression: "oldObject == null || oldObject.spec.domain == object.spec.domain"
+  - expression: "variables.storageMigrationNoop || (oldObject == null || oldObject.spec.domain == object.spec.domain)"
     message: resource summary domain is immutable
-  - expression: "oldObject == null || oldObject.spec.provenance.source == object.spec.provenance.source"
+  - expression: "variables.storageMigrationNoop || (oldObject == null || oldObject.spec.provenance.source == object.spec.provenance.source)"
     message: resource provenance source is immutable
-  - expression: "oldObject == null || object.spec.provenance.previousDigest == oldObject.spec.provenance.digest"
+  - expression: "variables.storageMigrationNoop || (oldObject == null || object.spec.provenance.previousDigest == oldObject.spec.provenance.digest)"
     message: resource previousDigest must chain to the prior digest
-  - expression: "oldObject == null || timestamp(object.spec.observedAt) > timestamp(oldObject.spec.observedAt)"
+  - expression: "variables.storageMigrationNoop || (oldObject == null || timestamp(object.spec.observedAt) > timestamp(oldObject.spec.observedAt))"
     message: resource observedAt must increase
-  - expression: "oldObject == null || oldObject.spec.source == object.spec.source"
+  - expression: "variables.storageMigrationNoop || (oldObject == null || oldObject.spec.source == object.spec.source)"
     message: link source domain is immutable
-  - expression: "oldObject == null || oldObject.spec.destination == object.spec.destination"
+  - expression: "variables.storageMigrationNoop || (oldObject == null || oldObject.spec.destination == object.spec.destination)"
     message: link destination domain is immutable
-  - expression: "oldObject == null || oldObject.spec.provenance.source == object.spec.provenance.source"
+  - expression: "variables.storageMigrationNoop || (oldObject == null || oldObject.spec.provenance.source == object.spec.provenance.source)"
     message: link provenance source is immutable
-  - expression: "oldObject == null || object.spec.provenance.previousDigest == oldObject.spec.provenance.digest"
+  - expression: "variables.storageMigrationNoop || (oldObject == null || object.spec.provenance.previousDigest == oldObject.spec.provenance.digest)"
     message: link previousDigest must chain to the prior digest
-  - expression: "oldObject == null || timestamp(object.spec.observedAt) > timestamp(oldObject.spec.observedAt)"
+  - expression: "variables.storageMigrationNoop || (oldObject == null || timestamp(object.spec.observedAt) > timestamp(oldObject.spec.observedAt))"
     message: link observedAt must increase
 ---
 apiVersion: admissionregistration.k8s.io/v1
@@ -81,15 +95,29 @@ spec:
   matchConstraints:
     resourceRules:
     - apiGroups: [spacecompute.k3s.io]
-      apiVersions: [v1alpha1]
+      apiVersions: [v1alpha1, v1beta1]
       operations: [CREATE, UPDATE]
       resources: [spacedomainresourcesummaries]
+  variables:
+  - name: storageMigrationNoop
+    expression: >-
+      request.userInfo.username == 'system:serviceaccount:kube-system:space-compute-storage-migrator' &&
+      oldObject != null &&
+      object.metadata.name == oldObject.metadata.name &&
+      object.metadata.namespace == oldObject.metadata.namespace &&
+      object.metadata.uid == oldObject.metadata.uid &&
+      ((!has(object.metadata.labels) && !has(oldObject.metadata.labels)) || (has(object.metadata.labels) && has(oldObject.metadata.labels) && object.metadata.labels == oldObject.metadata.labels)) &&
+      ((!has(object.metadata.annotations) && !has(oldObject.metadata.annotations)) || (has(object.metadata.annotations) && has(oldObject.metadata.annotations) && object.metadata.annotations == oldObject.metadata.annotations)) &&
+      ((!has(object.metadata.finalizers) && !has(oldObject.metadata.finalizers)) || (has(object.metadata.finalizers) && has(oldObject.metadata.finalizers) && object.metadata.finalizers == oldObject.metadata.finalizers)) &&
+      ((!has(object.metadata.ownerReferences) && !has(oldObject.metadata.ownerReferences)) || (has(object.metadata.ownerReferences) && has(oldObject.metadata.ownerReferences) && object.metadata.ownerReferences == oldObject.metadata.ownerReferences)) &&
+      object.spec == oldObject.spec &&
+      ((!has(object.status) && !has(oldObject.status)) || (has(object.status) && has(oldObject.status) && object.status == oldObject.status))
   validations:
-  - expression: "object.spec.provenance.reporterID == request.userInfo.username"
+  - expression: "variables.storageMigrationNoop || (object.spec.provenance.reporterID == request.userInfo.username)"
     message: resource provenance reporterID must equal the authenticated principal
-  - expression: "oldObject == null || object.spec.provenance.sequence == oldObject.spec.provenance.sequence + 1"
+  - expression: "variables.storageMigrationNoop || (oldObject == null || object.spec.provenance.sequence == oldObject.spec.provenance.sequence + 1)"
     message: resource provenance sequence must increase on every update
-  - expression: "oldObject == null || oldObject.spec.provenance.reporterID == object.spec.provenance.reporterID"
+  - expression: "variables.storageMigrationNoop || (oldObject == null || oldObject.spec.provenance.reporterID == object.spec.provenance.reporterID)"
     message: provenance reporterID is immutable
 ---
 apiVersion: admissionregistration.k8s.io/v1
@@ -109,11 +137,25 @@ spec:
   matchConstraints:
     resourceRules:
     - apiGroups: [spacecompute.k3s.io]
-      apiVersions: [v1alpha1]
+      apiVersions: [v1alpha1, v1beta1]
       operations: [CREATE, UPDATE]
       resources: [spaceplacementintents]
+  variables:
+  - name: storageMigrationNoop
+    expression: >-
+      request.userInfo.username == 'system:serviceaccount:kube-system:space-compute-storage-migrator' &&
+      oldObject != null &&
+      object.metadata.name == oldObject.metadata.name &&
+      object.metadata.namespace == oldObject.metadata.namespace &&
+      object.metadata.uid == oldObject.metadata.uid &&
+      ((!has(object.metadata.labels) && !has(oldObject.metadata.labels)) || (has(object.metadata.labels) && has(oldObject.metadata.labels) && object.metadata.labels == oldObject.metadata.labels)) &&
+      ((!has(object.metadata.annotations) && !has(oldObject.metadata.annotations)) || (has(object.metadata.annotations) && has(oldObject.metadata.annotations) && object.metadata.annotations == oldObject.metadata.annotations)) &&
+      ((!has(object.metadata.finalizers) && !has(oldObject.metadata.finalizers)) || (has(object.metadata.finalizers) && has(oldObject.metadata.finalizers) && object.metadata.finalizers == oldObject.metadata.finalizers)) &&
+      ((!has(object.metadata.ownerReferences) && !has(oldObject.metadata.ownerReferences)) || (has(object.metadata.ownerReferences) && has(oldObject.metadata.ownerReferences) && object.metadata.ownerReferences == oldObject.metadata.ownerReferences)) &&
+      object.spec == oldObject.spec &&
+      ((!has(object.status) && !has(oldObject.status)) || (has(object.status) && has(oldObject.status) && object.status == oldObject.status))
   validations:
-  - expression: "request.userInfo.username == 'system:serviceaccount:kube-system:space-compute-mission-planner'"
+  - expression: "variables.storageMigrationNoop || (request.userInfo.username == 'system:serviceaccount:kube-system:space-compute-mission-planner')"
     message: only the mission planner ServiceAccount may create or update placement intent
 ---
 apiVersion: admissionregistration.k8s.io/v1

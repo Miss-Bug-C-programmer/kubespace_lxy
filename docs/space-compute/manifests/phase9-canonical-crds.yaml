@@ -1,0 +1,4950 @@
+# Phase 9 canonical CRDs. Deploy the conversion webhook and inject its CA bundle before applying this file.
+# v1alpha1 remains served for compatibility; v1beta1 is the storage version.
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: spacelinksnapshots.spacecompute.k3s.io
+spec:
+  group: spacecompute.k3s.io
+  scope: Cluster
+  names:
+    plural: spacelinksnapshots
+    singular: spacelinksnapshot
+    kind: SpaceLinkSnapshot
+    shortNames:
+    - slink
+  versions:
+  - name: v1alpha1
+    served: true
+    storage: false
+    subresources:
+      status: {}
+    schema:
+      openAPIV3Schema:
+        type: object
+        required:
+        - spec
+        properties:
+          apiVersion:
+            type: string
+          kind:
+            type: string
+          metadata:
+            type: object
+          spec:
+            type: object
+            required:
+            - source
+            - destination
+            - observedAt
+            - validUntil
+            - maximumClockSkewSeconds
+            - minimumUpdateSeconds
+            - historyLimit
+            - provenance
+            - windows
+            x-kubernetes-validations:
+            - rule: self.source.name != self.destination.name || self.source.clusterID
+                != self.destination.clusterID
+              message: source and destination must differ
+            - rule: timestamp(self.validUntil) > timestamp(self.observedAt)
+              message: validUntil must be after observedAt
+            - rule: self.windows.all(w, timestamp(w.end) > timestamp(w.start))
+              message: every contact window end must be after start
+            - rule: self.windows.all(w, self.windows.filter(x, x.id != w.id).all(x,
+                timestamp(x.end) <= timestamp(w.start) || timestamp(x.start) >= timestamp(w.end)))
+              message: contact windows must not overlap
+            properties:
+              source:
+                type: object
+                required:
+                - name
+                - clusterID
+                - orbitClass
+                properties:
+                  name:
+                    type: string
+                    maxLength: 253
+                    pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
+                  clusterID:
+                    type: string
+                    maxLength: 253
+                    pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
+                  orbitClass:
+                    type: string
+                    enum:
+                    - ground
+                    - leo
+                    - meo
+                    - geo
+                    - heo
+              destination:
+                type: object
+                required:
+                - name
+                - clusterID
+                - orbitClass
+                properties:
+                  name:
+                    type: string
+                    maxLength: 253
+                    pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
+                  clusterID:
+                    type: string
+                    maxLength: 253
+                    pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
+                  orbitClass:
+                    type: string
+                    enum:
+                    - ground
+                    - leo
+                    - meo
+                    - geo
+                    - heo
+              observedAt:
+                type: string
+                format: date-time
+              validUntil:
+                type: string
+                format: date-time
+              maximumClockSkewSeconds:
+                type: integer
+                format: int64
+                minimum: 0
+                maximum: 600
+              minimumUpdateSeconds:
+                type: integer
+                format: int64
+                minimum: 1
+                maximum: 3600
+              historyLimit:
+                type: integer
+                format: int32
+                minimum: 1
+                maximum: 64
+              provenance:
+                type: object
+                required:
+                - reporterID
+                - source
+                - digest
+                - sequence
+                properties:
+                  reporterID:
+                    type: string
+                    minLength: 1
+                    maxLength: 253
+                  source:
+                    type: string
+                    minLength: 1
+                    maxLength: 256
+                  digest:
+                    type: string
+                    pattern: ^[a-f0-9]{64}$
+                  previousDigest:
+                    type: string
+                    pattern: ^[a-f0-9]{64}$
+                  sequence:
+                    type: integer
+                    format: int64
+                    minimum: 1
+                  signature:
+                    type: string
+                    minLength: 1
+                    maxLength: 256
+              windows:
+                type: array
+                minItems: 1
+                maxItems: 256
+                x-kubernetes-list-type: map
+                x-kubernetes-list-map-keys:
+                - id
+                items:
+                  type: object
+                  required:
+                  - id
+                  - start
+                  - end
+                  - bandwidthBitsPerSecond
+                  - rttMicroseconds
+                  - lossPartsPerMillion
+                  - errorPartsPerMillion
+                  - stabilityMilli
+                  - confidenceMilli
+                  - predicted
+                  properties:
+                    id:
+                      type: string
+                      maxLength: 63
+                    start:
+                      type: string
+                      format: date-time
+                    end:
+                      type: string
+                      format: date-time
+                    bandwidthBitsPerSecond:
+                      type: integer
+                      format: int64
+                      minimum: 1
+                      maximum: 10000000000000
+                    rttMicroseconds:
+                      type: integer
+                      format: int64
+                      minimum: 0
+                      maximum: 86400000000
+                    lossPartsPerMillion:
+                      type: integer
+                      format: int32
+                      minimum: 0
+                      maximum: 1000000
+                    errorPartsPerMillion:
+                      type: integer
+                      format: int32
+                      minimum: 0
+                      maximum: 1000000
+                    stabilityMilli:
+                      type: integer
+                      format: int32
+                      minimum: 0
+                      maximum: 1000
+                    confidenceMilli:
+                      type: integer
+                      format: int32
+                      minimum: 0
+                      maximum: 1000
+                    predicted:
+                      type: boolean
+          status:
+            type: object
+            x-kubernetes-preserve-unknown-fields: true
+  - name: v1beta1
+    served: true
+    storage: true
+    subresources:
+      status: {}
+    schema:
+      openAPIV3Schema:
+        type: object
+        required:
+        - spec
+        properties:
+          apiVersion:
+            type: string
+          kind:
+            type: string
+          metadata:
+            type: object
+          spec:
+            type: object
+            required:
+            - source
+            - destination
+            - observedAt
+            - validUntil
+            - maximumClockSkewSeconds
+            - minimumUpdateSeconds
+            - historyLimit
+            - provenance
+            - windows
+            x-kubernetes-validations:
+            - rule: self.source.name != self.destination.name || self.source.clusterID
+                != self.destination.clusterID
+              message: source and destination must differ
+            - rule: timestamp(self.validUntil) > timestamp(self.observedAt)
+              message: validUntil must be after observedAt
+            - rule: self.windows.all(w, timestamp(w.end) > timestamp(w.start))
+              message: every contact window end must be after start
+            - rule: self.windows.all(w, self.windows.filter(x, x.id != w.id).all(x,
+                timestamp(x.end) <= timestamp(w.start) || timestamp(x.start) >= timestamp(w.end)))
+              message: contact windows must not overlap
+            properties:
+              source:
+                type: object
+                required:
+                - name
+                - clusterID
+                - orbitClass
+                properties:
+                  name:
+                    type: string
+                    maxLength: 253
+                    pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
+                  clusterID:
+                    type: string
+                    maxLength: 253
+                    pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
+                  orbitClass:
+                    type: string
+                    enum:
+                    - ground
+                    - leo
+                    - meo
+                    - geo
+                    - heo
+              destination:
+                type: object
+                required:
+                - name
+                - clusterID
+                - orbitClass
+                properties:
+                  name:
+                    type: string
+                    maxLength: 253
+                    pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
+                  clusterID:
+                    type: string
+                    maxLength: 253
+                    pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
+                  orbitClass:
+                    type: string
+                    enum:
+                    - ground
+                    - leo
+                    - meo
+                    - geo
+                    - heo
+              observedAt:
+                type: string
+                format: date-time
+              validUntil:
+                type: string
+                format: date-time
+              maximumClockSkewSeconds:
+                type: integer
+                format: int64
+                minimum: 0
+                maximum: 600
+              minimumUpdateSeconds:
+                type: integer
+                format: int64
+                minimum: 1
+                maximum: 3600
+              historyLimit:
+                type: integer
+                format: int32
+                minimum: 1
+                maximum: 64
+              provenance:
+                type: object
+                required:
+                - reporterID
+                - source
+                - digest
+                - sequence
+                properties:
+                  reporterID:
+                    type: string
+                    minLength: 1
+                    maxLength: 253
+                  source:
+                    type: string
+                    minLength: 1
+                    maxLength: 256
+                  digest:
+                    type: string
+                    pattern: ^[a-f0-9]{64}$
+                  previousDigest:
+                    type: string
+                    pattern: ^[a-f0-9]{64}$
+                  sequence:
+                    type: integer
+                    format: int64
+                    minimum: 1
+                  signature:
+                    type: string
+                    minLength: 1
+                    maxLength: 256
+              windows:
+                type: array
+                minItems: 1
+                maxItems: 256
+                x-kubernetes-list-type: map
+                x-kubernetes-list-map-keys:
+                - id
+                items:
+                  type: object
+                  required:
+                  - id
+                  - start
+                  - end
+                  - bandwidthBitsPerSecond
+                  - rttMicroseconds
+                  - lossPartsPerMillion
+                  - errorPartsPerMillion
+                  - stabilityMilli
+                  - confidenceMilli
+                  - predicted
+                  properties:
+                    id:
+                      type: string
+                      maxLength: 63
+                    start:
+                      type: string
+                      format: date-time
+                    end:
+                      type: string
+                      format: date-time
+                    bandwidthBitsPerSecond:
+                      type: integer
+                      format: int64
+                      minimum: 1
+                      maximum: 10000000000000
+                    rttMicroseconds:
+                      type: integer
+                      format: int64
+                      minimum: 0
+                      maximum: 86400000000
+                    lossPartsPerMillion:
+                      type: integer
+                      format: int32
+                      minimum: 0
+                      maximum: 1000000
+                    errorPartsPerMillion:
+                      type: integer
+                      format: int32
+                      minimum: 0
+                      maximum: 1000000
+                    stabilityMilli:
+                      type: integer
+                      format: int32
+                      minimum: 0
+                      maximum: 1000
+                    confidenceMilli:
+                      type: integer
+                      format: int32
+                      minimum: 0
+                      maximum: 1000
+                    predicted:
+                      type: boolean
+          status:
+            type: object
+            x-kubernetes-preserve-unknown-fields: true
+  conversion:
+    strategy: Webhook
+    webhook:
+      conversionReviewVersions:
+      - v1
+      clientConfig:
+        service:
+          namespace: kube-system
+          name: space-compute-conversion-webhook
+          path: /convert
+          port: 443
+        caBundle: ''
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: spacedomainresourcesummaries.spacecompute.k3s.io
+spec:
+  group: spacecompute.k3s.io
+  scope: Cluster
+  names:
+    plural: spacedomainresourcesummaries
+    singular: spacedomainresourcesummary
+    kind: SpaceDomainResourceSummary
+    shortNames:
+    - sresource
+  versions:
+  - name: v1alpha1
+    served: true
+    storage: false
+    subresources:
+      status: {}
+    schema:
+      openAPIV3Schema:
+        type: object
+        required:
+        - spec
+        properties:
+          apiVersion:
+            type: string
+          kind:
+            type: string
+          metadata:
+            type: object
+          spec:
+            type: object
+            required:
+            - domain
+            - observedAt
+            - validUntil
+            - provenance
+            - devices
+            - queueDelaySeconds
+            - energyHeadroomMilli
+            - thermalHeadroomMilli
+            - resilienceMilli
+            - maximumSnapshotAgeSeconds
+            - exporterSnapshotDigest
+            x-kubernetes-validations:
+            - rule: timestamp(self.validUntil) > timestamp(self.observedAt)
+              message: validUntil must be after observedAt
+            properties:
+              domain:
+                type: object
+                required:
+                - name
+                - clusterID
+                - orbitClass
+                properties:
+                  name:
+                    type: string
+                    maxLength: 253
+                    pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
+                  clusterID:
+                    type: string
+                    maxLength: 253
+                    pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
+                  orbitClass:
+                    type: string
+                    enum:
+                    - ground
+                    - leo
+                    - meo
+                    - geo
+                    - heo
+              observedAt:
+                type: string
+                format: date-time
+              validUntil:
+                type: string
+                format: date-time
+              provenance:
+                type: object
+                required:
+                - reporterID
+                - source
+                - digest
+                - sequence
+                properties:
+                  reporterID:
+                    type: string
+                    minLength: 1
+                    maxLength: 253
+                  source:
+                    type: string
+                    minLength: 1
+                    maxLength: 256
+                  digest:
+                    type: string
+                    pattern: ^[a-f0-9]{64}$
+                  previousDigest:
+                    type: string
+                    pattern: ^[a-f0-9]{64}$
+                  sequence:
+                    type: integer
+                    format: int64
+                    minimum: 1
+                  signature:
+                    type: string
+                    minLength: 1
+                    maxLength: 256
+              devices:
+                type: array
+                maxItems: 64
+                items:
+                  type: object
+                  required:
+                  - class
+                  - count
+                  - computeMilli
+                  - fragmentationMilli
+                  properties:
+                    class:
+                      type: string
+                      minLength: 1
+                      maxLength: 63
+                    count:
+                      type: integer
+                      format: int64
+                      minimum: 0
+                      maximum: 1000000
+                    architectures:
+                      type: array
+                      maxItems: 64
+                      items:
+                        type: string
+                        maxLength: 128
+                    models:
+                      type: array
+                      maxItems: 64
+                      items:
+                        type: string
+                        maxLength: 128
+                    precision:
+                      type: array
+                      maxItems: 32
+                      items:
+                        type: string
+                        maxLength: 128
+                    computeMilli:
+                      type: integer
+                      format: int64
+                      minimum: 0
+                      maximum: 1000000000
+                    fragmentationMilli:
+                      type: integer
+                      format: int32
+                      minimum: 0
+                      maximum: 1000
+              software:
+                type: object
+                maxProperties: 64
+                additionalProperties:
+                  type: string
+                  maxLength: 128
+              dataLocations:
+                type: array
+                maxItems: 64
+                items:
+                  type: string
+              queueDelaySeconds:
+                type: integer
+                format: int64
+                minimum: 0
+                maximum: 2592000
+              energyHeadroomMilli:
+                type: integer
+                format: int32
+                minimum: 0
+                maximum: 1000
+              thermalHeadroomMilli:
+                type: integer
+                format: int32
+                minimum: 0
+                maximum: 1000
+              resilienceMilli:
+                type: integer
+                format: int32
+                minimum: 0
+                maximum: 1000
+              minimumEnergyMilli:
+                type: integer
+                format: int32
+                minimum: 0
+                maximum: 1000
+              minimumThermalMilli:
+                type: integer
+                format: int32
+                minimum: 0
+                maximum: 1000
+              maximumSnapshotAgeSeconds:
+                type: integer
+                format: int64
+                minimum: 1
+                maximum: 604800
+              exporterSnapshotDigest:
+                type: string
+                pattern: ^[a-f0-9]{64}$
+              cpu:
+                type: object
+                required:
+                - capacity
+                - available
+                properties:
+                  capacity:
+                    type: integer
+                    format: int64
+                    minimum: 0
+                    maximum: 1000000000
+                  available:
+                    type: integer
+                    format: int64
+                    minimum: 0
+                    maximum: 1000000000
+                x-kubernetes-validations:
+                - rule: self.available <= self.capacity
+                  message: available cannot exceed capacity
+              systemMemoryBytes:
+                type: object
+                required:
+                - capacity
+                - available
+                properties:
+                  capacity:
+                    type: integer
+                    format: int64
+                    minimum: 0
+                    maximum: 1152921504606846976
+                  available:
+                    type: integer
+                    format: int64
+                    minimum: 0
+                    maximum: 1152921504606846976
+                x-kubernetes-validations:
+                - rule: self.available <= self.capacity
+                  message: available cannot exceed capacity
+              ephemeralStorageBytes:
+                type: object
+                required:
+                - capacity
+                - available
+                properties:
+                  capacity:
+                    type: integer
+                    format: int64
+                    minimum: 0
+                    maximum: 1152921504606846976
+                  available:
+                    type: integer
+                    format: int64
+                    minimum: 0
+                    maximum: 1152921504606846976
+                x-kubernetes-validations:
+                - rule: self.available <= self.capacity
+                  message: available cannot exceed capacity
+              persistentStorage:
+                type: array
+                maxItems: 64
+                x-kubernetes-list-type: map
+                x-kubernetes-list-map-keys:
+                - class
+                items:
+                  type: object
+                  required:
+                  - class
+                  - capacityBytes
+                  - availableBytes
+                  properties:
+                    class:
+                      type: string
+                      minLength: 1
+                      maxLength: 128
+                    capacityBytes:
+                      type: integer
+                      format: int64
+                      minimum: 0
+                      maximum: 1152921504606846976
+                    availableBytes:
+                      type: integer
+                      format: int64
+                      minimum: 0
+                      maximum: 1152921504606846976
+                  x-kubernetes-validations:
+                  - rule: self.availableBytes <= self.capacityBytes
+                    message: availableBytes cannot exceed capacityBytes
+              numaTopology:
+                type: array
+                maxItems: 1024
+                x-kubernetes-list-type: map
+                x-kubernetes-list-map-keys:
+                - id
+                items:
+                  type: object
+                  required:
+                  - id
+                  - cpuMilliCapacity
+                  - cpuMilliAvailable
+                  - memoryCapacityBytes
+                  - memoryAvailableBytes
+                  properties:
+                    id:
+                      type: integer
+                      format: int32
+                      minimum: 0
+                    cpuMilliCapacity:
+                      type: integer
+                      format: int64
+                      minimum: 0
+                      maximum: 1000000000
+                    cpuMilliAvailable:
+                      type: integer
+                      format: int64
+                      minimum: 0
+                      maximum: 1000000000
+                    memoryCapacityBytes:
+                      type: integer
+                      format: int64
+                      minimum: 0
+                      maximum: 1152921504606846976
+                    memoryAvailableBytes:
+                      type: integer
+                      format: int64
+                      minimum: 0
+                      maximum: 1152921504606846976
+                  x-kubernetes-validations:
+                  - rule: self.cpuMilliAvailable <= self.cpuMilliCapacity && self.memoryAvailableBytes
+                      <= self.memoryCapacityBytes
+                    message: NUMA available capacity cannot exceed capacity
+              trust:
+                type: object
+                required:
+                - state
+                properties:
+                  state:
+                    type: string
+                    enum:
+                    - unknown
+                    - unverified
+                    - verified
+                    - failed
+                  provider:
+                    type: string
+                    maxLength: 253
+                  evidenceDigest:
+                    type: string
+                    pattern: ^(|[a-f0-9]{64})$
+                  observedAt:
+                    type: string
+                    format: date-time
+                  validUntil:
+                    type: string
+                    format: date-time
+                x-kubernetes-validations:
+                - rule: '!has(self.validUntil) || !has(self.observedAt) || timestamp(self.validUntil)
+                    > timestamp(self.observedAt)'
+                  message: trust validUntil must follow observedAt
+              autonomyDurationSeconds:
+                type: integer
+                format: int64
+                minimum: 0
+                maximum: 31536000
+              energy:
+                type: object
+                required:
+                - source
+                - capacityMilliWattHours
+                - availableMilliWattHours
+                properties:
+                  source:
+                    type: string
+                    maxLength: 128
+                  capacityMilliWattHours:
+                    type: integer
+                    format: int64
+                    minimum: 0
+                    maximum: 1152921504606846976
+                  availableMilliWattHours:
+                    type: integer
+                    format: int64
+                    minimum: 0
+                    maximum: 1152921504606846976
+                x-kubernetes-validations:
+                - rule: self.availableMilliWattHours <= self.capacityMilliWattHours
+                  message: available energy cannot exceed capacity
+              physicalDeviceInventoryRef:
+                type: object
+                required:
+                - name
+                - digest
+                properties:
+                  name:
+                    type: string
+                    minLength: 1
+                    maxLength: 253
+                  digest:
+                    type: string
+                    pattern: ^[a-f0-9]{64}$
+                  resourceVersion:
+                    type: string
+                    maxLength: 128
+          status:
+            type: object
+            x-kubernetes-preserve-unknown-fields: true
+  - name: v1beta1
+    served: true
+    storage: true
+    subresources:
+      status: {}
+    schema:
+      openAPIV3Schema:
+        type: object
+        required:
+        - spec
+        properties:
+          apiVersion:
+            type: string
+          kind:
+            type: string
+          metadata:
+            type: object
+          spec:
+            type: object
+            required:
+            - domain
+            - observedAt
+            - validUntil
+            - provenance
+            - devices
+            - queueDelaySeconds
+            - energyHeadroomMilli
+            - thermalHeadroomMilli
+            - resilienceMilli
+            - maximumSnapshotAgeSeconds
+            - exporterSnapshotDigest
+            x-kubernetes-validations:
+            - rule: timestamp(self.validUntil) > timestamp(self.observedAt)
+              message: validUntil must be after observedAt
+            properties:
+              domain:
+                type: object
+                required:
+                - name
+                - clusterID
+                - orbitClass
+                properties:
+                  name:
+                    type: string
+                    maxLength: 253
+                    pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
+                  clusterID:
+                    type: string
+                    maxLength: 253
+                    pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
+                  orbitClass:
+                    type: string
+                    enum:
+                    - ground
+                    - leo
+                    - meo
+                    - geo
+                    - heo
+              observedAt:
+                type: string
+                format: date-time
+              validUntil:
+                type: string
+                format: date-time
+              provenance:
+                type: object
+                required:
+                - reporterID
+                - source
+                - digest
+                - sequence
+                properties:
+                  reporterID:
+                    type: string
+                    minLength: 1
+                    maxLength: 253
+                  source:
+                    type: string
+                    minLength: 1
+                    maxLength: 256
+                  digest:
+                    type: string
+                    pattern: ^[a-f0-9]{64}$
+                  previousDigest:
+                    type: string
+                    pattern: ^[a-f0-9]{64}$
+                  sequence:
+                    type: integer
+                    format: int64
+                    minimum: 1
+                  signature:
+                    type: string
+                    minLength: 1
+                    maxLength: 256
+              devices:
+                type: array
+                maxItems: 64
+                items:
+                  type: object
+                  required:
+                  - class
+                  - count
+                  - computeMilli
+                  - fragmentationMilli
+                  properties:
+                    class:
+                      type: string
+                      minLength: 1
+                      maxLength: 63
+                    count:
+                      type: integer
+                      format: int64
+                      minimum: 0
+                      maximum: 1000000
+                    architectures:
+                      type: array
+                      maxItems: 64
+                      items:
+                        type: string
+                        maxLength: 128
+                    models:
+                      type: array
+                      maxItems: 64
+                      items:
+                        type: string
+                        maxLength: 128
+                    precision:
+                      type: array
+                      maxItems: 32
+                      items:
+                        type: string
+                        maxLength: 128
+                    computeMilli:
+                      type: integer
+                      format: int64
+                      minimum: 0
+                      maximum: 1000000000
+                    fragmentationMilli:
+                      type: integer
+                      format: int32
+                      minimum: 0
+                      maximum: 1000
+              software:
+                type: object
+                maxProperties: 64
+                additionalProperties:
+                  type: string
+                  maxLength: 128
+              dataLocations:
+                type: array
+                maxItems: 64
+                items:
+                  type: string
+              queueDelaySeconds:
+                type: integer
+                format: int64
+                minimum: 0
+                maximum: 2592000
+              energyHeadroomMilli:
+                type: integer
+                format: int32
+                minimum: 0
+                maximum: 1000
+              thermalHeadroomMilli:
+                type: integer
+                format: int32
+                minimum: 0
+                maximum: 1000
+              resilienceMilli:
+                type: integer
+                format: int32
+                minimum: 0
+                maximum: 1000
+              minimumEnergyMilli:
+                type: integer
+                format: int32
+                minimum: 0
+                maximum: 1000
+              minimumThermalMilli:
+                type: integer
+                format: int32
+                minimum: 0
+                maximum: 1000
+              maximumSnapshotAgeSeconds:
+                type: integer
+                format: int64
+                minimum: 1
+                maximum: 604800
+              exporterSnapshotDigest:
+                type: string
+                pattern: ^[a-f0-9]{64}$
+              cpu:
+                type: object
+                required:
+                - capacity
+                - available
+                properties:
+                  capacity:
+                    type: integer
+                    format: int64
+                    minimum: 0
+                    maximum: 1000000000
+                  available:
+                    type: integer
+                    format: int64
+                    minimum: 0
+                    maximum: 1000000000
+                x-kubernetes-validations:
+                - rule: self.available <= self.capacity
+                  message: available cannot exceed capacity
+              systemMemoryBytes:
+                type: object
+                required:
+                - capacity
+                - available
+                properties:
+                  capacity:
+                    type: integer
+                    format: int64
+                    minimum: 0
+                    maximum: 1152921504606846976
+                  available:
+                    type: integer
+                    format: int64
+                    minimum: 0
+                    maximum: 1152921504606846976
+                x-kubernetes-validations:
+                - rule: self.available <= self.capacity
+                  message: available cannot exceed capacity
+              ephemeralStorageBytes:
+                type: object
+                required:
+                - capacity
+                - available
+                properties:
+                  capacity:
+                    type: integer
+                    format: int64
+                    minimum: 0
+                    maximum: 1152921504606846976
+                  available:
+                    type: integer
+                    format: int64
+                    minimum: 0
+                    maximum: 1152921504606846976
+                x-kubernetes-validations:
+                - rule: self.available <= self.capacity
+                  message: available cannot exceed capacity
+              persistentStorage:
+                type: array
+                maxItems: 64
+                x-kubernetes-list-type: map
+                x-kubernetes-list-map-keys:
+                - class
+                items:
+                  type: object
+                  required:
+                  - class
+                  - capacityBytes
+                  - availableBytes
+                  properties:
+                    class:
+                      type: string
+                      minLength: 1
+                      maxLength: 128
+                    capacityBytes:
+                      type: integer
+                      format: int64
+                      minimum: 0
+                      maximum: 1152921504606846976
+                    availableBytes:
+                      type: integer
+                      format: int64
+                      minimum: 0
+                      maximum: 1152921504606846976
+                  x-kubernetes-validations:
+                  - rule: self.availableBytes <= self.capacityBytes
+                    message: availableBytes cannot exceed capacityBytes
+              numaTopology:
+                type: array
+                maxItems: 1024
+                x-kubernetes-list-type: map
+                x-kubernetes-list-map-keys:
+                - id
+                items:
+                  type: object
+                  required:
+                  - id
+                  - cpuMilliCapacity
+                  - cpuMilliAvailable
+                  - memoryCapacityBytes
+                  - memoryAvailableBytes
+                  properties:
+                    id:
+                      type: integer
+                      format: int32
+                      minimum: 0
+                    cpuMilliCapacity:
+                      type: integer
+                      format: int64
+                      minimum: 0
+                      maximum: 1000000000
+                    cpuMilliAvailable:
+                      type: integer
+                      format: int64
+                      minimum: 0
+                      maximum: 1000000000
+                    memoryCapacityBytes:
+                      type: integer
+                      format: int64
+                      minimum: 0
+                      maximum: 1152921504606846976
+                    memoryAvailableBytes:
+                      type: integer
+                      format: int64
+                      minimum: 0
+                      maximum: 1152921504606846976
+                  x-kubernetes-validations:
+                  - rule: self.cpuMilliAvailable <= self.cpuMilliCapacity && self.memoryAvailableBytes
+                      <= self.memoryCapacityBytes
+                    message: NUMA available capacity cannot exceed capacity
+              trust:
+                type: object
+                required:
+                - state
+                properties:
+                  state:
+                    type: string
+                    enum:
+                    - unknown
+                    - unverified
+                    - verified
+                    - failed
+                  provider:
+                    type: string
+                    maxLength: 253
+                  evidenceDigest:
+                    type: string
+                    pattern: ^(|[a-f0-9]{64})$
+                  observedAt:
+                    type: string
+                    format: date-time
+                  validUntil:
+                    type: string
+                    format: date-time
+                x-kubernetes-validations:
+                - rule: '!has(self.validUntil) || !has(self.observedAt) || timestamp(self.validUntil)
+                    > timestamp(self.observedAt)'
+                  message: trust validUntil must follow observedAt
+              autonomyDurationSeconds:
+                type: integer
+                format: int64
+                minimum: 0
+                maximum: 31536000
+              energy:
+                type: object
+                required:
+                - source
+                - capacityMilliWattHours
+                - availableMilliWattHours
+                properties:
+                  source:
+                    type: string
+                    maxLength: 128
+                  capacityMilliWattHours:
+                    type: integer
+                    format: int64
+                    minimum: 0
+                    maximum: 1152921504606846976
+                  availableMilliWattHours:
+                    type: integer
+                    format: int64
+                    minimum: 0
+                    maximum: 1152921504606846976
+                x-kubernetes-validations:
+                - rule: self.availableMilliWattHours <= self.capacityMilliWattHours
+                  message: available energy cannot exceed capacity
+              physicalDeviceInventoryRef:
+                type: object
+                required:
+                - name
+                - digest
+                properties:
+                  name:
+                    type: string
+                    minLength: 1
+                    maxLength: 253
+                  digest:
+                    type: string
+                    pattern: ^[a-f0-9]{64}$
+                  resourceVersion:
+                    type: string
+                    maxLength: 128
+          status:
+            type: object
+            x-kubernetes-preserve-unknown-fields: true
+  conversion:
+    strategy: Webhook
+    webhook:
+      conversionReviewVersions:
+      - v1
+      clientConfig:
+        service:
+          namespace: kube-system
+          name: space-compute-conversion-webhook
+          path: /convert
+          port: 443
+        caBundle: ''
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: spacemissions.spacecompute.k3s.io
+spec:
+  group: spacecompute.k3s.io
+  scope: Namespaced
+  names:
+    plural: spacemissions
+    singular: spacemission
+    kind: SpaceMission
+    shortNames:
+    - smission
+  versions:
+  - name: v1alpha1
+    served: true
+    storage: false
+    subresources:
+      status: {}
+    schema:
+      openAPIV3Schema:
+        type: object
+        required:
+        - spec
+        properties:
+          apiVersion:
+            type: string
+          kind:
+            type: string
+          metadata:
+            type: object
+          spec:
+            type: object
+            required:
+            - missionClass
+            - priority
+            - statePolicy
+            - deadline
+            - expectedDurationSeconds
+            - maximumDurationSeconds
+            - durationUncertaintySeconds
+            - safetyMarginSeconds
+            - maximumClockSkewSeconds
+            - outputSizeBytes
+            - resultReturnRequired
+            - retry
+            - checkpoint
+            - workloadTemplate
+            x-kubernetes-validations:
+            - rule: self.maximumDurationSeconds >= self.expectedDurationSeconds
+              message: maximumDurationSeconds must be at least expectedDurationSeconds
+            - rule: self.durationUncertaintySeconds <= self.maximumDurationSeconds
+                - self.expectedDurationSeconds
+              message: duration uncertainty must fit within maximum duration
+            - rule: '!self.resultReturnRequired || size(self.resultDestinations) >
+                0'
+              message: result destinations are required when result return is required
+            - rule: '!self.retry.allowMigration || self.checkpoint.checkpointable'
+              message: migration requires checkpointability
+            - rule: self.retry.maxConcurrentExecutions == 1
+              message: v1alpha1 permits one active execution
+            properties:
+              missionClass:
+                type: string
+                maxLength: 63
+              priority:
+                type: integer
+                format: int32
+                minimum: 0
+                maximum: 1000
+              statePolicy:
+                type: string
+                enum:
+                - strict
+                - degraded
+                - best-effort
+              requiredCapabilities:
+                type: array
+                maxItems: 64
+                items:
+                  type: object
+                  required:
+                  - class
+                  - quantity
+                  properties:
+                    class:
+                      type: string
+                      minLength: 1
+                      maxLength: 63
+                    quantity:
+                      type: integer
+                      format: int64
+                      minimum: 1
+                      maximum: 1000000
+                    architecture:
+                      type: string
+                      maxLength: 128
+                    model:
+                      type: string
+                      maxLength: 128
+                    precision:
+                      type: array
+                      maxItems: 32
+                      items:
+                        type: string
+                        maxLength: 63
+                    software:
+                      type: object
+                      maxProperties: 64
+                      additionalProperties:
+                        type: string
+                        maxLength: 128
+              alternativeCapabilities:
+                type: array
+                maxItems: 64
+                items:
+                  type: object
+                  required:
+                  - name
+                  - allOf
+                  properties:
+                    name:
+                      type: string
+                      maxLength: 63
+                    allOf:
+                      type: array
+                      maxItems: 64
+                      items:
+                        type: object
+                        required:
+                        - class
+                        - quantity
+                        properties:
+                          class:
+                            type: string
+                            minLength: 1
+                            maxLength: 63
+                          quantity:
+                            type: integer
+                            format: int64
+                            minimum: 1
+                            maximum: 1000000
+                          architecture:
+                            type: string
+                            maxLength: 128
+                          model:
+                            type: string
+                            maxLength: 128
+                          precision:
+                            type: array
+                            maxItems: 32
+                            items:
+                              type: string
+                              maxLength: 63
+                          software:
+                            type: object
+                            maxProperties: 64
+                            additionalProperties:
+                              type: string
+                              maxLength: 128
+              requiredSoftware:
+                type: object
+                maxProperties: 64
+                additionalProperties:
+                  type: string
+                  maxLength: 128
+              inputs:
+                type: array
+                maxItems: 128
+                items:
+                  type: object
+                  required:
+                  - id
+                  - sizeBytes
+                  - locations
+                  properties:
+                    id:
+                      type: string
+                      maxLength: 253
+                    sizeBytes:
+                      type: integer
+                      format: int64
+                      minimum: 0
+                      maximum: 1125899906842624
+                    locations:
+                      type: array
+                      maxItems: 64
+                      items:
+                        type: object
+                        required:
+                        - domain
+                        properties:
+                          domain:
+                            type: object
+                            required:
+                            - name
+                            - clusterID
+                            - orbitClass
+                            properties:
+                              name:
+                                type: string
+                                minLength: 1
+                                maxLength: 253
+                                pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
+                              clusterID:
+                                type: string
+                                minLength: 1
+                                maxLength: 253
+                                pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
+                              orbitClass:
+                                type: string
+                                enum:
+                                - ground
+                                - leo
+                                - meo
+                                - geo
+                                - heo
+                          uri:
+                            type: string
+                            maxLength: 2048
+              outputSizeBytes:
+                type: integer
+                format: int64
+                minimum: 0
+                maximum: 1125899906842624
+              resultDestinations:
+                type: array
+                maxItems: 64
+                items:
+                  type: object
+                  required:
+                  - domain
+                  properties:
+                    domain:
+                      type: object
+                      required:
+                      - name
+                      - clusterID
+                      - orbitClass
+                      properties:
+                        name:
+                          type: string
+                          minLength: 1
+                          maxLength: 253
+                          pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
+                        clusterID:
+                          type: string
+                          minLength: 1
+                          maxLength: 253
+                          pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
+                        orbitClass:
+                          type: string
+                          enum:
+                          - ground
+                          - leo
+                          - meo
+                          - geo
+                          - heo
+                    uri:
+                      type: string
+                      maxLength: 2048
+              deadline:
+                type: string
+                format: date-time
+              expectedDurationSeconds:
+                type: integer
+                format: int64
+                minimum: 1
+                maximum: 2592000
+              maximumDurationSeconds:
+                type: integer
+                format: int64
+                minimum: 1
+                maximum: 2592000
+              durationUncertaintySeconds:
+                type: integer
+                format: int64
+                minimum: 0
+                maximum: 2592000
+              safetyMarginSeconds:
+                type: integer
+                format: int64
+                minimum: 0
+                maximum: 86400
+              maximumClockSkewSeconds:
+                type: integer
+                format: int64
+                minimum: 0
+                maximum: 600
+              resultReturnRequired:
+                type: boolean
+              retry:
+                type: object
+                required:
+                - maxAttempts
+                - allowMigration
+                - maxConcurrentExecutions
+                properties:
+                  maxAttempts:
+                    type: integer
+                    format: int32
+                    minimum: 1
+                    maximum: 100
+                  allowMigration:
+                    type: boolean
+                  maxConcurrentExecutions:
+                    type: integer
+                    format: int32
+                    minimum: 1
+                    maximum: 1
+              checkpoint:
+                type: object
+                required:
+                - checkpointable
+                properties:
+                  checkpointable:
+                    type: boolean
+                  minimumIntervalSeconds:
+                    type: integer
+                    format: int64
+                    minimum: 0
+                  maximumStateBytes:
+                    type: integer
+                    format: int64
+                    minimum: 0
+              workloadTemplate:
+                type: object
+                x-kubernetes-preserve-unknown-fields: true
+              suspend:
+                type: boolean
+              workingMemoryBytes:
+                type: integer
+                format: int64
+                minimum: 0
+                maximum: 1152921504606846976
+              workingStorageBytes:
+                type: integer
+                format: int64
+                minimum: 0
+                maximum: 1152921504606846976
+              minimumBandwidthBitsPerSecond:
+                type: integer
+                format: int64
+                minimum: 0
+                maximum: 1000000000000000
+              maximumRTTMicroseconds:
+                type: integer
+                format: int64
+                minimum: 0
+                maximum: 86400000000
+              maximumLossPartsPerMillion:
+                type: integer
+                format: int32
+                minimum: 0
+                maximum: 1000000
+          status:
+            type: object
+            x-kubernetes-preserve-unknown-fields: true
+  - name: v1beta1
+    served: true
+    storage: true
+    subresources:
+      status: {}
+    schema:
+      openAPIV3Schema:
+        type: object
+        required:
+        - spec
+        properties:
+          apiVersion:
+            type: string
+          kind:
+            type: string
+          metadata:
+            type: object
+          spec:
+            type: object
+            required:
+            - missionClass
+            - priority
+            - statePolicy
+            - deadline
+            - expectedDurationSeconds
+            - maximumDurationSeconds
+            - durationUncertaintySeconds
+            - safetyMarginSeconds
+            - maximumClockSkewSeconds
+            - outputSizeBytes
+            - resultReturnRequired
+            - retry
+            - checkpoint
+            - workloadTemplate
+            x-kubernetes-validations:
+            - rule: self.maximumDurationSeconds >= self.expectedDurationSeconds
+              message: maximumDurationSeconds must be at least expectedDurationSeconds
+            - rule: self.durationUncertaintySeconds <= self.maximumDurationSeconds
+                - self.expectedDurationSeconds
+              message: duration uncertainty must fit within maximum duration
+            - rule: '!self.resultReturnRequired || size(self.resultDestinations) >
+                0'
+              message: result destinations are required when result return is required
+            - rule: '!self.retry.allowMigration || self.checkpoint.checkpointable'
+              message: migration requires checkpointability
+            - rule: self.retry.maxConcurrentExecutions == 1
+              message: v1alpha1 permits one active execution
+            properties:
+              missionClass:
+                type: string
+                maxLength: 63
+              priority:
+                type: integer
+                format: int32
+                minimum: 0
+                maximum: 1000
+              statePolicy:
+                type: string
+                enum:
+                - strict
+                - degraded
+                - best-effort
+              requiredCapabilities:
+                type: array
+                maxItems: 64
+                items:
+                  type: object
+                  required:
+                  - class
+                  - quantity
+                  properties:
+                    class:
+                      type: string
+                      minLength: 1
+                      maxLength: 63
+                    quantity:
+                      type: integer
+                      format: int64
+                      minimum: 1
+                      maximum: 1000000
+                    architecture:
+                      type: string
+                      maxLength: 128
+                    model:
+                      type: string
+                      maxLength: 128
+                    precision:
+                      type: array
+                      maxItems: 32
+                      items:
+                        type: string
+                        maxLength: 63
+                    software:
+                      type: object
+                      maxProperties: 64
+                      additionalProperties:
+                        type: string
+                        maxLength: 128
+              alternativeCapabilities:
+                type: array
+                maxItems: 64
+                items:
+                  type: object
+                  required:
+                  - name
+                  - allOf
+                  properties:
+                    name:
+                      type: string
+                      maxLength: 63
+                    allOf:
+                      type: array
+                      maxItems: 64
+                      items:
+                        type: object
+                        required:
+                        - class
+                        - quantity
+                        properties:
+                          class:
+                            type: string
+                            minLength: 1
+                            maxLength: 63
+                          quantity:
+                            type: integer
+                            format: int64
+                            minimum: 1
+                            maximum: 1000000
+                          architecture:
+                            type: string
+                            maxLength: 128
+                          model:
+                            type: string
+                            maxLength: 128
+                          precision:
+                            type: array
+                            maxItems: 32
+                            items:
+                              type: string
+                              maxLength: 63
+                          software:
+                            type: object
+                            maxProperties: 64
+                            additionalProperties:
+                              type: string
+                              maxLength: 128
+              requiredSoftware:
+                type: object
+                maxProperties: 64
+                additionalProperties:
+                  type: string
+                  maxLength: 128
+              inputs:
+                type: array
+                maxItems: 128
+                items:
+                  type: object
+                  required:
+                  - id
+                  - sizeBytes
+                  - locations
+                  properties:
+                    id:
+                      type: string
+                      maxLength: 253
+                    sizeBytes:
+                      type: integer
+                      format: int64
+                      minimum: 0
+                      maximum: 1125899906842624
+                    locations:
+                      type: array
+                      maxItems: 64
+                      items:
+                        type: object
+                        required:
+                        - domain
+                        properties:
+                          domain:
+                            type: object
+                            required:
+                            - name
+                            - clusterID
+                            - orbitClass
+                            properties:
+                              name:
+                                type: string
+                                minLength: 1
+                                maxLength: 253
+                                pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
+                              clusterID:
+                                type: string
+                                minLength: 1
+                                maxLength: 253
+                                pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
+                              orbitClass:
+                                type: string
+                                enum:
+                                - ground
+                                - leo
+                                - meo
+                                - geo
+                                - heo
+                          uri:
+                            type: string
+                            maxLength: 2048
+              outputSizeBytes:
+                type: integer
+                format: int64
+                minimum: 0
+                maximum: 1125899906842624
+              resultDestinations:
+                type: array
+                maxItems: 64
+                items:
+                  type: object
+                  required:
+                  - domain
+                  properties:
+                    domain:
+                      type: object
+                      required:
+                      - name
+                      - clusterID
+                      - orbitClass
+                      properties:
+                        name:
+                          type: string
+                          minLength: 1
+                          maxLength: 253
+                          pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
+                        clusterID:
+                          type: string
+                          minLength: 1
+                          maxLength: 253
+                          pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
+                        orbitClass:
+                          type: string
+                          enum:
+                          - ground
+                          - leo
+                          - meo
+                          - geo
+                          - heo
+                    uri:
+                      type: string
+                      maxLength: 2048
+              deadline:
+                type: string
+                format: date-time
+              expectedDurationSeconds:
+                type: integer
+                format: int64
+                minimum: 1
+                maximum: 2592000
+              maximumDurationSeconds:
+                type: integer
+                format: int64
+                minimum: 1
+                maximum: 2592000
+              durationUncertaintySeconds:
+                type: integer
+                format: int64
+                minimum: 0
+                maximum: 2592000
+              safetyMarginSeconds:
+                type: integer
+                format: int64
+                minimum: 0
+                maximum: 86400
+              maximumClockSkewSeconds:
+                type: integer
+                format: int64
+                minimum: 0
+                maximum: 600
+              resultReturnRequired:
+                type: boolean
+              retry:
+                type: object
+                required:
+                - maxAttempts
+                - allowMigration
+                - maxConcurrentExecutions
+                properties:
+                  maxAttempts:
+                    type: integer
+                    format: int32
+                    minimum: 1
+                    maximum: 100
+                  allowMigration:
+                    type: boolean
+                  maxConcurrentExecutions:
+                    type: integer
+                    format: int32
+                    minimum: 1
+                    maximum: 1
+              checkpoint:
+                type: object
+                required:
+                - checkpointable
+                properties:
+                  checkpointable:
+                    type: boolean
+                  minimumIntervalSeconds:
+                    type: integer
+                    format: int64
+                    minimum: 0
+                  maximumStateBytes:
+                    type: integer
+                    format: int64
+                    minimum: 0
+              workloadTemplate:
+                type: object
+                x-kubernetes-preserve-unknown-fields: true
+              suspend:
+                type: boolean
+              workingMemoryBytes:
+                type: integer
+                format: int64
+                minimum: 0
+                maximum: 1152921504606846976
+              workingStorageBytes:
+                type: integer
+                format: int64
+                minimum: 0
+                maximum: 1152921504606846976
+              minimumBandwidthBitsPerSecond:
+                type: integer
+                format: int64
+                minimum: 0
+                maximum: 1000000000000000
+              maximumRTTMicroseconds:
+                type: integer
+                format: int64
+                minimum: 0
+                maximum: 86400000000
+              maximumLossPartsPerMillion:
+                type: integer
+                format: int32
+                minimum: 0
+                maximum: 1000000
+          status:
+            type: object
+            x-kubernetes-preserve-unknown-fields: true
+  conversion:
+    strategy: Webhook
+    webhook:
+      conversionReviewVersions:
+      - v1
+      clientConfig:
+        service:
+          namespace: kube-system
+          name: space-compute-conversion-webhook
+          path: /convert
+          port: 443
+        caBundle: ''
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: spaceplacementintents.spacecompute.k3s.io
+spec:
+  group: spacecompute.k3s.io
+  scope: Namespaced
+  names:
+    plural: spaceplacementintents
+    singular: spaceplacementintent
+    kind: SpacePlacementIntent
+    shortNames:
+    - splacement
+  versions:
+  - name: v1alpha1
+    served: true
+    storage: false
+    subresources:
+      status: {}
+    schema:
+      openAPIV3Schema:
+        type: object
+        required:
+        - spec
+        properties:
+          apiVersion:
+            type: string
+          kind:
+            type: string
+          metadata:
+            type: object
+          spec:
+            type: object
+            required:
+            - missionRef
+            - planID
+            - attempt
+            - target
+            - notBefore
+            - expiresAt
+            - computeStart
+            - computeEnd
+            - materialInputDigest
+            - snapshotSequences
+            - score
+            - explanations
+            x-kubernetes-validations:
+            - rule: timestamp(self.expiresAt) > timestamp(self.notBefore)
+              message: expiresAt must be after notBefore
+            - rule: timestamp(self.computeEnd) > timestamp(self.computeStart)
+              message: computeEnd must be after computeStart
+            - rule: self.attempt >= 1
+              message: attempt must be positive
+            properties:
+              missionRef:
+                type: object
+                x-kubernetes-preserve-unknown-fields: true
+              planID:
+                type: string
+                maxLength: 63
+              attempt:
+                type: integer
+                format: int32
+                minimum: 1
+                maximum: 100
+              target:
+                type: object
+                required:
+                - name
+                - clusterID
+                - orbitClass
+                properties:
+                  name:
+                    type: string
+                    maxLength: 253
+                  clusterID:
+                    type: string
+                    maxLength: 253
+                  orbitClass:
+                    type: string
+                    enum:
+                    - ground
+                    - leo
+                    - meo
+                    - geo
+                    - heo
+              notBefore:
+                type: string
+                format: date-time
+              expiresAt:
+                type: string
+                format: date-time
+              computeStart:
+                type: string
+                format: date-time
+              computeEnd:
+                type: string
+                format: date-time
+              inputTransfers:
+                type: array
+                maxItems: 128
+                items:
+                  type: object
+                  x-kubernetes-preserve-unknown-fields: true
+              resultTransfer:
+                type: object
+                nullable: true
+                x-kubernetes-preserve-unknown-fields: true
+              materialInputDigest:
+                type: string
+                pattern: ^[a-f0-9]{64}$
+              planningInputDigest:
+                type: string
+                pattern: ^[a-f0-9]{64}$
+              cacheResourceVersions:
+                type: object
+                maxProperties: 2
+                additionalProperties:
+                  type: string
+                  maxLength: 128
+              snapshotSequences:
+                type: object
+                maxProperties: 128
+                additionalProperties:
+                  type: integer
+                  format: int64
+              score:
+                type: object
+                x-kubernetes-preserve-unknown-fields: true
+              explanations:
+                type: array
+                maxItems: 128
+                items:
+                  type: object
+                  x-kubernetes-preserve-unknown-fields: true
+              selectedCapabilitySetName:
+                type: string
+                maxLength: 63
+              selectedCapabilities:
+                type: array
+                maxItems: 64
+                items:
+                  type: object
+                  required:
+                  - class
+                  - quantity
+                  properties:
+                    class:
+                      type: string
+                      minLength: 1
+                      maxLength: 63
+                    quantity:
+                      type: integer
+                      format: int64
+                      minimum: 1
+                      maximum: 1000000
+                    architecture:
+                      type: string
+                      maxLength: 128
+                    model:
+                      type: string
+                      maxLength: 128
+                    precision:
+                      type: array
+                      maxItems: 32
+                      items:
+                        type: string
+                        maxLength: 63
+                    software:
+                      type: object
+                      maxProperties: 64
+                      additionalProperties:
+                        type: string
+                        maxLength: 128
+              selectedPhysicalDeviceConstraints:
+                type: array
+                maxItems: 64
+                items:
+                  type: object
+                  required:
+                  - class
+                  - quantity
+                  properties:
+                    class:
+                      type: string
+                      minLength: 1
+                      maxLength: 63
+                    quantity:
+                      type: integer
+                      format: int64
+                      minimum: 1
+                      maximum: 1000000
+                    architecture:
+                      type: string
+                      maxLength: 128
+                    model:
+                      type: string
+                      maxLength: 128
+                    precision:
+                      type: array
+                      maxItems: 32
+                      items:
+                        type: string
+                        maxLength: 63
+                    resourceName:
+                      type: string
+                      maxLength: 253
+                    stableDeviceIDs:
+                      type: array
+                      maxItems: 4096
+                      items:
+                        type: string
+                        maxLength: 253
+                    allocationIDs:
+                      type: array
+                      maxItems: 4096
+                      items:
+                        type: string
+                        maxLength: 512
+          status:
+            type: object
+            x-kubernetes-preserve-unknown-fields: true
+            properties:
+              observedGeneration:
+                type: integer
+                format: int64
+              phase:
+                type: string
+              activePod:
+                type: object
+                x-kubernetes-preserve-unknown-fields: true
+              lastObservationSequence:
+                type: integer
+                format: int64
+              lastObservation:
+                type: object
+                x-kubernetes-preserve-unknown-fields: true
+              retryCount:
+                type: integer
+                format: int32
+              resultReturned:
+                type: boolean
+              transferState:
+                type: string
+                enum:
+                - NotRequired
+                - Pending
+                - InProgress
+                - Completed
+                - Failed
+              transferReceiptReferences:
+                type: array
+                maxItems: 256
+                items:
+                  type: string
+                  maxLength: 253
+              executionLeaseReference:
+                type: string
+                maxLength: 253
+              fencingTokenHash:
+                type: string
+                pattern: ^(|[a-f0-9]{64})$
+              checkpointReceipt:
+                type: string
+                maxLength: 253
+              resultReceipt:
+                type: string
+                maxLength: 253
+              remoteAcknowledgementSequence:
+                type: integer
+                format: int64
+                minimum: 0
+              conditions:
+                type: array
+                items:
+                  type: object
+                  x-kubernetes-preserve-unknown-fields: true
+  - name: v1beta1
+    served: true
+    storage: true
+    subresources:
+      status: {}
+    schema:
+      openAPIV3Schema:
+        type: object
+        required:
+        - spec
+        properties:
+          apiVersion:
+            type: string
+          kind:
+            type: string
+          metadata:
+            type: object
+          spec:
+            type: object
+            required:
+            - missionRef
+            - planID
+            - attempt
+            - target
+            - notBefore
+            - expiresAt
+            - computeStart
+            - computeEnd
+            - materialInputDigest
+            - snapshotSequences
+            - score
+            - explanations
+            x-kubernetes-validations:
+            - rule: timestamp(self.expiresAt) > timestamp(self.notBefore)
+              message: expiresAt must be after notBefore
+            - rule: timestamp(self.computeEnd) > timestamp(self.computeStart)
+              message: computeEnd must be after computeStart
+            - rule: self.attempt >= 1
+              message: attempt must be positive
+            properties:
+              missionRef:
+                type: object
+                x-kubernetes-preserve-unknown-fields: true
+              planID:
+                type: string
+                maxLength: 63
+              attempt:
+                type: integer
+                format: int32
+                minimum: 1
+                maximum: 100
+              target:
+                type: object
+                required:
+                - name
+                - clusterID
+                - orbitClass
+                properties:
+                  name:
+                    type: string
+                    maxLength: 253
+                  clusterID:
+                    type: string
+                    maxLength: 253
+                  orbitClass:
+                    type: string
+                    enum:
+                    - ground
+                    - leo
+                    - meo
+                    - geo
+                    - heo
+              notBefore:
+                type: string
+                format: date-time
+              expiresAt:
+                type: string
+                format: date-time
+              computeStart:
+                type: string
+                format: date-time
+              computeEnd:
+                type: string
+                format: date-time
+              inputTransfers:
+                type: array
+                maxItems: 128
+                items:
+                  type: object
+                  x-kubernetes-preserve-unknown-fields: true
+              resultTransfer:
+                type: object
+                nullable: true
+                x-kubernetes-preserve-unknown-fields: true
+              materialInputDigest:
+                type: string
+                pattern: ^[a-f0-9]{64}$
+              planningInputDigest:
+                type: string
+                pattern: ^[a-f0-9]{64}$
+              cacheResourceVersions:
+                type: object
+                maxProperties: 2
+                additionalProperties:
+                  type: string
+                  maxLength: 128
+              snapshotSequences:
+                type: object
+                maxProperties: 128
+                additionalProperties:
+                  type: integer
+                  format: int64
+              score:
+                type: object
+                x-kubernetes-preserve-unknown-fields: true
+              explanations:
+                type: array
+                maxItems: 128
+                items:
+                  type: object
+                  x-kubernetes-preserve-unknown-fields: true
+              selectedCapabilitySetName:
+                type: string
+                maxLength: 63
+              selectedCapabilities:
+                type: array
+                maxItems: 64
+                items:
+                  type: object
+                  required:
+                  - class
+                  - quantity
+                  properties:
+                    class:
+                      type: string
+                      minLength: 1
+                      maxLength: 63
+                    quantity:
+                      type: integer
+                      format: int64
+                      minimum: 1
+                      maximum: 1000000
+                    architecture:
+                      type: string
+                      maxLength: 128
+                    model:
+                      type: string
+                      maxLength: 128
+                    precision:
+                      type: array
+                      maxItems: 32
+                      items:
+                        type: string
+                        maxLength: 63
+                    software:
+                      type: object
+                      maxProperties: 64
+                      additionalProperties:
+                        type: string
+                        maxLength: 128
+              selectedPhysicalDeviceConstraints:
+                type: array
+                maxItems: 64
+                items:
+                  type: object
+                  required:
+                  - class
+                  - quantity
+                  properties:
+                    class:
+                      type: string
+                      minLength: 1
+                      maxLength: 63
+                    quantity:
+                      type: integer
+                      format: int64
+                      minimum: 1
+                      maximum: 1000000
+                    architecture:
+                      type: string
+                      maxLength: 128
+                    model:
+                      type: string
+                      maxLength: 128
+                    precision:
+                      type: array
+                      maxItems: 32
+                      items:
+                        type: string
+                        maxLength: 63
+                    resourceName:
+                      type: string
+                      maxLength: 253
+                    stableDeviceIDs:
+                      type: array
+                      maxItems: 4096
+                      items:
+                        type: string
+                        maxLength: 253
+                    allocationIDs:
+                      type: array
+                      maxItems: 4096
+                      items:
+                        type: string
+                        maxLength: 512
+          status:
+            type: object
+            x-kubernetes-preserve-unknown-fields: true
+            properties:
+              observedGeneration:
+                type: integer
+                format: int64
+              phase:
+                type: string
+              activePod:
+                type: object
+                x-kubernetes-preserve-unknown-fields: true
+              lastObservationSequence:
+                type: integer
+                format: int64
+              lastObservation:
+                type: object
+                x-kubernetes-preserve-unknown-fields: true
+              retryCount:
+                type: integer
+                format: int32
+              resultReturned:
+                type: boolean
+              transferState:
+                type: string
+                enum:
+                - NotRequired
+                - Pending
+                - InProgress
+                - Completed
+                - Failed
+              transferReceiptReferences:
+                type: array
+                maxItems: 256
+                items:
+                  type: string
+                  maxLength: 253
+              executionLeaseReference:
+                type: string
+                maxLength: 253
+              fencingTokenHash:
+                type: string
+                pattern: ^(|[a-f0-9]{64})$
+              checkpointReceipt:
+                type: string
+                maxLength: 253
+              resultReceipt:
+                type: string
+                maxLength: 253
+              remoteAcknowledgementSequence:
+                type: integer
+                format: int64
+                minimum: 0
+              conditions:
+                type: array
+                items:
+                  type: object
+                  x-kubernetes-preserve-unknown-fields: true
+  conversion:
+    strategy: Webhook
+    webhook:
+      conversionReviewVersions:
+      - v1
+      clientConfig:
+        service:
+          namespace: kube-system
+          name: space-compute-conversion-webhook
+          path: /convert
+          port: 443
+        caBundle: ''
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: spacedomainreporterbindings.spacecompute.k3s.io
+spec:
+  group: spacecompute.k3s.io
+  scope: Cluster
+  names:
+    plural: spacedomainreporterbindings
+    singular: spacedomainreporterbinding
+    kind: SpaceDomainReporterBinding
+    shortNames:
+    - sreporter
+  versions:
+  - name: v1alpha1
+    served: true
+    storage: false
+    schema:
+      openAPIV3Schema:
+        type: object
+        required:
+        - spec
+        properties:
+          apiVersion:
+            type: string
+          kind:
+            type: string
+          metadata:
+            type: object
+          spec:
+            type: object
+            required:
+            - reporterPrincipal
+            - domain
+            - allowedKinds
+            - publicKeyRef
+            properties:
+              reporterPrincipal:
+                type: string
+                minLength: 1
+                maxLength: 253
+              domain:
+                type: object
+                required:
+                - name
+                - clusterID
+                - orbitClass
+                properties:
+                  name:
+                    type: string
+                    maxLength: 253
+                    pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
+                  clusterID:
+                    type: string
+                    maxLength: 253
+                    pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
+                  orbitClass:
+                    type: string
+                    enum:
+                    - ground
+                    - leo
+                    - meo
+                    - geo
+                    - heo
+              allowedKinds:
+                type: array
+                minItems: 1
+                maxItems: 7
+                uniqueItems: true
+                items:
+                  type: string
+                  enum:
+                  - SpaceLinkSnapshot
+                  - SpaceDomainResourceSummary
+                  - PhysicalDeviceInventory
+                  - SpaceTransferReceipt
+                  - SpaceExecutionLease
+                  - SpaceExecutionObservation
+                  - SpaceResultReceipt
+              allowedPeers:
+                type: array
+                maxItems: 64
+                items:
+                  type: object
+                  required:
+                  - name
+                  - clusterID
+                  - orbitClass
+                  properties:
+                    name:
+                      type: string
+                      maxLength: 253
+                      pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
+                    clusterID:
+                      type: string
+                      maxLength: 253
+                      pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
+                    orbitClass:
+                      type: string
+                      enum:
+                      - ground
+                      - leo
+                      - meo
+                      - geo
+                      - heo
+              publicKeyRef:
+                type: object
+                required:
+                - namespace
+                - name
+                - key
+                properties:
+                  namespace:
+                    type: string
+                    minLength: 1
+                    maxLength: 253
+                  name:
+                    type: string
+                    minLength: 1
+                    maxLength: 253
+                  key:
+                    type: string
+                    minLength: 1
+                    maxLength: 253
+  - name: v1beta1
+    served: true
+    storage: true
+    schema:
+      openAPIV3Schema:
+        type: object
+        required:
+        - spec
+        properties:
+          apiVersion:
+            type: string
+          kind:
+            type: string
+          metadata:
+            type: object
+          spec:
+            type: object
+            required:
+            - reporterPrincipal
+            - domain
+            - allowedKinds
+            - publicKeyRef
+            properties:
+              reporterPrincipal:
+                type: string
+                minLength: 1
+                maxLength: 253
+              domain:
+                type: object
+                required:
+                - name
+                - clusterID
+                - orbitClass
+                properties:
+                  name:
+                    type: string
+                    maxLength: 253
+                    pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
+                  clusterID:
+                    type: string
+                    maxLength: 253
+                    pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
+                  orbitClass:
+                    type: string
+                    enum:
+                    - ground
+                    - leo
+                    - meo
+                    - geo
+                    - heo
+              allowedKinds:
+                type: array
+                minItems: 1
+                maxItems: 7
+                uniqueItems: true
+                items:
+                  type: string
+                  enum:
+                  - SpaceLinkSnapshot
+                  - SpaceDomainResourceSummary
+                  - PhysicalDeviceInventory
+                  - SpaceTransferReceipt
+                  - SpaceExecutionLease
+                  - SpaceExecutionObservation
+                  - SpaceResultReceipt
+              allowedPeers:
+                type: array
+                maxItems: 64
+                items:
+                  type: object
+                  required:
+                  - name
+                  - clusterID
+                  - orbitClass
+                  properties:
+                    name:
+                      type: string
+                      maxLength: 253
+                      pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
+                    clusterID:
+                      type: string
+                      maxLength: 253
+                      pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
+                    orbitClass:
+                      type: string
+                      enum:
+                      - ground
+                      - leo
+                      - meo
+                      - geo
+                      - heo
+              publicKeyRef:
+                type: object
+                required:
+                - namespace
+                - name
+                - key
+                properties:
+                  namespace:
+                    type: string
+                    minLength: 1
+                    maxLength: 253
+                  name:
+                    type: string
+                    minLength: 1
+                    maxLength: 253
+                  key:
+                    type: string
+                    minLength: 1
+                    maxLength: 253
+  conversion:
+    strategy: Webhook
+    webhook:
+      conversionReviewVersions:
+      - v1
+      clientConfig:
+        service:
+          namespace: kube-system
+          name: space-compute-conversion-webhook
+          path: /convert
+          port: 443
+        caBundle: ''
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: spacetransferreceipts.spacecompute.k3s.io
+spec:
+  group: spacecompute.k3s.io
+  scope: Cluster
+  names:
+    plural: spacetransferreceipts
+    singular: spacetransferreceipt
+    kind: SpaceTransferReceipt
+    shortNames:
+    - stransferreceipt
+  versions:
+  - name: v1alpha1
+    served: true
+    storage: false
+    schema:
+      openAPIV3Schema:
+        type: object
+        required:
+        - spec
+        properties:
+          apiVersion:
+            type: string
+          kind:
+            type: string
+          metadata:
+            type: object
+          spec:
+            type: object
+            required:
+            - transferID
+            - missionUID
+            - planID
+            - attempt
+            - source
+            - destination
+            - dataID
+            - bytes
+            - payloadDigest
+            - startedAt
+            - completedAt
+            - provenance
+            properties:
+              transferID:
+                type: string
+                minLength: 1
+                maxLength: 63
+              missionUID:
+                type: string
+                minLength: 1
+                maxLength: 128
+              planID:
+                type: string
+                minLength: 1
+                maxLength: 63
+              attempt:
+                type: integer
+                format: int32
+                minimum: 1
+                maximum: 100
+              source:
+                type: object
+                required:
+                - name
+                - clusterID
+                - orbitClass
+                properties:
+                  name:
+                    type: string
+                    maxLength: 253
+                    pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
+                  clusterID:
+                    type: string
+                    maxLength: 253
+                    pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
+                  orbitClass:
+                    type: string
+                    enum:
+                    - ground
+                    - leo
+                    - meo
+                    - geo
+                    - heo
+              destination:
+                type: object
+                required:
+                - name
+                - clusterID
+                - orbitClass
+                properties:
+                  name:
+                    type: string
+                    maxLength: 253
+                    pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
+                  clusterID:
+                    type: string
+                    maxLength: 253
+                    pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
+                  orbitClass:
+                    type: string
+                    enum:
+                    - ground
+                    - leo
+                    - meo
+                    - geo
+                    - heo
+              dataID:
+                type: string
+                minLength: 1
+                maxLength: 253
+              bytes:
+                type: integer
+                format: int64
+                minimum: 0
+                maximum: 1125899906842624
+              payloadDigest:
+                type: string
+                pattern: ^[a-f0-9]{64}$
+              startedAt:
+                type: string
+                format: date-time
+              completedAt:
+                type: string
+                format: date-time
+              provenance:
+                type: object
+                required:
+                - reporterID
+                - source
+                - digest
+                - sequence
+                - signature
+                properties:
+                  reporterID:
+                    type: string
+                    minLength: 1
+                    maxLength: 253
+                  source:
+                    type: string
+                    minLength: 1
+                    maxLength: 256
+                  digest:
+                    type: string
+                    pattern: ^[a-f0-9]{64}$
+                  previousDigest:
+                    type: string
+                    pattern: ^[a-f0-9]{64}$
+                  sequence:
+                    type: integer
+                    format: int64
+                    minimum: 1
+                  signature:
+                    type: string
+                    minLength: 1
+                    maxLength: 256
+  - name: v1beta1
+    served: true
+    storage: true
+    schema:
+      openAPIV3Schema:
+        type: object
+        required:
+        - spec
+        properties:
+          apiVersion:
+            type: string
+          kind:
+            type: string
+          metadata:
+            type: object
+          spec:
+            type: object
+            required:
+            - transferID
+            - missionUID
+            - planID
+            - attempt
+            - source
+            - destination
+            - dataID
+            - bytes
+            - payloadDigest
+            - startedAt
+            - completedAt
+            - provenance
+            properties:
+              transferID:
+                type: string
+                minLength: 1
+                maxLength: 63
+              missionUID:
+                type: string
+                minLength: 1
+                maxLength: 128
+              planID:
+                type: string
+                minLength: 1
+                maxLength: 63
+              attempt:
+                type: integer
+                format: int32
+                minimum: 1
+                maximum: 100
+              source:
+                type: object
+                required:
+                - name
+                - clusterID
+                - orbitClass
+                properties:
+                  name:
+                    type: string
+                    maxLength: 253
+                    pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
+                  clusterID:
+                    type: string
+                    maxLength: 253
+                    pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
+                  orbitClass:
+                    type: string
+                    enum:
+                    - ground
+                    - leo
+                    - meo
+                    - geo
+                    - heo
+              destination:
+                type: object
+                required:
+                - name
+                - clusterID
+                - orbitClass
+                properties:
+                  name:
+                    type: string
+                    maxLength: 253
+                    pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
+                  clusterID:
+                    type: string
+                    maxLength: 253
+                    pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
+                  orbitClass:
+                    type: string
+                    enum:
+                    - ground
+                    - leo
+                    - meo
+                    - geo
+                    - heo
+              dataID:
+                type: string
+                minLength: 1
+                maxLength: 253
+              bytes:
+                type: integer
+                format: int64
+                minimum: 0
+                maximum: 1125899906842624
+              payloadDigest:
+                type: string
+                pattern: ^[a-f0-9]{64}$
+              startedAt:
+                type: string
+                format: date-time
+              completedAt:
+                type: string
+                format: date-time
+              provenance:
+                type: object
+                required:
+                - reporterID
+                - source
+                - digest
+                - sequence
+                - signature
+                properties:
+                  reporterID:
+                    type: string
+                    minLength: 1
+                    maxLength: 253
+                  source:
+                    type: string
+                    minLength: 1
+                    maxLength: 256
+                  digest:
+                    type: string
+                    pattern: ^[a-f0-9]{64}$
+                  previousDigest:
+                    type: string
+                    pattern: ^[a-f0-9]{64}$
+                  sequence:
+                    type: integer
+                    format: int64
+                    minimum: 1
+                  signature:
+                    type: string
+                    minLength: 1
+                    maxLength: 256
+  conversion:
+    strategy: Webhook
+    webhook:
+      conversionReviewVersions:
+      - v1
+      clientConfig:
+        service:
+          namespace: kube-system
+          name: space-compute-conversion-webhook
+          path: /convert
+          port: 443
+        caBundle: ''
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: spaceresultreceipts.spacecompute.k3s.io
+spec:
+  group: spacecompute.k3s.io
+  scope: Cluster
+  names:
+    plural: spaceresultreceipts
+    singular: spaceresultreceipt
+    kind: SpaceResultReceipt
+    shortNames:
+    - sresultreceipt
+  versions:
+  - name: v1alpha1
+    served: true
+    storage: false
+    schema:
+      openAPIV3Schema:
+        type: object
+        required:
+        - spec
+        properties:
+          apiVersion:
+            type: string
+          kind:
+            type: string
+          metadata:
+            type: object
+          spec:
+            type: object
+            required:
+            - resultID
+            - missionUID
+            - planID
+            - attempt
+            - source
+            - destination
+            - bytes
+            - payloadDigest
+            - completedAt
+            - provenance
+            properties:
+              resultID:
+                type: string
+                minLength: 1
+                maxLength: 63
+              missionUID:
+                type: string
+                minLength: 1
+                maxLength: 128
+              planID:
+                type: string
+                minLength: 1
+                maxLength: 63
+              attempt:
+                type: integer
+                format: int32
+                minimum: 1
+                maximum: 100
+              source:
+                type: object
+                required:
+                - name
+                - clusterID
+                - orbitClass
+                properties:
+                  name:
+                    type: string
+                    maxLength: 253
+                    pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
+                  clusterID:
+                    type: string
+                    maxLength: 253
+                    pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
+                  orbitClass:
+                    type: string
+                    enum:
+                    - ground
+                    - leo
+                    - meo
+                    - geo
+                    - heo
+              destination:
+                type: object
+                required:
+                - name
+                - clusterID
+                - orbitClass
+                properties:
+                  name:
+                    type: string
+                    maxLength: 253
+                    pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
+                  clusterID:
+                    type: string
+                    maxLength: 253
+                    pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
+                  orbitClass:
+                    type: string
+                    enum:
+                    - ground
+                    - leo
+                    - meo
+                    - geo
+                    - heo
+              bytes:
+                type: integer
+                format: int64
+                minimum: 0
+                maximum: 1125899906842624
+              payloadDigest:
+                type: string
+                pattern: ^[a-f0-9]{64}$
+              completedAt:
+                type: string
+                format: date-time
+              provenance:
+                type: object
+                required:
+                - reporterID
+                - source
+                - digest
+                - sequence
+                - signature
+                properties:
+                  reporterID:
+                    type: string
+                    minLength: 1
+                    maxLength: 253
+                  source:
+                    type: string
+                    minLength: 1
+                    maxLength: 256
+                  digest:
+                    type: string
+                    pattern: ^[a-f0-9]{64}$
+                  previousDigest:
+                    type: string
+                    pattern: ^[a-f0-9]{64}$
+                  sequence:
+                    type: integer
+                    format: int64
+                    minimum: 1
+                  signature:
+                    type: string
+                    minLength: 1
+                    maxLength: 256
+  - name: v1beta1
+    served: true
+    storage: true
+    schema:
+      openAPIV3Schema:
+        type: object
+        required:
+        - spec
+        properties:
+          apiVersion:
+            type: string
+          kind:
+            type: string
+          metadata:
+            type: object
+          spec:
+            type: object
+            required:
+            - resultID
+            - missionUID
+            - planID
+            - attempt
+            - source
+            - destination
+            - bytes
+            - payloadDigest
+            - completedAt
+            - provenance
+            properties:
+              resultID:
+                type: string
+                minLength: 1
+                maxLength: 63
+              missionUID:
+                type: string
+                minLength: 1
+                maxLength: 128
+              planID:
+                type: string
+                minLength: 1
+                maxLength: 63
+              attempt:
+                type: integer
+                format: int32
+                minimum: 1
+                maximum: 100
+              source:
+                type: object
+                required:
+                - name
+                - clusterID
+                - orbitClass
+                properties:
+                  name:
+                    type: string
+                    maxLength: 253
+                    pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
+                  clusterID:
+                    type: string
+                    maxLength: 253
+                    pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
+                  orbitClass:
+                    type: string
+                    enum:
+                    - ground
+                    - leo
+                    - meo
+                    - geo
+                    - heo
+              destination:
+                type: object
+                required:
+                - name
+                - clusterID
+                - orbitClass
+                properties:
+                  name:
+                    type: string
+                    maxLength: 253
+                    pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
+                  clusterID:
+                    type: string
+                    maxLength: 253
+                    pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
+                  orbitClass:
+                    type: string
+                    enum:
+                    - ground
+                    - leo
+                    - meo
+                    - geo
+                    - heo
+              bytes:
+                type: integer
+                format: int64
+                minimum: 0
+                maximum: 1125899906842624
+              payloadDigest:
+                type: string
+                pattern: ^[a-f0-9]{64}$
+              completedAt:
+                type: string
+                format: date-time
+              provenance:
+                type: object
+                required:
+                - reporterID
+                - source
+                - digest
+                - sequence
+                - signature
+                properties:
+                  reporterID:
+                    type: string
+                    minLength: 1
+                    maxLength: 253
+                  source:
+                    type: string
+                    minLength: 1
+                    maxLength: 256
+                  digest:
+                    type: string
+                    pattern: ^[a-f0-9]{64}$
+                  previousDigest:
+                    type: string
+                    pattern: ^[a-f0-9]{64}$
+                  sequence:
+                    type: integer
+                    format: int64
+                    minimum: 1
+                  signature:
+                    type: string
+                    minLength: 1
+                    maxLength: 256
+  conversion:
+    strategy: Webhook
+    webhook:
+      conversionReviewVersions:
+      - v1
+      clientConfig:
+        service:
+          namespace: kube-system
+          name: space-compute-conversion-webhook
+          path: /convert
+          port: 443
+        caBundle: ''
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: spacetransferintents.spacecompute.k3s.io
+spec:
+  group: spacecompute.k3s.io
+  scope: Cluster
+  names:
+    plural: spacetransferintents
+    singular: spacetransferintent
+    kind: SpaceTransferIntent
+    shortNames:
+    - stransfer
+  versions:
+  - name: v1alpha1
+    served: true
+    storage: false
+    subresources:
+      status: {}
+    schema:
+      openAPIV3Schema:
+        type: object
+        required:
+        - spec
+        properties:
+          spec:
+            type: object
+            required:
+            - transferID
+            - missionUID
+            - planID
+            - attempt
+            - purpose
+            - coordinator
+            - source
+            - destination
+            - dataID
+            - bytes
+            - payloadDigest
+            - window
+            - expiresAt
+            properties:
+              transferID:
+                type: string
+                maxLength: 63
+              missionUID:
+                type: string
+                maxLength: 128
+              planID:
+                type: string
+                maxLength: 63
+              attempt:
+                type: integer
+                format: int32
+                minimum: 1
+                maximum: 100
+              purpose:
+                type: string
+                enum:
+                - Input
+                - Result
+              coordinator:
+                type: object
+                required:
+                - name
+                - clusterID
+                - orbitClass
+                properties:
+                  name:
+                    type: string
+                    minLength: 1
+                    maxLength: 63
+                  clusterID:
+                    type: string
+                    minLength: 1
+                    maxLength: 253
+                  orbitClass:
+                    type: string
+                    minLength: 1
+                    maxLength: 32
+              source:
+                type: object
+                required:
+                - name
+                - clusterID
+                - orbitClass
+                properties:
+                  name:
+                    type: string
+                    minLength: 1
+                    maxLength: 63
+                  clusterID:
+                    type: string
+                    minLength: 1
+                    maxLength: 253
+                  orbitClass:
+                    type: string
+                    minLength: 1
+                    maxLength: 32
+              destination:
+                type: object
+                required:
+                - name
+                - clusterID
+                - orbitClass
+                properties:
+                  name:
+                    type: string
+                    minLength: 1
+                    maxLength: 63
+                  clusterID:
+                    type: string
+                    minLength: 1
+                    maxLength: 253
+                  orbitClass:
+                    type: string
+                    minLength: 1
+                    maxLength: 32
+              dataID:
+                type: string
+                minLength: 1
+                maxLength: 253
+              bytes:
+                type: integer
+                format: int64
+                minimum: 0
+                maximum: 1125899906842624
+              payloadDigest:
+                type: string
+                pattern: ^[0-9a-f]{64}$
+              leaseEpoch:
+                type: integer
+                format: int64
+                minimum: 0
+              tokenHash:
+                type: string
+                pattern: ^(|[0-9a-f]{64})$
+              window:
+                type: object
+                required:
+                - source
+                - destination
+                - start
+                - end
+                - bytes
+                properties:
+                  linkSnapshotName:
+                    type: string
+                  windowID:
+                    type: string
+                  dataID:
+                    type: string
+                  source:
+                    type: object
+                    required:
+                    - name
+                    - clusterID
+                    - orbitClass
+                    properties:
+                      name:
+                        type: string
+                        minLength: 1
+                        maxLength: 63
+                      clusterID:
+                        type: string
+                        minLength: 1
+                        maxLength: 253
+                      orbitClass:
+                        type: string
+                        minLength: 1
+                        maxLength: 32
+                  sourceURI:
+                    type: string
+                    maxLength: 2048
+                  destination:
+                    type: object
+                    required:
+                    - name
+                    - clusterID
+                    - orbitClass
+                    properties:
+                      name:
+                        type: string
+                        minLength: 1
+                        maxLength: 63
+                      clusterID:
+                        type: string
+                        minLength: 1
+                        maxLength: 253
+                      orbitClass:
+                        type: string
+                        minLength: 1
+                        maxLength: 32
+                  destinationURI:
+                    type: string
+                    maxLength: 2048
+                  start:
+                    type: string
+                    format: date-time
+                  end:
+                    type: string
+                    format: date-time
+                  bytes:
+                    type: integer
+                    format: int64
+                    minimum: 0
+                    maximum: 1125899906842624
+              expiresAt:
+                type: string
+                format: date-time
+          status:
+            type: object
+            properties:
+              observedGeneration:
+                type: integer
+                format: int64
+              phase:
+                type: string
+              receiptName:
+                type: string
+              conditions:
+                type: array
+                items:
+                  type: object
+                  x-kubernetes-preserve-unknown-fields: true
+  - name: v1beta1
+    served: true
+    storage: true
+    subresources:
+      status: {}
+    schema:
+      openAPIV3Schema:
+        type: object
+        required:
+        - spec
+        properties:
+          spec:
+            type: object
+            required:
+            - transferID
+            - missionUID
+            - planID
+            - attempt
+            - purpose
+            - coordinator
+            - source
+            - destination
+            - dataID
+            - bytes
+            - payloadDigest
+            - window
+            - expiresAt
+            properties:
+              transferID:
+                type: string
+                maxLength: 63
+              missionUID:
+                type: string
+                maxLength: 128
+              planID:
+                type: string
+                maxLength: 63
+              attempt:
+                type: integer
+                format: int32
+                minimum: 1
+                maximum: 100
+              purpose:
+                type: string
+                enum:
+                - Input
+                - Result
+              coordinator:
+                type: object
+                required:
+                - name
+                - clusterID
+                - orbitClass
+                properties:
+                  name:
+                    type: string
+                    minLength: 1
+                    maxLength: 63
+                  clusterID:
+                    type: string
+                    minLength: 1
+                    maxLength: 253
+                  orbitClass:
+                    type: string
+                    minLength: 1
+                    maxLength: 32
+              source:
+                type: object
+                required:
+                - name
+                - clusterID
+                - orbitClass
+                properties:
+                  name:
+                    type: string
+                    minLength: 1
+                    maxLength: 63
+                  clusterID:
+                    type: string
+                    minLength: 1
+                    maxLength: 253
+                  orbitClass:
+                    type: string
+                    minLength: 1
+                    maxLength: 32
+              destination:
+                type: object
+                required:
+                - name
+                - clusterID
+                - orbitClass
+                properties:
+                  name:
+                    type: string
+                    minLength: 1
+                    maxLength: 63
+                  clusterID:
+                    type: string
+                    minLength: 1
+                    maxLength: 253
+                  orbitClass:
+                    type: string
+                    minLength: 1
+                    maxLength: 32
+              dataID:
+                type: string
+                minLength: 1
+                maxLength: 253
+              bytes:
+                type: integer
+                format: int64
+                minimum: 0
+                maximum: 1125899906842624
+              payloadDigest:
+                type: string
+                pattern: ^[0-9a-f]{64}$
+              leaseEpoch:
+                type: integer
+                format: int64
+                minimum: 0
+              tokenHash:
+                type: string
+                pattern: ^(|[0-9a-f]{64})$
+              window:
+                type: object
+                required:
+                - source
+                - destination
+                - start
+                - end
+                - bytes
+                properties:
+                  linkSnapshotName:
+                    type: string
+                  windowID:
+                    type: string
+                  dataID:
+                    type: string
+                  source:
+                    type: object
+                    required:
+                    - name
+                    - clusterID
+                    - orbitClass
+                    properties:
+                      name:
+                        type: string
+                        minLength: 1
+                        maxLength: 63
+                      clusterID:
+                        type: string
+                        minLength: 1
+                        maxLength: 253
+                      orbitClass:
+                        type: string
+                        minLength: 1
+                        maxLength: 32
+                  sourceURI:
+                    type: string
+                    maxLength: 2048
+                  destination:
+                    type: object
+                    required:
+                    - name
+                    - clusterID
+                    - orbitClass
+                    properties:
+                      name:
+                        type: string
+                        minLength: 1
+                        maxLength: 63
+                      clusterID:
+                        type: string
+                        minLength: 1
+                        maxLength: 253
+                      orbitClass:
+                        type: string
+                        minLength: 1
+                        maxLength: 32
+                  destinationURI:
+                    type: string
+                    maxLength: 2048
+                  start:
+                    type: string
+                    format: date-time
+                  end:
+                    type: string
+                    format: date-time
+                  bytes:
+                    type: integer
+                    format: int64
+                    minimum: 0
+                    maximum: 1125899906842624
+              expiresAt:
+                type: string
+                format: date-time
+          status:
+            type: object
+            properties:
+              observedGeneration:
+                type: integer
+                format: int64
+              phase:
+                type: string
+              receiptName:
+                type: string
+              conditions:
+                type: array
+                items:
+                  type: object
+                  x-kubernetes-preserve-unknown-fields: true
+  conversion:
+    strategy: Webhook
+    webhook:
+      conversionReviewVersions:
+      - v1
+      clientConfig:
+        service:
+          namespace: kube-system
+          name: space-compute-conversion-webhook
+          path: /convert
+          port: 443
+        caBundle: ''
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: spaceexecutionleases.spacecompute.k3s.io
+spec:
+  group: spacecompute.k3s.io
+  scope: Cluster
+  names:
+    plural: spaceexecutionleases
+    singular: spaceexecutionlease
+    kind: SpaceExecutionLease
+    shortNames:
+    - sexeclease
+  versions:
+  - name: v1alpha1
+    served: true
+    storage: false
+    schema:
+      openAPIV3Schema:
+        type: object
+        required:
+        - spec
+        properties:
+          spec:
+            type: object
+            required:
+            - source
+            - destination
+            - fence
+            - heartbeatAt
+            - maximumClockSkewSeconds
+            - provenance
+            properties:
+              source:
+                type: object
+                required:
+                - name
+                - clusterID
+                - orbitClass
+                properties:
+                  name:
+                    type: string
+                    minLength: 1
+                    maxLength: 63
+                  clusterID:
+                    type: string
+                    minLength: 1
+                    maxLength: 253
+                  orbitClass:
+                    type: string
+                    minLength: 1
+                    maxLength: 32
+              destination:
+                type: object
+                required:
+                - name
+                - clusterID
+                - orbitClass
+                properties:
+                  name:
+                    type: string
+                    minLength: 1
+                    maxLength: 63
+                  clusterID:
+                    type: string
+                    minLength: 1
+                    maxLength: 253
+                  orbitClass:
+                    type: string
+                    minLength: 1
+                    maxLength: 32
+              fence:
+                type: object
+                required:
+                - missionUID
+                - planID
+                - attempt
+                - leaseEpoch
+                - tokenHash
+                - expiresAt
+                properties:
+                  missionUID:
+                    type: string
+                    minLength: 1
+                    maxLength: 128
+                  planID:
+                    type: string
+                    minLength: 1
+                    maxLength: 63
+                  attempt:
+                    type: integer
+                    format: int32
+                    minimum: 1
+                    maximum: 100
+                  leaseEpoch:
+                    type: integer
+                    format: int64
+                    minimum: 1
+                  tokenHash:
+                    type: string
+                    pattern: ^[0-9a-f]{64}$
+                  expiresAt:
+                    type: string
+                    format: date-time
+              heartbeatAt:
+                type: string
+                format: date-time
+              maximumClockSkewSeconds:
+                type: integer
+                format: int64
+                minimum: 0
+                maximum: 300
+              provenance:
+                type: object
+                required:
+                - reporterID
+                - source
+                - digest
+                - sequence
+                properties:
+                  reporterID:
+                    type: string
+                    minLength: 1
+                    maxLength: 253
+                  source:
+                    type: string
+                    minLength: 1
+                    maxLength: 253
+                  digest:
+                    type: string
+                    pattern: ^[0-9a-f]{64}$
+                  signature:
+                    type: string
+                  sequence:
+                    type: integer
+                    format: int64
+                    minimum: 1
+                  previousDigest:
+                    type: string
+                    pattern: ^(|[0-9a-f]{64})$
+  - name: v1beta1
+    served: true
+    storage: true
+    schema:
+      openAPIV3Schema:
+        type: object
+        required:
+        - spec
+        properties:
+          spec:
+            type: object
+            required:
+            - source
+            - destination
+            - fence
+            - heartbeatAt
+            - maximumClockSkewSeconds
+            - provenance
+            properties:
+              source:
+                type: object
+                required:
+                - name
+                - clusterID
+                - orbitClass
+                properties:
+                  name:
+                    type: string
+                    minLength: 1
+                    maxLength: 63
+                  clusterID:
+                    type: string
+                    minLength: 1
+                    maxLength: 253
+                  orbitClass:
+                    type: string
+                    minLength: 1
+                    maxLength: 32
+              destination:
+                type: object
+                required:
+                - name
+                - clusterID
+                - orbitClass
+                properties:
+                  name:
+                    type: string
+                    minLength: 1
+                    maxLength: 63
+                  clusterID:
+                    type: string
+                    minLength: 1
+                    maxLength: 253
+                  orbitClass:
+                    type: string
+                    minLength: 1
+                    maxLength: 32
+              fence:
+                type: object
+                required:
+                - missionUID
+                - planID
+                - attempt
+                - leaseEpoch
+                - tokenHash
+                - expiresAt
+                properties:
+                  missionUID:
+                    type: string
+                    minLength: 1
+                    maxLength: 128
+                  planID:
+                    type: string
+                    minLength: 1
+                    maxLength: 63
+                  attempt:
+                    type: integer
+                    format: int32
+                    minimum: 1
+                    maximum: 100
+                  leaseEpoch:
+                    type: integer
+                    format: int64
+                    minimum: 1
+                  tokenHash:
+                    type: string
+                    pattern: ^[0-9a-f]{64}$
+                  expiresAt:
+                    type: string
+                    format: date-time
+              heartbeatAt:
+                type: string
+                format: date-time
+              maximumClockSkewSeconds:
+                type: integer
+                format: int64
+                minimum: 0
+                maximum: 300
+              provenance:
+                type: object
+                required:
+                - reporterID
+                - source
+                - digest
+                - sequence
+                properties:
+                  reporterID:
+                    type: string
+                    minLength: 1
+                    maxLength: 253
+                  source:
+                    type: string
+                    minLength: 1
+                    maxLength: 253
+                  digest:
+                    type: string
+                    pattern: ^[0-9a-f]{64}$
+                  signature:
+                    type: string
+                  sequence:
+                    type: integer
+                    format: int64
+                    minimum: 1
+                  previousDigest:
+                    type: string
+                    pattern: ^(|[0-9a-f]{64})$
+  conversion:
+    strategy: Webhook
+    webhook:
+      conversionReviewVersions:
+      - v1
+      clientConfig:
+        service:
+          namespace: kube-system
+          name: space-compute-conversion-webhook
+          path: /convert
+          port: 443
+        caBundle: ''
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: spaceexecutionobservations.spacecompute.k3s.io
+spec:
+  group: spacecompute.k3s.io
+  scope: Cluster
+  names:
+    plural: spaceexecutionobservations
+    singular: spaceexecutionobservation
+    kind: SpaceExecutionObservation
+    shortNames:
+    - sexecobs
+  versions:
+  - name: v1alpha1
+    served: true
+    storage: false
+    schema:
+      openAPIV3Schema:
+        type: object
+        required:
+        - spec
+        properties:
+          spec:
+            type: object
+            required:
+            - observationID
+            - missionUID
+            - planID
+            - attempt
+            - leaseEpoch
+            - tokenHash
+            - source
+            - destination
+            - phase
+            - observedAt
+            - provenance
+            properties:
+              observationID:
+                type: string
+                minLength: 1
+                maxLength: 63
+              missionUID:
+                type: string
+                minLength: 1
+                maxLength: 128
+              planID:
+                type: string
+                minLength: 1
+                maxLength: 63
+              attempt:
+                type: integer
+                format: int32
+                minimum: 1
+                maximum: 100
+              leaseEpoch:
+                type: integer
+                format: int64
+                minimum: 1
+              tokenHash:
+                type: string
+                pattern: ^[0-9a-f]{64}$
+              source:
+                type: object
+                required:
+                - name
+                - clusterID
+                - orbitClass
+                properties:
+                  name:
+                    type: string
+                    minLength: 1
+                    maxLength: 63
+                  clusterID:
+                    type: string
+                    minLength: 1
+                    maxLength: 253
+                  orbitClass:
+                    type: string
+                    minLength: 1
+                    maxLength: 32
+              destination:
+                type: object
+                required:
+                - name
+                - clusterID
+                - orbitClass
+                properties:
+                  name:
+                    type: string
+                    minLength: 1
+                    maxLength: 63
+                  clusterID:
+                    type: string
+                    minLength: 1
+                    maxLength: 253
+                  orbitClass:
+                    type: string
+                    minLength: 1
+                    maxLength: 32
+              phase:
+                type: string
+                enum:
+                - Heartbeat
+                - Stopped
+                - Checkpointed
+                - Completed
+                - Failed
+              checkpointID:
+                type: string
+                maxLength: 253
+              observedAt:
+                type: string
+                format: date-time
+              provenance:
+                type: object
+                required:
+                - reporterID
+                - source
+                - digest
+                - sequence
+                properties:
+                  reporterID:
+                    type: string
+                    minLength: 1
+                    maxLength: 253
+                  source:
+                    type: string
+                    minLength: 1
+                    maxLength: 253
+                  digest:
+                    type: string
+                    pattern: ^[0-9a-f]{64}$
+                  signature:
+                    type: string
+                  sequence:
+                    type: integer
+                    format: int64
+                    minimum: 1
+                  previousDigest:
+                    type: string
+                    pattern: ^(|[0-9a-f]{64})$
+  - name: v1beta1
+    served: true
+    storage: true
+    schema:
+      openAPIV3Schema:
+        type: object
+        required:
+        - spec
+        properties:
+          spec:
+            type: object
+            required:
+            - observationID
+            - missionUID
+            - planID
+            - attempt
+            - leaseEpoch
+            - tokenHash
+            - source
+            - destination
+            - phase
+            - observedAt
+            - provenance
+            properties:
+              observationID:
+                type: string
+                minLength: 1
+                maxLength: 63
+              missionUID:
+                type: string
+                minLength: 1
+                maxLength: 128
+              planID:
+                type: string
+                minLength: 1
+                maxLength: 63
+              attempt:
+                type: integer
+                format: int32
+                minimum: 1
+                maximum: 100
+              leaseEpoch:
+                type: integer
+                format: int64
+                minimum: 1
+              tokenHash:
+                type: string
+                pattern: ^[0-9a-f]{64}$
+              source:
+                type: object
+                required:
+                - name
+                - clusterID
+                - orbitClass
+                properties:
+                  name:
+                    type: string
+                    minLength: 1
+                    maxLength: 63
+                  clusterID:
+                    type: string
+                    minLength: 1
+                    maxLength: 253
+                  orbitClass:
+                    type: string
+                    minLength: 1
+                    maxLength: 32
+              destination:
+                type: object
+                required:
+                - name
+                - clusterID
+                - orbitClass
+                properties:
+                  name:
+                    type: string
+                    minLength: 1
+                    maxLength: 63
+                  clusterID:
+                    type: string
+                    minLength: 1
+                    maxLength: 253
+                  orbitClass:
+                    type: string
+                    minLength: 1
+                    maxLength: 32
+              phase:
+                type: string
+                enum:
+                - Heartbeat
+                - Stopped
+                - Checkpointed
+                - Completed
+                - Failed
+              checkpointID:
+                type: string
+                maxLength: 253
+              observedAt:
+                type: string
+                format: date-time
+              provenance:
+                type: object
+                required:
+                - reporterID
+                - source
+                - digest
+                - sequence
+                properties:
+                  reporterID:
+                    type: string
+                    minLength: 1
+                    maxLength: 253
+                  source:
+                    type: string
+                    minLength: 1
+                    maxLength: 253
+                  digest:
+                    type: string
+                    pattern: ^[0-9a-f]{64}$
+                  signature:
+                    type: string
+                  sequence:
+                    type: integer
+                    format: int64
+                    minimum: 1
+                  previousDigest:
+                    type: string
+                    pattern: ^(|[0-9a-f]{64})$
+  conversion:
+    strategy: Webhook
+    webhook:
+      conversionReviewVersions:
+      - v1
+      clientConfig:
+        service:
+          namespace: kube-system
+          name: space-compute-conversion-webhook
+          path: /convert
+          port: 443
+        caBundle: ''
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: physicaldeviceinventories.spacecompute.k3s.io
+spec:
+  group: spacecompute.k3s.io
+  scope: Cluster
+  names:
+    plural: physicaldeviceinventories
+    singular: physicaldeviceinventory
+    kind: PhysicalDeviceInventory
+    shortNames:
+    - sdeviceinventory
+  versions:
+  - name: v1alpha1
+    served: true
+    storage: false
+    subresources:
+      status: {}
+    schema:
+      openAPIV3Schema:
+        type: object
+        required:
+        - spec
+        properties:
+          apiVersion:
+            type: string
+          kind:
+            type: string
+          metadata:
+            type: object
+          spec:
+            type: object
+            required:
+            - domain
+            - nodeName
+            - observedAt
+            - validUntil
+            - confidenceMilli
+            - provenance
+            - devices
+            properties:
+              domain:
+                type: object
+                required:
+                - name
+                - clusterID
+                - orbitClass
+                properties:
+                  name:
+                    type: string
+                    minLength: 1
+                    maxLength: 253
+                    pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
+                  clusterID:
+                    type: string
+                    minLength: 1
+                    maxLength: 253
+                    pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
+                  orbitClass:
+                    type: string
+                    enum:
+                    - ground
+                    - leo
+                    - meo
+                    - geo
+                    - heo
+              nodeName:
+                type: string
+                maxLength: 253
+                minLength: 1
+                pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
+              observedAt:
+                type: string
+                format: date-time
+              validUntil:
+                type: string
+                format: date-time
+              confidenceMilli:
+                type: integer
+                format: int32
+                minimum: 0
+                maximum: 1000
+              provenance:
+                type: object
+                required:
+                - reporterID
+                - source
+                - digest
+                - sequence
+                properties:
+                  reporterID:
+                    type: string
+                    minLength: 1
+                    maxLength: 253
+                  source:
+                    type: string
+                    minLength: 1
+                    maxLength: 256
+                  digest:
+                    type: string
+                    pattern: ^[a-f0-9]{64}$
+                  previousDigest:
+                    type: string
+                    pattern: ^(|[a-f0-9]{64})$
+                  sequence:
+                    type: integer
+                    format: int64
+                    minimum: 1
+                  signature:
+                    type: string
+                    maxLength: 256
+              devices:
+                type: array
+                maxItems: 4096
+                x-kubernetes-list-type: map
+                x-kubernetes-list-map-keys:
+                - stableDeviceID
+                items:
+                  type: object
+                  required:
+                  - stableDeviceID
+                  - kubernetesResourceName
+                  - class
+                  - vendor
+                  - model
+                  - architecture
+                  - topology
+                  - totalMemoryBytes
+                  - freeMemoryBytes
+                  - health
+                  - confidenceMilli
+                  properties:
+                    stableDeviceID:
+                      type: string
+                      minLength: 1
+                      maxLength: 253
+                    kubernetesResourceName:
+                      type: string
+                      minLength: 1
+                      maxLength: 253
+                    allocationID:
+                      type: string
+                      maxLength: 512
+                    class:
+                      type: string
+                      minLength: 1
+                      maxLength: 128
+                    vendor:
+                      type: string
+                      minLength: 1
+                      maxLength: 128
+                    model:
+                      type: string
+                      minLength: 1
+                      maxLength: 128
+                    architecture:
+                      type: string
+                      minLength: 1
+                      maxLength: 128
+                    topology:
+                      type: object
+                      properties:
+                        numaNode:
+                          type: integer
+                          format: int32
+                          minimum: 0
+                        socketID:
+                          type: string
+                          maxLength: 128
+                        pciAddress:
+                          type: string
+                          maxLength: 32
+                    peerInterconnects:
+                      type: array
+                      maxItems: 256
+                      items:
+                        type: object
+                        required:
+                        - peerStableDeviceID
+                        - type
+                        - bandwidthBitsPerSecond
+                        properties:
+                          peerStableDeviceID:
+                            type: string
+                            minLength: 1
+                            maxLength: 253
+                          type:
+                            type: string
+                            minLength: 1
+                            maxLength: 64
+                          bandwidthBitsPerSecond:
+                            type: integer
+                            format: int64
+                            minimum: 0
+                            maximum: 1000000000000000
+                    totalMemoryBytes:
+                      type: integer
+                      format: int64
+                      minimum: 0
+                      maximum: 1152921504606846976
+                    freeMemoryBytes:
+                      type: integer
+                      format: int64
+                      minimum: 0
+                      maximum: 1152921504606846976
+                    memoryBandwidthBitsPerSecond:
+                      type: integer
+                      format: int64
+                      minimum: 0
+                      maximum: 1000000000000000
+                    interconnectBandwidthBitsPerSecond:
+                      type: integer
+                      format: int64
+                      minimum: 0
+                      maximum: 1000000000000000
+                    supportedPrecision:
+                      type: array
+                      maxItems: 32
+                      items:
+                        type: string
+                        maxLength: 128
+                    firmware:
+                      type: string
+                      maxLength: 128
+                    driver:
+                      type: string
+                      maxLength: 128
+                    runtime:
+                      type: string
+                      maxLength: 128
+                    libraries:
+                      type: object
+                      maxProperties: 64
+                      additionalProperties:
+                        type: string
+                        maxLength: 128
+                    health:
+                      type: string
+                      enum:
+                      - healthy
+                      - degraded
+                      - unhealthy
+                      - unknown
+                    temperatureMilliCelsius:
+                      type: integer
+                      format: int64
+                      minimum: -273150
+                      maximum: 250000
+                    powerMilliwatts:
+                      type: integer
+                      format: int64
+                      minimum: 0
+                      maximum: 10000000
+                    confidenceMilli:
+                      type: integer
+                      format: int32
+                      minimum: 0
+                      maximum: 1000
+                    draAllocationID:
+                      type: string
+                      maxLength: 512
+                    vendorAllocationID:
+                      type: string
+                      maxLength: 512
+                  x-kubernetes-validations:
+                  - rule: self.freeMemoryBytes <= self.totalMemoryBytes
+                    message: free device memory cannot exceed total memory
+            x-kubernetes-validations:
+            - rule: timestamp(self.validUntil) > timestamp(self.observedAt)
+              message: validUntil must be after observedAt
+          status:
+            type: object
+            properties:
+              observedGeneration:
+                type: integer
+                format: int64
+              conditions:
+                type: array
+                items:
+                  type: object
+                  x-kubernetes-preserve-unknown-fields: true
+  - name: v1beta1
+    served: true
+    storage: true
+    subresources:
+      status: {}
+    schema:
+      openAPIV3Schema:
+        type: object
+        required:
+        - spec
+        properties:
+          apiVersion:
+            type: string
+          kind:
+            type: string
+          metadata:
+            type: object
+          spec:
+            type: object
+            required:
+            - domain
+            - nodeName
+            - observedAt
+            - validUntil
+            - confidenceMilli
+            - provenance
+            - devices
+            properties:
+              domain:
+                type: object
+                required:
+                - name
+                - clusterID
+                - orbitClass
+                properties:
+                  name:
+                    type: string
+                    minLength: 1
+                    maxLength: 253
+                    pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
+                  clusterID:
+                    type: string
+                    minLength: 1
+                    maxLength: 253
+                    pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
+                  orbitClass:
+                    type: string
+                    enum:
+                    - ground
+                    - leo
+                    - meo
+                    - geo
+                    - heo
+              nodeName:
+                type: string
+                maxLength: 253
+                minLength: 1
+                pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
+              observedAt:
+                type: string
+                format: date-time
+              validUntil:
+                type: string
+                format: date-time
+              confidenceMilli:
+                type: integer
+                format: int32
+                minimum: 0
+                maximum: 1000
+              provenance:
+                type: object
+                required:
+                - reporterID
+                - source
+                - digest
+                - sequence
+                properties:
+                  reporterID:
+                    type: string
+                    minLength: 1
+                    maxLength: 253
+                  source:
+                    type: string
+                    minLength: 1
+                    maxLength: 256
+                  digest:
+                    type: string
+                    pattern: ^[a-f0-9]{64}$
+                  previousDigest:
+                    type: string
+                    pattern: ^(|[a-f0-9]{64})$
+                  sequence:
+                    type: integer
+                    format: int64
+                    minimum: 1
+                  signature:
+                    type: string
+                    maxLength: 256
+              devices:
+                type: array
+                maxItems: 4096
+                x-kubernetes-list-type: map
+                x-kubernetes-list-map-keys:
+                - stableDeviceID
+                items:
+                  type: object
+                  required:
+                  - stableDeviceID
+                  - kubernetesResourceName
+                  - class
+                  - vendor
+                  - model
+                  - architecture
+                  - topology
+                  - totalMemoryBytes
+                  - freeMemoryBytes
+                  - health
+                  - confidenceMilli
+                  properties:
+                    stableDeviceID:
+                      type: string
+                      minLength: 1
+                      maxLength: 253
+                    kubernetesResourceName:
+                      type: string
+                      minLength: 1
+                      maxLength: 253
+                    allocationID:
+                      type: string
+                      maxLength: 512
+                    class:
+                      type: string
+                      minLength: 1
+                      maxLength: 128
+                    vendor:
+                      type: string
+                      minLength: 1
+                      maxLength: 128
+                    model:
+                      type: string
+                      minLength: 1
+                      maxLength: 128
+                    architecture:
+                      type: string
+                      minLength: 1
+                      maxLength: 128
+                    topology:
+                      type: object
+                      properties:
+                        numaNode:
+                          type: integer
+                          format: int32
+                          minimum: 0
+                        socketID:
+                          type: string
+                          maxLength: 128
+                        pciAddress:
+                          type: string
+                          maxLength: 32
+                    peerInterconnects:
+                      type: array
+                      maxItems: 256
+                      items:
+                        type: object
+                        required:
+                        - peerStableDeviceID
+                        - type
+                        - bandwidthBitsPerSecond
+                        properties:
+                          peerStableDeviceID:
+                            type: string
+                            minLength: 1
+                            maxLength: 253
+                          type:
+                            type: string
+                            minLength: 1
+                            maxLength: 64
+                          bandwidthBitsPerSecond:
+                            type: integer
+                            format: int64
+                            minimum: 0
+                            maximum: 1000000000000000
+                    totalMemoryBytes:
+                      type: integer
+                      format: int64
+                      minimum: 0
+                      maximum: 1152921504606846976
+                    freeMemoryBytes:
+                      type: integer
+                      format: int64
+                      minimum: 0
+                      maximum: 1152921504606846976
+                    memoryBandwidthBitsPerSecond:
+                      type: integer
+                      format: int64
+                      minimum: 0
+                      maximum: 1000000000000000
+                    interconnectBandwidthBitsPerSecond:
+                      type: integer
+                      format: int64
+                      minimum: 0
+                      maximum: 1000000000000000
+                    supportedPrecision:
+                      type: array
+                      maxItems: 32
+                      items:
+                        type: string
+                        maxLength: 128
+                    firmware:
+                      type: string
+                      maxLength: 128
+                    driver:
+                      type: string
+                      maxLength: 128
+                    runtime:
+                      type: string
+                      maxLength: 128
+                    libraries:
+                      type: object
+                      maxProperties: 64
+                      additionalProperties:
+                        type: string
+                        maxLength: 128
+                    health:
+                      type: string
+                      enum:
+                      - healthy
+                      - degraded
+                      - unhealthy
+                      - unknown
+                    temperatureMilliCelsius:
+                      type: integer
+                      format: int64
+                      minimum: -273150
+                      maximum: 250000
+                    powerMilliwatts:
+                      type: integer
+                      format: int64
+                      minimum: 0
+                      maximum: 10000000
+                    confidenceMilli:
+                      type: integer
+                      format: int32
+                      minimum: 0
+                      maximum: 1000
+                    draAllocationID:
+                      type: string
+                      maxLength: 512
+                    vendorAllocationID:
+                      type: string
+                      maxLength: 512
+                  x-kubernetes-validations:
+                  - rule: self.freeMemoryBytes <= self.totalMemoryBytes
+                    message: free device memory cannot exceed total memory
+            x-kubernetes-validations:
+            - rule: timestamp(self.validUntil) > timestamp(self.observedAt)
+              message: validUntil must be after observedAt
+          status:
+            type: object
+            properties:
+              observedGeneration:
+                type: integer
+                format: int64
+              conditions:
+                type: array
+                items:
+                  type: object
+                  x-kubernetes-preserve-unknown-fields: true
+  conversion:
+    strategy: Webhook
+    webhook:
+      conversionReviewVersions:
+      - v1
+      clientConfig:
+        service:
+          namespace: kube-system
+          name: space-compute-conversion-webhook
+          path: /convert
+          port: 443
+        caBundle: ''

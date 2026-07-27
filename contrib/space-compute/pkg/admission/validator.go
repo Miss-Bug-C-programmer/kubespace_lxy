@@ -22,7 +22,7 @@ import (
 )
 
 var reporterBindingGVR = schema.GroupVersionResource{
-	Group: spacev1.GroupName, Version: "v1alpha1", Resource: "spacedomainreporterbindings",
+	Group: spacev1.GroupName, Version: spacev1.CanonicalVersion, Resource: "spacedomainreporterbindings",
 }
 
 type TrustSource interface {
@@ -128,8 +128,11 @@ func (v *Validator) Validate(ctx context.Context, request *admissionv1.Admission
 		return nil
 	}
 
-	if request.Resource.Group != spacev1.GroupName || request.Resource.Version != "v1alpha1" {
+	if request.Resource.Group != spacev1.GroupName || (request.Resource.Version != "v1alpha1" && request.Resource.Version != "v1beta1") {
 		return fmt.Errorf("unsupported admission resource %s/%s/%s", request.Resource.Group, request.Resource.Version, request.Resource.Resource)
+	}
+	if IsStorageMigrationNoop(request) {
+		return nil
 	}
 	if request.Resource.Resource == "spacedomainreporterbindings" {
 		return v.validateBindingRequest(request)
@@ -258,6 +261,15 @@ func validateUpdateStructural(current, previous *reporterEnvelope, clock spacev1
 			return fmt.Errorf("previous reporter object kind does not match")
 		}
 		return spacev1.ValidateLinkSnapshot(value, old, clock)
+	case *spacev1.PhysicalDeviceInventory:
+		old, ok := previous.digestObject.(*spacev1.PhysicalDeviceInventory)
+		if !ok {
+			return fmt.Errorf("previous reporter object kind does not match")
+		}
+		if old.Spec.Domain != value.Spec.Domain || old.Spec.NodeName != value.Spec.NodeName {
+			return fmt.Errorf("physical inventory stable domain/node identity is immutable")
+		}
+		return spacev1.ValidatePhysicalDeviceInventory(value, clock)
 	case *spacev1.SpaceExecutionLease:
 		old, ok := previous.digestObject.(*spacev1.SpaceExecutionLease)
 		if !ok {
@@ -342,6 +354,19 @@ func (v *Validator) decodeReporterEnvelope(resource string, raw []byte) (*report
 			source: value.Spec.Domain, digestObject: value, observedAtNano: value.Spec.ObservedAt.UnixNano(),
 			identity: normalizedEnvelopeIdentity(value.Spec.Domain, nil, ""),
 		}, nil
+	case "physicaldeviceinventories":
+		value := &spacev1.PhysicalDeviceInventory{}
+		if err := decodeRaw(raw, value); err != nil {
+			return nil, fmt.Errorf("decode PhysicalDeviceInventory: %w", err)
+		}
+		if err := spacev1.ValidatePhysicalDeviceInventory(value, v.clock); err != nil {
+			return nil, err
+		}
+		return &reporterEnvelope{
+			kind: "PhysicalDeviceInventory", name: value.Name, provenance: &value.Spec.Provenance,
+			source: value.Spec.Domain, digestObject: value, observedAtNano: value.Spec.ObservedAt.UnixNano(),
+			identity: normalizedEnvelopeIdentity(value.Spec.Domain, nil, value.Spec.NodeName),
+		}, nil
 	case "spacetransferreceipts":
 		value := &spacev1.SpaceTransferReceipt{}
 		if err := decodeRaw(raw, value); err != nil {
@@ -415,6 +440,8 @@ func expectedObjectName(value *reporterEnvelope) string {
 		return spacev1.LinkSnapshotName(object.Spec.Source, object.Spec.Destination)
 	case *spacev1.SpaceDomainResourceSummary:
 		return spacev1.DomainResourceSummaryName(object.Spec.Domain)
+	case *spacev1.PhysicalDeviceInventory:
+		return spacev1.PhysicalDeviceInventoryName(object.Spec.Domain, object.Spec.NodeName)
 	case *spacev1.SpaceTransferReceipt:
 		return spacev1.TransferReceiptName(object.Spec.Source, object.Spec.Destination, object.Spec.MissionUID, object.Spec.PlanID, object.Spec.TransferID)
 	case *spacev1.SpaceExecutionLease:

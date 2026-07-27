@@ -23,7 +23,7 @@ func (c staticReporterCounts) Count(resource string) int { return c[resource] }
 
 func TestReporterLimitValidatorEnforcesRateAndClusterCounts(t *testing.T) {
 	next := &countingValidator{}
-	guard, err := NewReporterLimitValidator(next, ReporterLimits{MaxLinkSnapshots: 2, MaxResourceSummaries: 3, QPS: 1, Burst: 1, MaxTrackedPrincipals: 2}, staticReporterCounts{"spacelinksnapshots": 1})
+	guard, err := NewReporterLimitValidator(next, ReporterLimits{MaxLinkSnapshots: 2, MaxResourceSummaries: 3, MaxPhysicalDeviceInventories: 4, QPS: 1, Burst: 1, MaxTrackedPrincipals: 2}, staticReporterCounts{"spacelinksnapshots": 1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,7 +47,7 @@ func TestReporterLimitValidatorEnforcesRateAndClusterCounts(t *testing.T) {
 		t.Fatalf("refilled request: %v", err)
 	}
 
-	quotaGuard, err := NewReporterLimitValidator(next, ReporterLimits{MaxLinkSnapshots: 1, MaxResourceSummaries: 3, QPS: 10, Burst: 10, MaxTrackedPrincipals: 2}, staticReporterCounts{"spacelinksnapshots": 1})
+	quotaGuard, err := NewReporterLimitValidator(next, ReporterLimits{MaxLinkSnapshots: 1, MaxResourceSummaries: 3, MaxPhysicalDeviceInventories: 4, QPS: 10, Burst: 10, MaxTrackedPrincipals: 2}, staticReporterCounts{"spacelinksnapshots": 1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,7 +67,7 @@ func TestReporterLimitValidatorEnforcesRateAndClusterCounts(t *testing.T) {
 
 func TestReporterLimitValidatorBoundsPrincipalCardinality(t *testing.T) {
 	next := &countingValidator{}
-	guard, err := NewReporterLimitValidator(next, ReporterLimits{MaxLinkSnapshots: 10, MaxResourceSummaries: 10, QPS: 10, Burst: 10, MaxTrackedPrincipals: 1}, staticReporterCounts{})
+	guard, err := NewReporterLimitValidator(next, ReporterLimits{MaxLinkSnapshots: 10, MaxResourceSummaries: 10, MaxPhysicalDeviceInventories: 10, QPS: 10, Burst: 10, MaxTrackedPrincipals: 1}, staticReporterCounts{})
 	if err != nil {
 		t.Fatal(err)
 	}

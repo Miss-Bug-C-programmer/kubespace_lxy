@@ -105,6 +105,17 @@ inspection or compilation.
 - Exact successful gates: focused changed-package tests, focused race tests, unchanged `scripts/space-compute all`, YAML/diff/invariant checks, and `go test ./pkg/executor/embed -count=1`. Tests include API 429 retry, watch disconnect/410 relist, cache-pinned snapshot, dependency-index selectivity, queue saturation and status-conflict merge regressions.
 - The default K3s scheduler source/profile/manifest remains outside this Phase 8 diff. External sustained API-server throttling/soak remains a deployment qualification item under R9; it was not reclassified as executed by these deterministic tests.
 
+
+## Phase 9 canonical API upgrade
+
+- Executed on 2026-07-27 by GitHub Actions run `30241634666` from validation baseline `ac87d0164a15e70ce2df986adc013872c7aed8d7` before non-force fast-forward publication.
+- Added `spacecompute.k3s.io/v1beta1` as canonical/storage while retaining `v1alpha1` served, with webhook conversion and identical canonical schemas for lossless downgrade/rollback views. Conversion preserves raw schema-admitted JSON and exact fixed-width integers.
+- Added signed `PhysicalDeviceInventory`, expanded domain CPU/memory/storage/NUMA/trust/attestation/autonomy/energy/inventory state, and added Mission working-memory/storage/bandwidth/RTT/loss hard constraints. Present hard-constraint violations reject in strict/degraded/best-effort; the modes differ only for missing trusted state.
+- Placement now records selected capability/physical-device constraints plus transfer receipts/state, execution lease, fencing hash, checkpoint/result receipts and remote acknowledgement sequence.
+- Added deployable conversion-webhook and default-suspended stored-version migrator. Forward migration rewrites objects through `v1beta1` before narrowing `storedVersions`; rollback rewrites through `v1alpha1` before beta removal. Migrator admission permits semantic no-op rewrites only.
+- Successful gates: focused unit/race, unchanged `scripts/space-compute all`, `go mod verify`, `go mod tidy -diff`, YAML/schema/isolation checks and `go test ./pkg/executor/embed -count=1`. Tests cover alpha->beta, beta->alpha, round trip, schema-admitted unknown/new data and large integers, stored-version migration, rollback and hard-field preservation.
+- Default K3s scheduler source/profile/manifest stayed outside the Phase 9 production diff. Full-agent K3s patch-upgrade and physical-hardware qualification remain separate release gates.
+
 ## Verified plugin catalogue
 
 - Entry points are `New`, `PreFilter`, `Filter`, `PreScore`, `Score`, `Close`,

@@ -13,6 +13,7 @@ import (
 var reporterKinds = map[string]struct{}{
 	"SpaceLinkSnapshot":          {},
 	"SpaceDomainResourceSummary": {},
+	"PhysicalDeviceInventory":    {},
 	"SpaceTransferReceipt":       {},
 	"SpaceExecutionLease":        {},
 	"SpaceExecutionObservation":  {},

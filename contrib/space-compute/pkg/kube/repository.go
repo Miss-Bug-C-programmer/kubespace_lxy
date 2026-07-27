@@ -29,10 +29,11 @@ import (
 )
 
 var (
-	MissionGVR         = schema.GroupVersionResource{Group: spacev1.GroupName, Version: "v1alpha1", Resource: "spacemissions"}
-	PlacementGVR       = schema.GroupVersionResource{Group: spacev1.GroupName, Version: "v1alpha1", Resource: "spaceplacementintents"}
-	LinkGVR            = schema.GroupVersionResource{Group: spacev1.GroupName, Version: "v1alpha1", Resource: "spacelinksnapshots"}
-	ResourceSummaryGVR = schema.GroupVersionResource{Group: spacev1.GroupName, Version: "v1alpha1", Resource: "spacedomainresourcesummaries"}
+	MissionGVR                 = schema.GroupVersionResource{Group: spacev1.GroupName, Version: spacev1.CanonicalVersion, Resource: "spacemissions"}
+	PlacementGVR               = schema.GroupVersionResource{Group: spacev1.GroupName, Version: spacev1.CanonicalVersion, Resource: "spaceplacementintents"}
+	LinkGVR                    = schema.GroupVersionResource{Group: spacev1.GroupName, Version: spacev1.CanonicalVersion, Resource: "spacelinksnapshots"}
+	ResourceSummaryGVR         = schema.GroupVersionResource{Group: spacev1.GroupName, Version: spacev1.CanonicalVersion, Resource: "spacedomainresourcesummaries"}
+	PhysicalDeviceInventoryGVR = schema.GroupVersionResource{Group: spacev1.GroupName, Version: spacev1.CanonicalVersion, Resource: "physicaldeviceinventories"}
 )
 
 const PlacementMissionUIDIndex = "spacecompute.missionUID"
@@ -476,9 +477,67 @@ func mergePlacementStatus(current, desired spacev1.SpacePlacementIntentStatus) s
 		out.RetryCount = desired.RetryCount
 	}
 	out.ResultReturned = out.ResultReturned || desired.ResultReturned
+	if transferStateRank(desired.TransferState) >= transferStateRank(out.TransferState) && desired.TransferState != "" {
+		out.TransferState = desired.TransferState
+	}
+	if len(desired.TransferReceiptReferences) > 0 {
+		out.TransferReceiptReferences = mergeStringSet(out.TransferReceiptReferences, desired.TransferReceiptReferences)
+	}
+	if desired.ExecutionLeaseReference != "" {
+		out.ExecutionLeaseReference = desired.ExecutionLeaseReference
+	}
+	if desired.FencingTokenHash != "" {
+		out.FencingTokenHash = desired.FencingTokenHash
+	}
+	if desired.CheckpointReceipt != "" {
+		out.CheckpointReceipt = desired.CheckpointReceipt
+	}
+	if desired.ResultReceipt != "" {
+		out.ResultReceipt = desired.ResultReceipt
+	}
+	if desired.RemoteAcknowledgementSequence > out.RemoteAcknowledgementSequence {
+		out.RemoteAcknowledgementSequence = desired.RemoteAcknowledgementSequence
+	}
 	out.Conditions = mergeConditions(current.Conditions, desired.Conditions)
 	return out
 }
+func transferStateRank(value spacev1.TransferState) int {
+	switch value {
+	case spacev1.TransferStateNotRequired:
+		return 1
+	case spacev1.TransferStatePending:
+		return 2
+	case spacev1.TransferStateInProgress:
+		return 3
+	case spacev1.TransferStateCompleted:
+		return 4
+	case spacev1.TransferStateFailed:
+		return 5
+	default:
+		return 0
+	}
+}
+
+func mergeStringSet(a, b []string) []string {
+	set := map[string]struct{}{}
+	for _, value := range a {
+		if value != "" {
+			set[value] = struct{}{}
+		}
+	}
+	for _, value := range b {
+		if value != "" {
+			set[value] = struct{}{}
+		}
+	}
+	out := make([]string, 0, len(set))
+	for value := range set {
+		out = append(out, value)
+	}
+	sort.Strings(out)
+	return out
+}
+
 func placementPhaseCanAdvance(from, to spacev1.PlacementPhase) bool {
 	if to == "" || from == to {
 		return to != ""
@@ -575,7 +634,7 @@ func (s *WorkloadStore) Event(ctx context.Context, namespace, name, eventType, r
 	if s.Recorder == nil {
 		return
 	}
-	s.Recorder.Event(&spacev1.SpaceMission{TypeMeta: metav1.TypeMeta{Kind: "SpaceMission", APIVersion: spacev1.SchemeGroupVersion.String()}, ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: name}}, eventType, reason, message)
+	s.Recorder.Event(&spacev1.SpaceMission{TypeMeta: metav1.TypeMeta{Kind: "SpaceMission", APIVersion: spacev1.CanonicalAPIVersion}, ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: name}}, eventType, reason, message)
 }
 
 func fromUnstructured(in *unstructured.Unstructured, out interface{}) error {

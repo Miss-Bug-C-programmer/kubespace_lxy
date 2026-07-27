@@ -86,13 +86,21 @@ func TestTransferReceiptThenLeaseAreBothRequired(t *testing.T) {
 	}
 	intent := intents[0]
 	evidence.intents = append(evidence.intents, intent.DeepCopy())
-	evidence.receipts = []*spacev1.SpaceTransferReceipt{{Spec: spacev1.SpaceTransferReceiptSpec{TransferID: intent.Spec.TransferID, MissionUID: intent.Spec.MissionUID, PlanID: intent.Spec.PlanID, Attempt: intent.Spec.Attempt, Source: intent.Spec.Source, Destination: intent.Spec.Destination, DataID: intent.Spec.DataID, Bytes: intent.Spec.Bytes, PayloadDigest: intent.Spec.PayloadDigest, StartedAt: metav1.NewTime(now.Add(-time.Minute)), CompletedAt: metav1.NewTime(now), Provenance: testProvenance(1)}}}
+	receipt := &spacev1.SpaceTransferReceipt{ObjectMeta: metav1.ObjectMeta{Name: "transfer-receipt-one"}, Spec: spacev1.SpaceTransferReceiptSpec{TransferID: intent.Spec.TransferID, MissionUID: intent.Spec.MissionUID, PlanID: intent.Spec.PlanID, Attempt: intent.Spec.Attempt, Source: intent.Spec.Source, Destination: intent.Spec.Destination, DataID: intent.Spec.DataID, Bytes: intent.Spec.Bytes, PayloadDigest: intent.Spec.PayloadDigest, StartedAt: metav1.NewTime(now.Add(-time.Minute)), CompletedAt: metav1.NewTime(now), Provenance: testProvenance(1)}}
+	evidence.receipts = []*spacev1.SpaceTransferReceipt{receipt}
 	if _, err := controller.ReconcileDispatch(context.Background(), mission, placement, mission.Spec.WorkloadTemplate); err != nil || store.creates != 0 || placement.Status.Phase != spacev1.PlacementExecutionLeasePending {
 		t.Fatalf("receipt without lease phase=%s creates=%d err=%v", placement.Status.Phase, store.creates, err)
 	}
-	evidence.leases = []*spacev1.SpaceExecutionLease{validLease(mission, placement, 1, 1, now)}
+	lease := validLease(mission, placement, 1, 1, now)
+	evidence.leases = []*spacev1.SpaceExecutionLease{lease}
 	if _, err := controller.ReconcileDispatch(context.Background(), mission, placement, mission.Spec.WorkloadTemplate); err != nil || store.creates != 1 {
 		t.Fatalf("receipt+lease dispatch creates=%d err=%v", store.creates, err)
+	}
+	if placement.Status.TransferState != spacev1.TransferStateCompleted || len(placement.Status.TransferReceiptReferences) != 1 || placement.Status.TransferReceiptReferences[0] != receipt.Name {
+		t.Fatalf("transfer audit=%+v", placement.Status)
+	}
+	if placement.Status.ExecutionLeaseReference != lease.Name || placement.Status.FencingTokenHash != lease.Spec.Fence.TokenHash || placement.Status.RemoteAcknowledgementSequence != lease.Spec.Provenance.Sequence {
+		t.Fatalf("lease audit=%+v", placement.Status)
 	}
 }
 
@@ -172,6 +180,9 @@ func TestLegacyResultAndCheckpointAnnotationsAreUntrustedHints(t *testing.T) {
 	e.results = []*spacev1.SpaceResultReceipt{result}
 	if changed, err := c.ReconcileTrustedEvidence(context.Background(), mission, placement); err != nil || !changed || placement.Status.Phase != spacev1.PlacementCompleted || !placement.Status.ResultReturned {
 		t.Fatalf("trusted result changed=%v phase=%s returned=%v err=%v", changed, placement.Status.Phase, placement.Status.ResultReturned, err)
+	}
+	if placement.Status.ResultReceipt != result.Name || placement.Status.ExecutionLeaseReference != lease.Name || placement.Status.FencingTokenHash != lease.Spec.Fence.TokenHash || placement.Status.RemoteAcknowledgementSequence < result.Spec.Provenance.Sequence {
+		t.Fatalf("result audit=%+v", placement.Status)
 	}
 }
 

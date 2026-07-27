@@ -3,18 +3,21 @@ package kube
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 	k8stesting "k8s.io/client-go/testing"
 	"k8s.io/client-go/tools/cache"
 
 	spacev1 "github.com/k3s-io/k3s/contrib/space-compute/pkg/apis/v1alpha1"
+	spacev1beta1 "github.com/k3s-io/k3s/contrib/space-compute/pkg/apis/v1beta1"
 	"github.com/k3s-io/k3s/contrib/space-compute/pkg/planner"
 )
 
@@ -23,10 +26,20 @@ func TestDynamicRepositoryPlacementIsDurableAndIdempotent(t *testing.T) {
 	if err := spacev1.AddToScheme(scheme); err != nil {
 		t.Fatal(err)
 	}
-	mission := &spacev1.SpaceMission{TypeMeta: metav1.TypeMeta{APIVersion: spacev1.SchemeGroupVersion.String(), Kind: "SpaceMission"}, ObjectMeta: metav1.ObjectMeta{Name: "mission", Namespace: "missions", UID: types.UID("mission-uid")}}
-	client := dynamicfake.NewSimpleDynamicClient(scheme, mission)
-	repository := &Repository{Dynamic: client}
+	if err := spacev1beta1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	mission := &spacev1.SpaceMission{TypeMeta: metav1.TypeMeta{APIVersion: spacev1.CanonicalAPIVersion, Kind: "SpaceMission"}, ObjectMeta: metav1.ObjectMeta{Name: "mission", Namespace: "missions", UID: types.UID("mission-uid")}}
+	client := dynamicfake.NewSimpleDynamicClient(scheme)
 	ctx := context.Background()
+	missionObject, err := toUnstructured(mission)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Resource(MissionGVR).Namespace(mission.Namespace).Create(ctx, missionObject, metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	repository := &Repository{Dynamic: client}
 	key := planner.MissionKey{Namespace: mission.Namespace, Name: mission.Name}
 	if _, err := repository.GetPlacement(ctx, key); err != planner.ErrNotFound {
 		t.Fatalf("missing placement error = %v", err)
@@ -56,12 +69,15 @@ func TestDynamicRepositoryPlacementIsDurableAndIdempotent(t *testing.T) {
 
 func repositoryPlacement(mission *spacev1.SpaceMission) *spacev1.SpacePlacementIntent {
 	now := time.Date(2026, 7, 21, 0, 0, 0, 0, time.UTC)
-	return &spacev1.SpacePlacementIntent{TypeMeta: metav1.TypeMeta{APIVersion: spacev1.SchemeGroupVersion.String(), Kind: "SpacePlacementIntent"}, ObjectMeta: metav1.ObjectMeta{Name: "mission-placement", Namespace: mission.Namespace, Labels: map[string]string{spacev1.LabelMissionUID: string(mission.UID)}}, Spec: spacev1.SpacePlacementIntentSpec{MissionRef: corev1.ObjectReference{Namespace: mission.Namespace, Name: mission.Name, UID: mission.UID}, PlanID: "plan-one", Attempt: 1, Target: spacev1.DomainReference{Name: "leo-a", ClusterID: "leo", OrbitClass: spacev1.OrbitLEO}, NotBefore: metav1.NewTime(now), ExpiresAt: metav1.NewTime(now.Add(time.Hour)), ComputeStart: metav1.NewTime(now), ComputeEnd: metav1.NewTime(now.Add(time.Minute)), MaterialInputDigest: "digest", SnapshotSequences: map[string]int64{}, Score: spacev1.DecisionScore{}, Explanations: []spacev1.ConstraintExplanation{}}}
+	return &spacev1.SpacePlacementIntent{TypeMeta: metav1.TypeMeta{APIVersion: spacev1.CanonicalAPIVersion, Kind: "SpacePlacementIntent"}, ObjectMeta: metav1.ObjectMeta{Name: "mission-placement", Namespace: mission.Namespace, Labels: map[string]string{spacev1.LabelMissionUID: string(mission.UID)}}, Spec: spacev1.SpacePlacementIntentSpec{MissionRef: corev1.ObjectReference{Namespace: mission.Namespace, Name: mission.Name, UID: mission.UID}, PlanID: "plan-one", Attempt: 1, Target: spacev1.DomainReference{Name: "leo-a", ClusterID: "leo", OrbitClass: spacev1.OrbitLEO}, NotBefore: metav1.NewTime(now), ExpiresAt: metav1.NewTime(now.Add(time.Hour)), ComputeStart: metav1.NewTime(now), ComputeEnd: metav1.NewTime(now.Add(time.Minute)), MaterialInputDigest: "digest", SnapshotSequences: map[string]int64{}, Score: spacev1.DecisionScore{}, Explanations: []spacev1.ConstraintExplanation{}}}
 }
 
 func TestPlanningSnapshotUsesInformerStoresAndPinsVersions(t *testing.T) {
 	scheme := runtime.NewScheme()
 	if err := spacev1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	if err := spacev1beta1.AddToScheme(scheme); err != nil {
 		t.Fatal(err)
 	}
 	client := dynamicfake.NewSimpleDynamicClient(scheme)
@@ -134,5 +150,42 @@ func TestMissionStatusMergeDoesNotRegressTerminalOrExecutingState(t *testing.T) 
 	merged = mergeMissionStatus(executing, planned)
 	if merged.Phase != spacev1.MissionExecuting || merged.PlanID != "current" {
 		t.Fatalf("executing status regressed: %#v", merged)
+	}
+}
+
+func TestPhase9PlacementStatusMergePreservesAuditEvidence(t *testing.T) {
+	current := spacev1.SpacePlacementIntentStatus{
+		Phase: spacev1.PlacementRunning, TransferState: spacev1.TransferStateCompleted,
+		TransferReceiptReferences: []string{"receipt-a"}, ExecutionLeaseReference: "lease-a",
+		FencingTokenHash: strings.Repeat("a", 64), CheckpointReceipt: "checkpoint-a",
+		RemoteAcknowledgementSequence: 8,
+	}
+	desired := spacev1.SpacePlacementIntentStatus{
+		Phase: spacev1.PlacementCompleted, TransferState: spacev1.TransferStatePending,
+		TransferReceiptReferences: []string{"receipt-b", "receipt-a"}, ExecutionLeaseReference: "lease-b",
+		FencingTokenHash: strings.Repeat("b", 64), ResultReceipt: "result-b",
+		RemoteAcknowledgementSequence: 10,
+	}
+	merged := mergePlacementStatus(current, desired)
+	if merged.Phase != spacev1.PlacementCompleted || merged.TransferState != spacev1.TransferStateCompleted || merged.RemoteAcknowledgementSequence != 10 {
+		t.Fatalf("monotonic merge failed: %+v", merged)
+	}
+	if len(merged.TransferReceiptReferences) != 2 || merged.TransferReceiptReferences[0] != "receipt-a" || merged.TransferReceiptReferences[1] != "receipt-b" {
+		t.Fatalf("receipt union=%v", merged.TransferReceiptReferences)
+	}
+	if merged.ExecutionLeaseReference != "lease-b" || merged.FencingTokenHash != strings.Repeat("b", 64) || merged.CheckpointReceipt != "checkpoint-a" || merged.ResultReceipt != "result-b" {
+		t.Fatalf("audit evidence merge=%+v", merged)
+	}
+}
+
+func TestPhase9RepositoryUsesCanonicalBetaGVRs(t *testing.T) {
+	for name, gvr := range map[string]schema.GroupVersionResource{
+		"mission": MissionGVR, "placement": PlacementGVR, "link": LinkGVR, "resource": ResourceSummaryGVR,
+		"inventory": PhysicalDeviceInventoryGVR, "transferIntent": TransferIntentGVR, "transferReceipt": TransferReceiptGVR,
+		"executionLease": ExecutionLeaseGVR, "executionObservation": ExecutionObservationGVR, "resultReceipt": ResultReceiptGVR,
+	} {
+		if gvr.Group != spacev1.GroupName || gvr.Version != spacev1.CanonicalVersion {
+			t.Fatalf("%s GVR=%s, want canonical %s/%s", name, gvr.String(), spacev1.GroupName, spacev1.CanonicalVersion)
+		}
 	}
 }

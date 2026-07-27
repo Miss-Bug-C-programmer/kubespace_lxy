@@ -11,11 +11,12 @@ import (
 )
 
 type ReporterLimits struct {
-	MaxLinkSnapshots     int
-	MaxResourceSummaries int
-	QPS                  float64
-	Burst                int
-	MaxTrackedPrincipals int
+	MaxLinkSnapshots             int
+	MaxResourceSummaries         int
+	MaxPhysicalDeviceInventories int
+	QPS                          float64
+	Burst                        int
+	MaxTrackedPrincipals         int
 }
 
 type ReporterObjectCounter interface {
@@ -52,7 +53,7 @@ func NewReporterLimitValidator(next RequestValidator, limits ReporterLimits, cou
 	if next == nil {
 		return nil, fmt.Errorf("next reporter validator is required")
 	}
-	if limits.MaxLinkSnapshots < 1 || limits.MaxResourceSummaries < 1 {
+	if limits.MaxLinkSnapshots < 1 || limits.MaxResourceSummaries < 1 || limits.MaxPhysicalDeviceInventories < 1 {
 		return nil, fmt.Errorf("reporter object quotas must be positive")
 	}
 	if limits.QPS <= 0 || limits.QPS > 10000 || limits.Burst < 1 || limits.Burst > 100000 {
@@ -78,6 +79,9 @@ func (v *ReporterLimitValidator) Validate(ctx context.Context, request *admissio
 	if request.Operation != admissionv1.Create && request.Operation != admissionv1.Update {
 		return v.next.Validate(ctx, request)
 	}
+	if IsStorageMigrationNoop(request) {
+		return v.next.Validate(ctx, request)
+	}
 	principal := request.UserInfo.Username
 	if principal == "" {
 		return v.next.Validate(ctx, request)
@@ -94,6 +98,10 @@ func (v *ReporterLimitValidator) Validate(ctx context.Context, request *admissio
 		case "spacedomainresourcesummaries":
 			if v.counter.Count(resource) >= v.limits.MaxResourceSummaries {
 				return &admissionStatusError{code: 403, reason: metav1.StatusReasonForbidden, msg: fmt.Sprintf("cluster SpaceDomainResourceSummary quota %d reached", v.limits.MaxResourceSummaries)}
+			}
+		case "physicaldeviceinventories":
+			if v.counter.Count(resource) >= v.limits.MaxPhysicalDeviceInventories {
+				return &admissionStatusError{code: 403, reason: metav1.StatusReasonForbidden, msg: fmt.Sprintf("cluster PhysicalDeviceInventory quota %d reached", v.limits.MaxPhysicalDeviceInventories)}
 			}
 		}
 	}

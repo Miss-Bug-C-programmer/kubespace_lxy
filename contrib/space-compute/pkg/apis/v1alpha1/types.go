@@ -194,26 +194,31 @@ type CheckpointPolicy struct {
 }
 
 type SpaceMissionSpec struct {
-	MissionClass            string                  `json:"missionClass"`
-	Priority                int32                   `json:"priority"`
-	StatePolicy             StatePolicy             `json:"statePolicy"`
-	RequiredCapabilities    []CapabilityRequirement `json:"requiredCapabilities,omitempty"`
-	AlternativeCapabilities []CapabilitySet         `json:"alternativeCapabilities,omitempty"`
-	RequiredSoftware        map[string]string       `json:"requiredSoftware,omitempty"`
-	Inputs                  []DataObject            `json:"inputs,omitempty"`
-	OutputSizeBytes         int64                   `json:"outputSizeBytes"`
-	ResultDestinations      []DataLocation          `json:"resultDestinations,omitempty"`
-	Deadline                metav1.Time             `json:"deadline"`
-	ExpectedDurationSeconds int64                   `json:"expectedDurationSeconds"`
-	MaximumDurationSeconds  int64                   `json:"maximumDurationSeconds"`
-	DurationUncertaintySecs int64                   `json:"durationUncertaintySeconds"`
-	SafetyMarginSeconds     int64                   `json:"safetyMarginSeconds"`
-	MaximumClockSkewSeconds int64                   `json:"maximumClockSkewSeconds"`
-	ResultReturnRequired    bool                    `json:"resultReturnRequired"`
-	Retry                   RetryPolicy             `json:"retry"`
-	Checkpoint              CheckpointPolicy        `json:"checkpoint"`
-	WorkloadTemplate        corev1.PodTemplateSpec  `json:"workloadTemplate"`
-	Suspend                 bool                    `json:"suspend,omitempty"`
+	MissionClass                  string                  `json:"missionClass"`
+	Priority                      int32                   `json:"priority"`
+	StatePolicy                   StatePolicy             `json:"statePolicy"`
+	WorkingMemoryBytes            int64                   `json:"workingMemoryBytes,omitempty"`
+	WorkingStorageBytes           int64                   `json:"workingStorageBytes,omitempty"`
+	MinimumBandwidthBitsPerSecond int64                   `json:"minimumBandwidthBitsPerSecond,omitempty"`
+	MaximumRTTMicroseconds        int64                   `json:"maximumRTTMicroseconds,omitempty"`
+	MaximumLossPartsPerMillion    int32                   `json:"maximumLossPartsPerMillion,omitempty"`
+	RequiredCapabilities          []CapabilityRequirement `json:"requiredCapabilities,omitempty"`
+	AlternativeCapabilities       []CapabilitySet         `json:"alternativeCapabilities,omitempty"`
+	RequiredSoftware              map[string]string       `json:"requiredSoftware,omitempty"`
+	Inputs                        []DataObject            `json:"inputs,omitempty"`
+	OutputSizeBytes               int64                   `json:"outputSizeBytes"`
+	ResultDestinations            []DataLocation          `json:"resultDestinations,omitempty"`
+	Deadline                      metav1.Time             `json:"deadline"`
+	ExpectedDurationSeconds       int64                   `json:"expectedDurationSeconds"`
+	MaximumDurationSeconds        int64                   `json:"maximumDurationSeconds"`
+	DurationUncertaintySecs       int64                   `json:"durationUncertaintySeconds"`
+	SafetyMarginSeconds           int64                   `json:"safetyMarginSeconds"`
+	MaximumClockSkewSeconds       int64                   `json:"maximumClockSkewSeconds"`
+	ResultReturnRequired          bool                    `json:"resultReturnRequired"`
+	Retry                         RetryPolicy             `json:"retry"`
+	Checkpoint                    CheckpointPolicy        `json:"checkpoint"`
+	WorkloadTemplate              corev1.PodTemplateSpec  `json:"workloadTemplate"`
+	Suspend                       bool                    `json:"suspend,omitempty"`
 }
 
 type MissionPhase string
@@ -266,22 +271,142 @@ type DeviceCapacity struct {
 	FragmentationMilli int32    `json:"fragmentationMilli"`
 }
 
+// ScalarCapacity exposes canonical total/available capacity in fixed units.
+type ScalarCapacity struct {
+	Capacity  int64 `json:"capacity"`
+	Available int64 `json:"available"`
+}
+
+type StorageCapacity struct {
+	Class          string `json:"class"`
+	CapacityBytes  int64  `json:"capacityBytes"`
+	AvailableBytes int64  `json:"availableBytes"`
+}
+
+type NUMAResource struct {
+	ID                   int32 `json:"id"`
+	CPUMilliCapacity     int64 `json:"cpuMilliCapacity"`
+	CPUMilliAvailable    int64 `json:"cpuMilliAvailable"`
+	MemoryCapacityBytes  int64 `json:"memoryCapacityBytes"`
+	MemoryAvailableBytes int64 `json:"memoryAvailableBytes"`
+}
+
+type TrustAttestationState struct {
+	State          string      `json:"state"`
+	Provider       string      `json:"provider,omitempty"`
+	EvidenceDigest string      `json:"evidenceDigest,omitempty"`
+	ObservedAt     metav1.Time `json:"observedAt,omitempty"`
+	ValidUntil     metav1.Time `json:"validUntil,omitempty"`
+}
+
+type EnergyBudget struct {
+	Source                  string `json:"source"`
+	CapacityMilliWattHours  int64  `json:"capacityMilliWattHours"`
+	AvailableMilliWattHours int64  `json:"availableMilliWattHours"`
+}
+
+type PhysicalDeviceInventoryReference struct {
+	Name            string `json:"name"`
+	Digest          string `json:"digest"`
+	ResourceVersion string `json:"resourceVersion,omitempty"`
+}
+
+type DeviceTopology struct {
+	NUMANode   int32  `json:"numaNode,omitempty"`
+	SocketID   string `json:"socketID,omitempty"`
+	PCIAddress string `json:"pciAddress,omitempty"`
+}
+
+type DevicePeerInterconnect struct {
+	PeerStableDeviceID     string `json:"peerStableDeviceID"`
+	Type                   string `json:"type"`
+	BandwidthBitsPerSecond int64  `json:"bandwidthBitsPerSecond"`
+}
+
+type PhysicalDevice struct {
+	StableDeviceID                     string                   `json:"stableDeviceID"`
+	KubernetesResourceName             string                   `json:"kubernetesResourceName"`
+	AllocationID                       string                   `json:"allocationID,omitempty"`
+	DRAAllocationID                    string                   `json:"draAllocationID,omitempty"`
+	VendorAllocationID                 string                   `json:"vendorAllocationID,omitempty"`
+	Class                              string                   `json:"class"`
+	Vendor                             string                   `json:"vendor"`
+	Model                              string                   `json:"model"`
+	Architecture                       string                   `json:"architecture"`
+	Topology                           DeviceTopology           `json:"topology"`
+	PeerInterconnects                  []DevicePeerInterconnect `json:"peerInterconnects,omitempty"`
+	TotalMemoryBytes                   int64                    `json:"totalMemoryBytes"`
+	FreeMemoryBytes                    int64                    `json:"freeMemoryBytes"`
+	MemoryBandwidthBitsPerSecond       int64                    `json:"memoryBandwidthBitsPerSecond,omitempty"`
+	InterconnectBandwidthBitsPerSecond int64                    `json:"interconnectBandwidthBitsPerSecond,omitempty"`
+	SupportedPrecision                 []string                 `json:"supportedPrecision,omitempty"`
+	Firmware                           string                   `json:"firmware,omitempty"`
+	Driver                             string                   `json:"driver,omitempty"`
+	Runtime                            string                   `json:"runtime,omitempty"`
+	Libraries                          map[string]string        `json:"libraries,omitempty"`
+	Health                             string                   `json:"health"`
+	TemperatureMilliCelsius            int64                    `json:"temperatureMilliCelsius,omitempty"`
+	PowerMilliwatts                    int64                    `json:"powerMilliwatts,omitempty"`
+	ConfidenceMilli                    int32                    `json:"confidenceMilli"`
+}
+
+type PhysicalDeviceInventorySpec struct {
+	Domain          DomainReference  `json:"domain"`
+	NodeName        string           `json:"nodeName,omitempty"`
+	ObservedAt      metav1.Time      `json:"observedAt"`
+	ValidUntil      metav1.Time      `json:"validUntil"`
+	ConfidenceMilli int32            `json:"confidenceMilli"`
+	Provenance      Provenance       `json:"provenance"`
+	Devices         []PhysicalDevice `json:"devices"`
+}
+
+type PhysicalDeviceInventoryStatus struct {
+	ObservedGeneration int64              `json:"observedGeneration,omitempty"`
+	Conditions         []metav1.Condition `json:"conditions,omitempty"`
+}
+
+// +kubebuilder:object:root=true
+// +kubebuilder:resource:scope=Cluster,shortName=sdeviceinventory
+// +kubebuilder:subresource:status
+type PhysicalDeviceInventory struct {
+	metav1.TypeMeta   `json:",inline"`
+	metav1.ObjectMeta `json:"metadata,omitempty"`
+	Spec              PhysicalDeviceInventorySpec   `json:"spec"`
+	Status            PhysicalDeviceInventoryStatus `json:"status,omitempty"`
+}
+
+// +kubebuilder:object:root=true
+type PhysicalDeviceInventoryList struct {
+	metav1.TypeMeta `json:",inline"`
+	metav1.ListMeta `json:"metadata,omitempty"`
+	Items           []PhysicalDeviceInventory `json:"items"`
+}
+
 type SpaceDomainResourceSummarySpec struct {
-	Domain                 DomainReference   `json:"domain"`
-	ObservedAt             metav1.Time       `json:"observedAt"`
-	ValidUntil             metav1.Time       `json:"validUntil"`
-	Provenance             Provenance        `json:"provenance"`
-	Devices                []DeviceCapacity  `json:"devices,omitempty"`
-	Software               map[string]string `json:"software,omitempty"`
-	DataLocations          []string          `json:"dataLocations,omitempty"`
-	QueueDelaySeconds      int64             `json:"queueDelaySeconds"`
-	EnergyHeadroomMilli    int32             `json:"energyHeadroomMilli"`
-	ThermalHeadroomMilli   int32             `json:"thermalHeadroomMilli"`
-	ResilienceMilli        int32             `json:"resilienceMilli"`
-	MinimumEnergyMilli     int32             `json:"minimumEnergyMilli,omitempty"`
-	MinimumThermalMilli    int32             `json:"minimumThermalMilli,omitempty"`
-	MaximumSnapshotAgeSecs int64             `json:"maximumSnapshotAgeSeconds"`
-	ExporterSnapshotDigest string            `json:"exporterSnapshotDigest"`
+	Domain                     DomainReference                   `json:"domain"`
+	ObservedAt                 metav1.Time                       `json:"observedAt"`
+	ValidUntil                 metav1.Time                       `json:"validUntil"`
+	Provenance                 Provenance                        `json:"provenance"`
+	Devices                    []DeviceCapacity                  `json:"devices,omitempty"`
+	Software                   map[string]string                 `json:"software,omitempty"`
+	DataLocations              []string                          `json:"dataLocations,omitempty"`
+	QueueDelaySeconds          int64                             `json:"queueDelaySeconds"`
+	EnergyHeadroomMilli        int32                             `json:"energyHeadroomMilli"`
+	ThermalHeadroomMilli       int32                             `json:"thermalHeadroomMilli"`
+	ResilienceMilli            int32                             `json:"resilienceMilli"`
+	MinimumEnergyMilli         int32                             `json:"minimumEnergyMilli,omitempty"`
+	MinimumThermalMilli        int32                             `json:"minimumThermalMilli,omitempty"`
+	MaximumSnapshotAgeSecs     int64                             `json:"maximumSnapshotAgeSeconds"`
+	ExporterSnapshotDigest     string                            `json:"exporterSnapshotDigest"`
+	CPU                        ScalarCapacity                    `json:"cpu"`
+	SystemMemoryBytes          ScalarCapacity                    `json:"systemMemoryBytes"`
+	EphemeralStorageBytes      ScalarCapacity                    `json:"ephemeralStorageBytes"`
+	PersistentStorage          []StorageCapacity                 `json:"persistentStorage,omitempty"`
+	NUMATopology               []NUMAResource                    `json:"numaTopology,omitempty"`
+	Trust                      TrustAttestationState             `json:"trust"`
+	AutonomyDurationSeconds    int64                             `json:"autonomyDurationSeconds,omitempty"`
+	Energy                     EnergyBudget                      `json:"energy"`
+	PhysicalDeviceInventoryRef *PhysicalDeviceInventoryReference `json:"physicalDeviceInventoryRef,omitempty"`
 }
 
 type SpaceDomainResourceSummaryStatus struct {
@@ -400,23 +525,47 @@ type ConstraintExplanation struct {
 	Message    string `json:"message"`
 }
 
+type PhysicalDeviceConstraint struct {
+	Class           string   `json:"class"`
+	Quantity        int64    `json:"quantity"`
+	Architecture    string   `json:"architecture,omitempty"`
+	Model           string   `json:"model,omitempty"`
+	Precision       []string `json:"precision,omitempty"`
+	ResourceName    string   `json:"resourceName,omitempty"`
+	StableDeviceIDs []string `json:"stableDeviceIDs,omitempty"`
+	AllocationIDs   []string `json:"allocationIDs,omitempty"`
+}
+
+type TransferState string
+
+const (
+	TransferStateNotRequired TransferState = "NotRequired"
+	TransferStatePending     TransferState = "Pending"
+	TransferStateInProgress  TransferState = "InProgress"
+	TransferStateCompleted   TransferState = "Completed"
+	TransferStateFailed      TransferState = "Failed"
+)
+
 type SpacePlacementIntentSpec struct {
-	MissionRef            corev1.ObjectReference  `json:"missionRef"`
-	PlanID                string                  `json:"planID"`
-	Attempt               int32                   `json:"attempt"`
-	Target                DomainReference         `json:"target"`
-	NotBefore             metav1.Time             `json:"notBefore"`
-	ExpiresAt             metav1.Time             `json:"expiresAt"`
-	ComputeStart          metav1.Time             `json:"computeStart"`
-	ComputeEnd            metav1.Time             `json:"computeEnd"`
-	InputTransfers        []TransferEpoch         `json:"inputTransfers,omitempty"`
-	ResultTransfer        *TransferEpoch          `json:"resultTransfer,omitempty"`
-	MaterialInputDigest   string                  `json:"materialInputDigest"`
-	PlanningInputDigest   string                  `json:"planningInputDigest,omitempty"`
-	CacheResourceVersions map[string]string       `json:"cacheResourceVersions,omitempty"`
-	SnapshotSequences     map[string]int64        `json:"snapshotSequences"`
-	Score                 DecisionScore           `json:"score"`
-	Explanations          []ConstraintExplanation `json:"explanations"`
+	MissionRef                        corev1.ObjectReference     `json:"missionRef"`
+	PlanID                            string                     `json:"planID"`
+	Attempt                           int32                      `json:"attempt"`
+	Target                            DomainReference            `json:"target"`
+	NotBefore                         metav1.Time                `json:"notBefore"`
+	ExpiresAt                         metav1.Time                `json:"expiresAt"`
+	ComputeStart                      metav1.Time                `json:"computeStart"`
+	ComputeEnd                        metav1.Time                `json:"computeEnd"`
+	InputTransfers                    []TransferEpoch            `json:"inputTransfers,omitempty"`
+	ResultTransfer                    *TransferEpoch             `json:"resultTransfer,omitempty"`
+	MaterialInputDigest               string                     `json:"materialInputDigest"`
+	PlanningInputDigest               string                     `json:"planningInputDigest,omitempty"`
+	CacheResourceVersions             map[string]string          `json:"cacheResourceVersions,omitempty"`
+	SnapshotSequences                 map[string]int64           `json:"snapshotSequences"`
+	Score                             DecisionScore              `json:"score"`
+	Explanations                      []ConstraintExplanation    `json:"explanations"`
+	SelectedCapabilitySetName         string                     `json:"selectedCapabilitySetName,omitempty"`
+	SelectedCapabilities              []CapabilityRequirement    `json:"selectedCapabilities,omitempty"`
+	SelectedPhysicalDeviceConstraints []PhysicalDeviceConstraint `json:"selectedPhysicalDeviceConstraints,omitempty"`
 }
 
 type PlacementPhase string
@@ -445,14 +594,21 @@ type ExecutionObservation struct {
 }
 
 type SpacePlacementIntentStatus struct {
-	ObservedGeneration      int64                   `json:"observedGeneration,omitempty"`
-	Phase                   PlacementPhase          `json:"phase,omitempty"`
-	ActivePod               *corev1.ObjectReference `json:"activePod,omitempty"`
-	LastObservationSequence int64                   `json:"lastObservationSequence,omitempty"`
-	LastObservation         *ExecutionObservation   `json:"lastObservation,omitempty"`
-	RetryCount              int32                   `json:"retryCount,omitempty"`
-	ResultReturned          bool                    `json:"resultReturned,omitempty"`
-	Conditions              []metav1.Condition      `json:"conditions,omitempty"`
+	ObservedGeneration            int64                   `json:"observedGeneration,omitempty"`
+	Phase                         PlacementPhase          `json:"phase,omitempty"`
+	ActivePod                     *corev1.ObjectReference `json:"activePod,omitempty"`
+	LastObservationSequence       int64                   `json:"lastObservationSequence,omitempty"`
+	LastObservation               *ExecutionObservation   `json:"lastObservation,omitempty"`
+	RetryCount                    int32                   `json:"retryCount,omitempty"`
+	ResultReturned                bool                    `json:"resultReturned,omitempty"`
+	TransferState                 TransferState           `json:"transferState,omitempty"`
+	TransferReceiptReferences     []string                `json:"transferReceiptReferences,omitempty"`
+	ExecutionLeaseReference       string                  `json:"executionLeaseReference,omitempty"`
+	FencingTokenHash              string                  `json:"fencingTokenHash,omitempty"`
+	CheckpointReceipt             string                  `json:"checkpointReceipt,omitempty"`
+	ResultReceipt                 string                  `json:"resultReceipt,omitempty"`
+	RemoteAcknowledgementSequence int64                   `json:"remoteAcknowledgementSequence,omitempty"`
+	Conditions                    []metav1.Condition      `json:"conditions,omitempty"`
 }
 
 // +kubebuilder:object:root=true
@@ -476,6 +632,8 @@ func (in *SpaceLinkSnapshot) DeepCopyObject() runtime.Object              { retu
 func (in *SpaceLinkSnapshotList) DeepCopyObject() runtime.Object          { return in.DeepCopy() }
 func (in *SpaceDomainResourceSummary) DeepCopyObject() runtime.Object     { return in.DeepCopy() }
 func (in *SpaceDomainResourceSummaryList) DeepCopyObject() runtime.Object { return in.DeepCopy() }
+func (in *PhysicalDeviceInventory) DeepCopyObject() runtime.Object        { return in.DeepCopy() }
+func (in *PhysicalDeviceInventoryList) DeepCopyObject() runtime.Object    { return in.DeepCopy() }
 func (in *SpaceMission) DeepCopyObject() runtime.Object                   { return in.DeepCopy() }
 func (in *SpaceMissionList) DeepCopyObject() runtime.Object               { return in.DeepCopy() }
 func (in *SpacePlacementIntent) DeepCopyObject() runtime.Object           { return in.DeepCopy() }

@@ -113,16 +113,19 @@ func Plan(mission *spacev1.SpaceMission, summaries []*spacev1.SpaceDomainResourc
 		placementName = placementName[:232] + "-" + digest[:20]
 	}
 	placement := &spacev1.SpacePlacementIntent{
-		TypeMeta:   metav1.TypeMeta{APIVersion: spacev1.SchemeGroupVersion.String(), Kind: "SpacePlacementIntent"},
+		TypeMeta:   metav1.TypeMeta{APIVersion: spacev1.CanonicalAPIVersion, Kind: "SpacePlacementIntent"},
 		ObjectMeta: metav1.ObjectMeta{Name: placementName, Namespace: mission.Namespace, Labels: map[string]string{spacev1.LabelPlacementID: planID, spacev1.LabelMissionUID: string(mission.UID)}},
 		Spec: spacev1.SpacePlacementIntentSpec{
-			MissionRef: corev1.ObjectReference{APIVersion: spacev1.SchemeGroupVersion.String(), Kind: "SpaceMission", Namespace: mission.Namespace, Name: mission.Name, UID: mission.UID},
+			MissionRef: corev1.ObjectReference{APIVersion: spacev1.CanonicalAPIVersion, Kind: "SpaceMission", Namespace: mission.Namespace, Name: mission.Name, UID: mission.UID},
 			PlanID:     planID, Attempt: nextAttempt(mission), Target: selected.summary.Spec.Domain,
 			NotBefore: metav1.NewTime(selected.computeStart), ExpiresAt: metav1.NewTime(selected.expiresAt),
 			ComputeStart: metav1.NewTime(selected.computeStart), ComputeEnd: metav1.NewTime(selected.computeEnd),
 			InputTransfers: selected.inputTransfers, ResultTransfer: selected.resultTransfer,
 			MaterialInputDigest: digest, SnapshotSequences: selected.sequences, Score: selected.score,
-			Explanations: selected.explanations,
+			Explanations:                      selected.explanations,
+			SelectedCapabilitySetName:         selected.selectedSetName,
+			SelectedCapabilities:              copyCapabilities(selected.selectedCapabilities),
+			SelectedPhysicalDeviceConstraints: physicalDeviceConstraints(selected.capacityAllocations),
 		},
 		Status: spacev1.SpacePlacementIntentStatus{Phase: initialPlacementPhase(selected, now)},
 	}
@@ -167,6 +170,19 @@ func evaluateCandidate(mission *spacev1.SpaceMission, summary *spacev1.SpaceDoma
 	}
 	if missing := softwareMismatch(mission.Spec.RequiredSoftware, summary.Spec.Software); missing != "" {
 		rejected = append(rejected, reject("software_incompatible", "required software", missing, "all required versions", "domain software stack is incompatible"))
+	}
+	if mission.Spec.WorkingMemoryBytes > 0 && summary.Spec.SystemMemoryBytes.Available < mission.Spec.WorkingMemoryBytes {
+		rejected = append(rejected, reject("working_memory_insufficient", "working memory", fmt.Sprint(summary.Spec.SystemMemoryBytes.Available), fmt.Sprint(mission.Spec.WorkingMemoryBytes), hardConstraintMessage(mission.Spec.StatePolicy, "available system memory")))
+	}
+	workingStorageAvailable := summary.Spec.EphemeralStorageBytes.Available
+	for _, storage := range summary.Spec.PersistentStorage {
+		workingStorageAvailable, err = checkedAddInt64(workingStorageAvailable, storage.AvailableBytes)
+		if err != nil {
+			return result, nil, fmt.Errorf("working storage availability: %w", err)
+		}
+	}
+	if mission.Spec.WorkingStorageBytes > 0 && workingStorageAvailable < mission.Spec.WorkingStorageBytes {
+		rejected = append(rejected, reject("working_storage_insufficient", "working storage", fmt.Sprint(workingStorageAvailable), fmt.Sprint(mission.Spec.WorkingStorageBytes), hardConstraintMessage(mission.Spec.StatePolicy, "available local storage")))
 	}
 	energyLow := summary.Spec.EnergyHeadroomMilli < summary.Spec.MinimumEnergyMilli
 	thermalLow := summary.Spec.ThermalHeadroomMilli < summary.Spec.MinimumThermalMilli
@@ -282,6 +298,7 @@ func evaluateCandidate(mission *spacev1.SpaceMission, summary *spacev1.SpaceDoma
 		return result, nil, err
 	}
 	result.explanations = append(selectionExplanations(selection),
+		statePolicyHardConstraintExplanation(mission.Spec.StatePolicy),
 		accept("deadline_feasible", "guarded completion", guardedCompletion.Format(time.RFC3339Nano), mission.Spec.Deadline.Time.Format(time.RFC3339Nano)),
 		scoreExplanation("predicted_completion", result.score.PredictedCompletion),
 		scoreExplanation("data_locality", result.score.DataLocality),
@@ -317,7 +334,7 @@ func findIngress(input spacev1.DataObject, target spacev1.DomainReference, earli
 		}
 	}
 	if bestSnapshot == nil {
-		return spacev1.TransferEpoch{}, nil, false, []spacev1.ConstraintExplanation{reject("input_transfer_window_missing", "input transfer for "+input.ID, formatDataLocations(input.Locations), fullDomainKey(target), "no validated contact window can transfer input before it closes")}, nil
+		return spacev1.TransferEpoch{}, nil, false, []spacev1.ConstraintExplanation{reject("input_transfer_window_missing", "input transfer for "+input.ID, formatDataLocations(input.Locations), fullDomainKey(target), fmt.Sprintf("no validated contact window satisfies timing/bandwidth/RTT/loss hard constraints; statePolicy=%s never relaxes declared link limits", mission.StatePolicy))}, nil
 	}
 	return best, bestSnapshot, true, nil, nil
 }
@@ -352,7 +369,7 @@ func findEgress(size int64, source spacev1.DomainReference, destinations []space
 		}
 	}
 	if bestSnapshot == nil {
-		return spacev1.TransferEpoch{}, nil, false, []spacev1.ConstraintExplanation{reject("result_return_window_missing", "result return", fullDomainKey(source), formatDataLocations(destinations), "execution fits but no validated return window completes before deadline")}, nil
+		return spacev1.TransferEpoch{}, nil, false, []spacev1.ConstraintExplanation{reject("result_return_window_missing", "result return", fullDomainKey(source), formatDataLocations(destinations), fmt.Sprintf("execution fits but no validated return window satisfies timing/bandwidth/RTT/loss hard constraints; statePolicy=%s never relaxes declared link limits", mission.StatePolicy))}, nil
 	}
 	return best, bestSnapshot, true, nil, nil
 }
@@ -369,6 +386,15 @@ func fitTransfer(snapshot *spacev1.SpaceLinkSnapshot, size int64, earliest time.
 		return windows[i].Start.Before(&windows[j].Start)
 	})
 	for _, window := range windows {
+		if mission.MinimumBandwidthBitsPerSecond > 0 && window.BandwidthBitsPerSec < mission.MinimumBandwidthBitsPerSecond {
+			continue
+		}
+		if mission.MaximumRTTMicroseconds > 0 && window.RTTMicroseconds > mission.MaximumRTTMicroseconds {
+			continue
+		}
+		if mission.MaximumLossPartsPerMillion > 0 && window.LossPartsPerMillion > mission.MaximumLossPartsPerMillion {
+			continue
+		}
 		if window.Predicted && snapshot.Spec.Provenance.Sequence == 0 {
 			continue
 		}
@@ -429,6 +455,48 @@ func fitTransfer(snapshot *spacev1.SpaceLinkSnapshot, size int64, earliest time.
 		}
 	}
 	return spacev1.TransferEpoch{}, false, nil
+}
+
+func hardConstraintMessage(policy spacev1.StatePolicy, observed string) string {
+	return fmt.Sprintf("%s is below a declared hard constraint; statePolicy=%s never relaxes explicit working-memory/storage/link limits", observed, policy)
+}
+
+func statePolicyHardConstraintExplanation(policy spacev1.StatePolicy) spacev1.ConstraintExplanation {
+	message := "declared working-memory, working-storage, bandwidth, RTT and loss limits are hard and are never relaxed"
+	switch policy {
+	case spacev1.PolicyStrict:
+		message += "; strict additionally rejects configured energy/thermal minimum violations"
+	case spacev1.PolicyDegraded:
+		message += "; degraded may accept soft energy/thermal degradation with a score penalty"
+	case spacev1.PolicyBestEffort:
+		message += "; best-effort may rank degraded soft telemetry but cannot violate declared hard limits"
+	}
+	return spacev1.ConstraintExplanation{Code: "state_policy_hard_constraints", Constraint: "state policy hard-constraint semantics", Observed: string(policy), Required: "non-relaxable declared constraints", Message: message}
+}
+
+func physicalDeviceConstraints(allocations []capacityAllocation) []spacev1.PhysicalDeviceConstraint {
+	byKey := map[string]spacev1.PhysicalDeviceConstraint{}
+	for _, allocation := range allocations {
+		r := allocation.Requirement
+		key := capabilityRequirementKey(r)
+		v := byKey[key]
+		v.Class = r.Class
+		v.Architecture = r.Architecture
+		v.Model = r.Model
+		v.Precision = append([]string(nil), r.Precision...)
+		v.Quantity += allocation.Quantity
+		byKey[key] = v
+	}
+	keys := make([]string, 0, len(byKey))
+	for key := range byKey {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	out := make([]spacev1.PhysicalDeviceConstraint, 0, len(keys))
+	for _, key := range keys {
+		out = append(out, byKey[key])
+	}
+	return out
 }
 
 func buildLinkIndex(links []*spacev1.SpaceLinkSnapshot, clock spacev1.Clock) map[string][]*spacev1.SpaceLinkSnapshot {

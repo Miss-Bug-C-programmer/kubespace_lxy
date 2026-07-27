@@ -497,7 +497,7 @@ func (a *Agent) ensureResultReturn(ctx context.Context, assignment Assignment, l
 	transfer.Bytes = int64(len(raw))
 	coordinator := lease.Spec.Destination
 	if transfer.Destination == a.Local {
-		result := &spacev1.SpaceResultReceipt{TypeMeta: metav1.TypeMeta{APIVersion: spacev1.SchemeGroupVersion.String(), Kind: "SpaceResultReceipt"}, ObjectMeta: metav1.ObjectMeta{Name: spacev1.ResultReceiptName(a.Local, a.Local, report.MissionUID, report.PlanID, spacev1.ResultTransferID(report.Attempt))}, Spec: spacev1.SpaceResultReceiptSpec{ResultID: spacev1.ResultTransferID(report.Attempt), MissionUID: report.MissionUID, PlanID: report.PlanID, Attempt: report.Attempt, Source: a.Local, Destination: a.Local, Bytes: int64(len(raw)), PayloadDigest: digest, LeaseEpoch: lease.Spec.Fence.LeaseEpoch, TokenHash: lease.Spec.Fence.TokenHash, CompletedAt: metav1.NewTime(a.now()), Provenance: a.baseProvenance(1)}}
+		result := &spacev1.SpaceResultReceipt{TypeMeta: metav1.TypeMeta{APIVersion: spacev1.CanonicalAPIVersion, Kind: "SpaceResultReceipt"}, ObjectMeta: metav1.ObjectMeta{Name: spacev1.ResultReceiptName(a.Local, a.Local, report.MissionUID, report.PlanID, spacev1.ResultTransferID(report.Attempt))}, Spec: spacev1.SpaceResultReceiptSpec{ResultID: spacev1.ResultTransferID(report.Attempt), MissionUID: report.MissionUID, PlanID: report.PlanID, Attempt: report.Attempt, Source: a.Local, Destination: a.Local, Bytes: int64(len(raw)), PayloadDigest: digest, LeaseEpoch: lease.Spec.Fence.LeaseEpoch, TokenHash: lease.Spec.Fence.TokenHash, CompletedAt: metav1.NewTime(a.now()), Provenance: a.baseProvenance(1)}}
 		if err := a.signResultReceipt(result); err != nil {
 			return err
 		}
@@ -510,7 +510,7 @@ func (a *Agent) ensureResultReturn(ctx context.Context, assignment Assignment, l
 		return nil
 	}
 	transferID := spacev1.ResultTransferID(report.Attempt)
-	intent := &spacev1.SpaceTransferIntent{TypeMeta: metav1.TypeMeta{APIVersion: spacev1.SchemeGroupVersion.String(), Kind: "SpaceTransferIntent"}, ObjectMeta: metav1.ObjectMeta{Name: spacev1.TransferIntentName(a.Local, transfer.Destination, report.MissionUID, report.PlanID, transferID)}, Spec: spacev1.SpaceTransferIntentSpec{TransferID: transferID, MissionUID: report.MissionUID, PlanID: report.PlanID, Attempt: report.Attempt, Purpose: spacev1.TransferPurposeResult, Coordinator: coordinator, Source: a.Local, Destination: transfer.Destination, DataID: report.ResultDataID, Bytes: int64(len(raw)), PayloadDigest: digest, LeaseEpoch: lease.Spec.Fence.LeaseEpoch, TokenHash: lease.Spec.Fence.TokenHash, Window: transfer, ExpiresAt: assignment.Placement.Spec.ExpiresAt}}
+	intent := &spacev1.SpaceTransferIntent{TypeMeta: metav1.TypeMeta{APIVersion: spacev1.CanonicalAPIVersion, Kind: "SpaceTransferIntent"}, ObjectMeta: metav1.ObjectMeta{Name: spacev1.TransferIntentName(a.Local, transfer.Destination, report.MissionUID, report.PlanID, transferID)}, Spec: spacev1.SpaceTransferIntentSpec{TransferID: transferID, MissionUID: report.MissionUID, PlanID: report.PlanID, Attempt: report.Attempt, Purpose: spacev1.TransferPurposeResult, Coordinator: coordinator, Source: a.Local, Destination: transfer.Destination, DataID: report.ResultDataID, Bytes: int64(len(raw)), PayloadDigest: digest, LeaseEpoch: lease.Spec.Fence.LeaseEpoch, TokenHash: lease.Spec.Fence.TokenHash, Window: transfer, ExpiresAt: assignment.Placement.Spec.ExpiresAt}}
 	return a.Store.UpsertTransferIntent(ctx, intent)
 }
 
@@ -533,7 +533,7 @@ func (a *Agent) fenceRemoteExecution(ctx context.Context, assignment Assignment,
 	if len(id) > 63 {
 		id = id[:63]
 	}
-	observation := &spacev1.SpaceExecutionObservation{TypeMeta: metav1.TypeMeta{APIVersion: spacev1.SchemeGroupVersion.String(), Kind: "SpaceExecutionObservation"}, ObjectMeta: metav1.ObjectMeta{Name: spacev1.ExecutionObservationName(a.Local, lease.Spec.Destination, lease.Spec.Fence.MissionUID, lease.Spec.Fence.PlanID, id)}, Spec: spacev1.SpaceExecutionObservationSpec{ObservationID: id, MissionUID: lease.Spec.Fence.MissionUID, PlanID: lease.Spec.Fence.PlanID, Attempt: lease.Spec.Fence.Attempt, LeaseEpoch: lease.Spec.Fence.LeaseEpoch, TokenHash: lease.Spec.Fence.TokenHash, Source: a.Local, Destination: lease.Spec.Destination, Phase: spacev1.ExecutionObservationStopped, ObservedAt: metav1.NewTime(a.now()), Provenance: a.baseProvenance(1)}}
+	observation := &spacev1.SpaceExecutionObservation{TypeMeta: metav1.TypeMeta{APIVersion: spacev1.CanonicalAPIVersion, Kind: "SpaceExecutionObservation"}, ObjectMeta: metav1.ObjectMeta{Name: spacev1.ExecutionObservationName(a.Local, lease.Spec.Destination, lease.Spec.Fence.MissionUID, lease.Spec.Fence.PlanID, id)}, Spec: spacev1.SpaceExecutionObservationSpec{ObservationID: id, MissionUID: lease.Spec.Fence.MissionUID, PlanID: lease.Spec.Fence.PlanID, Attempt: lease.Spec.Fence.Attempt, LeaseEpoch: lease.Spec.Fence.LeaseEpoch, TokenHash: lease.Spec.Fence.TokenHash, Source: a.Local, Destination: lease.Spec.Destination, Phase: spacev1.ExecutionObservationStopped, ObservedAt: metav1.NewTime(a.now()), Provenance: a.baseProvenance(1)}}
 	if err := a.signObservation(observation); err != nil {
 		return err
 	}

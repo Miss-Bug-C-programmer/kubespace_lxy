@@ -1,0 +1,13 @@
+FROM golang:1.25.12-bookworm AS build
+WORKDIR /src
+COPY . .
+ARG TARGETOS=linux
+ARG TARGETARCH=amd64
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
+    go build -buildvcs=false -trimpath -ldflags='-s -w' \
+    -o /out/space-compute-storage-migrator ./cmd/space-compute-storage-migrator
+
+FROM gcr.io/distroless/static-debian12:nonroot
+COPY --from=build /out/space-compute-storage-migrator /usr/local/bin/space-compute-storage-migrator
+USER nonroot:nonroot
+ENTRYPOINT ["/usr/local/bin/space-compute-storage-migrator"]

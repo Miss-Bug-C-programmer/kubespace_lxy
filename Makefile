@@ -60,6 +60,16 @@ space-compute-domain-agent:
 	mkdir -p bin
 	go build -buildvcs=false -o bin/space-compute-domain-agent ./cmd/space-compute-domain-agent
 
+.PHONY: space-compute-conversion-webhook
+space-compute-conversion-webhook:
+	mkdir -p bin
+	go build -buildvcs=false -o bin/space-compute-conversion-webhook ./cmd/space-compute-conversion-webhook
+
+.PHONY: space-compute-storage-migrator
+space-compute-storage-migrator:
+	mkdir -p bin
+	go build -buildvcs=false -o bin/space-compute-storage-migrator ./cmd/space-compute-storage-migrator
+
 .PHONY: image-scan
 image-scan:
 	scripts/image_scan.sh $(IMAGE)

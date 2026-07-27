@@ -24,11 +24,7 @@ The default scheduler neither imports nor activates the space plugin.
 | Full K3s agent/kubelet/CNI/CRI | No privileged full-agent environment | NOT RUN |
 | K3s patch upgrade/rollback | No prior supported patch binary was qualified | NOT RUN |
 
-Server-side dry-run passed for all production scheduler, planner, CRD and
-admission manifests. All CRDs store only `v1alpha1`; no conversion webhook is
-needed for this single served/storage version. API additions must remain
-backward compatible within v1alpha1. A future version must add conversion and
-stored-version migration tests before changing storage.
+Server-side dry-run passed for the Phase-5 production scheduler, planner, CRD and admission manifests. That historical baseline stored only `v1alpha1`. Phase 9 now adds the previously required dual-served `v1alpha1`/`v1beta1` conversion webhook and explicit stored-version migrator before changing canonical storage to beta. The Phase-4/5 CRD files are retained as historical rollback baselines; `phase9-canonical-crds.yaml` is the current storage schema. See `PHASE9_CANONICAL_API.md` for forward migration and rollback ordering.
 
 The DRA coexistence unit test proves a ResourceClaim-only Pod is skipped by the
 telemetry plugin and remains owned by upstream DynamicResources. Extended
@@ -37,11 +33,7 @@ does not claim physical identity without full exporter-to-allocation linkage.
 
 ## Installation, upgrade, rollback and cleanup
 
-Install in this order: CRDs and Established wait; the four admission policies;
-planner; independent scheduler. Verify every admission policy has
-`observedGeneration == generation` and no expression warning before accepting
-reports. Upgrade standalone images/config together, one replica at a time, and
-keep ordinary scheduling independent.
+For the Phase-5 historical baseline, install CRDs and wait for Established, then admission, planner and the independent scheduler. For Phase 9, deploy and trust the conversion webhook first, apply `phase9-canonical-crds.yaml`, verify both served versions, then roll out the Phase-9 controller/reporter/domain-agent images that use canonical `v1beta1` GVRs. Only after representative alpha/beta reads pass should the suspended storage-migrator Job be enabled. Verify every admission policy has `observedGeneration == generation`, no expression warning, and every migrated CRD has `status.storedVersions: [v1beta1]` before accepting the storage upgrade as complete. Ordinary/default scheduling stays independent throughout.
 
 Rollback uses the preceding standalone images/config, never an embedded
 profile. Scale planner/scheduler Deployments to zero before rollback. Preserve

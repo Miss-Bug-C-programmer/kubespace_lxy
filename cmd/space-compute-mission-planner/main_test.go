@@ -50,7 +50,7 @@ func TestControllerRolesAreMutuallyExplicit(t *testing.T) {
 
 func TestPhase4AndPhase6ManifestsHaveAdmissionIsolationAndLeastPrivilege(t *testing.T) {
 	root := filepath.Join("..", "..", "docs", "space-compute", "manifests")
-	for _, name := range []string{"phase4-crds.yaml", "phase4-admission.yaml", "mission-planner.yaml", "reporter-admission-webhook.yaml", "mission-admission-webhook.yaml", "controller-quotas.yaml"} {
+	for _, name := range []string{"phase4-crds.yaml", "phase9-canonical-crds.yaml", "conversion-webhook.yaml", "storage-version-migrator.yaml", "phase4-admission.yaml", "mission-planner.yaml", "reporter-admission-webhook.yaml", "mission-admission-webhook.yaml", "controller-quotas.yaml"} {
 		raw, err := os.ReadFile(filepath.Join(root, name))
 		if err != nil {
 			t.Fatal(err)
@@ -69,7 +69,7 @@ func TestPhase4AndPhase6ManifestsHaveAdmissionIsolationAndLeastPrivilege(t *test
 			if len(object) == 0 {
 				continue
 			}
-			if name == "phase4-crds.yaml" {
+			if name == "phase4-crds.yaml" || name == "phase9-canonical-crds.yaml" {
 				assertStructuralSchemaShape(t, object, name)
 			}
 			count++
@@ -96,6 +96,36 @@ func TestPhase4AndPhase6ManifestsHaveAdmissionIsolationAndLeastPrivilege(t *test
 			} {
 				if !strings.Contains(text, required) {
 					t.Fatalf("phase7 CRD bound/location schema missing %q", required)
+				}
+			}
+		}
+		if name == "phase9-canonical-crds.yaml" {
+			for _, required := range []string{
+				"name: v1alpha1", "name: v1beta1", "strategy: Webhook", "path: /convert",
+				"kind: PhysicalDeviceInventory", "workingMemoryBytes:", "workingStorageBytes:",
+				"minimumBandwidthBitsPerSecond:", "maximumRTTMicroseconds:", "maximumLossPartsPerMillion:",
+				"selectedCapabilitySetName:", "selectedPhysicalDeviceConstraints:", "transferState:",
+				"remoteAcknowledgementSequence:", "draAllocationID:", "vendorAllocationID:",
+			} {
+				if !strings.Contains(text, required) {
+					t.Fatalf("phase9 canonical CRD missing %q", required)
+				}
+			}
+			if strings.Count(text, "storage: true") != 11 || strings.Count(text, "storage: false") != 11 {
+				t.Fatalf("phase9 storage version counts are not 11 beta/11 alpha")
+			}
+		}
+		if name == "conversion-webhook.yaml" {
+			for _, required := range []string{"space-compute-conversion-webhook", "--bind-address=:9445"} {
+				if !strings.Contains(text, required) {
+					t.Fatalf("conversion webhook manifest missing %q", required)
+				}
+			}
+		}
+		if name == "storage-version-migrator.yaml" {
+			for _, required := range []string{"space-compute-storage-migrator", "suspend: true", "--target-version=v1beta1", "customresourcedefinitions/status"} {
+				if !strings.Contains(text, required) {
+					t.Fatalf("storage migrator manifest missing %q", required)
 				}
 			}
 		}
@@ -159,7 +189,7 @@ func TestPhase4AndPhase6ManifestsHaveAdmissionIsolationAndLeastPrivilege(t *test
 			}
 		}
 		if name == "reporter-admission-webhook.yaml" {
-			for _, required := range []string{"kind: ValidatingWebhookConfiguration", "failurePolicy: Fail", "space-compute-reporter-public-keys", "resourceNames: [space-compute-reporter-public-keys]", "resources: [spacedomainreporterbindings]", "resources: [spacelinksnapshots, spacedomainresourcesummaries]", "--max-link-snapshots=10000", "--max-resource-summaries=10000", "--reporter-qps=20", "--reporter-burst=40", "spacetransferreceipts", "spaceresultreceipts"} {
+			for _, required := range []string{"kind: ValidatingWebhookConfiguration", "failurePolicy: Fail", "space-compute-reporter-public-keys", "resourceNames: [space-compute-reporter-public-keys]", "resources: [spacedomainreporterbindings]", "resources: [spacelinksnapshots, spacedomainresourcesummaries, physicaldeviceinventories]", "--max-link-snapshots=10000", "--max-resource-summaries=10000", "--max-physical-device-inventories=10000", "--reporter-qps=20", "--reporter-burst=40", "spacetransferreceipts", "spaceresultreceipts", "physicaldeviceinventories", "apiVersions: [v1alpha1, v1beta1]"} {
 				if !strings.Contains(text, required) {
 					t.Fatalf("reporter webhook manifest missing %q", required)
 				}
