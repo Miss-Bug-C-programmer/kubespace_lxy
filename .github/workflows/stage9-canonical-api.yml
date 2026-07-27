@@ -30,7 +30,7 @@ jobs:
           fef097658cda150729d66be8e6db1f0e48452fe01743502810417195d19f97d8 .github/stage9-payload/payload-06 \
           8b27a2bea5b5c224d3fe45ff27e893bc3e334d0603c4373418ee95850f61a09f .github/stage9-payload/payload-07 | sha256sum -c -
         cat .github/stage9-payload/payload-* > /tmp/stage9.patch.xz.b64
-        echo '30e976f7e0ac3f62fdc215804915aab7e12e5ee27912d132496cf8c6872918f  /tmp/stage9.patch.xz.b64' | sha256sum -c -
+        echo '30e976f7e0ac3f62fdc215804915aab7e12e5ee27912d132496cf8c6872918f9  /tmp/stage9.patch.xz.b64' | sha256sum -c -
         base64 -d /tmp/stage9.patch.xz.b64 > /tmp/stage9.patch.xz
         echo 'f032e49e0e2a7d7870ff3aca1c9ae64bd641322f9fcc900324b18a42b4aeac2f  /tmp/stage9.patch.xz' | sha256sum -c -
         xz -dc /tmp/stage9.patch.xz > /tmp/stage9.patch
