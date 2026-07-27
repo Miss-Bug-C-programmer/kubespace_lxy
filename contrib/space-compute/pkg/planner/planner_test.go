@@ -363,11 +363,8 @@ func (r *memoryRepository) GetMission(context.Context, MissionKey) (*spacev1.Spa
 	}
 	return r.mission.DeepCopy(), nil
 }
-func (r *memoryRepository) ListResourceSummaries(context.Context) ([]*spacev1.SpaceDomainResourceSummary, error) {
-	return r.summaries, nil
-}
-func (r *memoryRepository) ListLinkSnapshots(context.Context) ([]*spacev1.SpaceLinkSnapshot, error) {
-	return r.links, nil
+func (r *memoryRepository) PlanningSnapshot(context.Context) (*PlanningInputSnapshot, error) {
+	return &PlanningInputSnapshot{ResourceSummaries: r.summaries, LinkSnapshots: r.links, CacheVersions: map[string]string{"resources": "test-rv-resources", "links": "test-rv-links"}, InputDigest: "test-input-digest"}, nil
 }
 func (r *memoryRepository) GetPlacement(context.Context, MissionKey) (*spacev1.SpacePlacementIntent, error) {
 	if r.placement == nil {

@@ -20,10 +20,16 @@ var ErrNotFound = errors.New("not found")
 // optimistic concurrency; tests may use the same reconciler with an in-memory
 // implementation. ApplyPlacement must be idempotent by mission UID, PlanID and
 // material-input digest.
+type PlanningInputSnapshot struct {
+	ResourceSummaries []*spacev1.SpaceDomainResourceSummary
+	LinkSnapshots     []*spacev1.SpaceLinkSnapshot
+	CacheVersions     map[string]string
+	InputDigest       string
+}
+
 type Repository interface {
 	GetMission(context.Context, MissionKey) (*spacev1.SpaceMission, error)
-	ListResourceSummaries(context.Context) ([]*spacev1.SpaceDomainResourceSummary, error)
-	ListLinkSnapshots(context.Context) ([]*spacev1.SpaceLinkSnapshot, error)
+	PlanningSnapshot(context.Context) (*PlanningInputSnapshot, error)
 	GetPlacement(context.Context, MissionKey) (*spacev1.SpacePlacementIntent, error)
 	ApplyPlacement(context.Context, *spacev1.SpacePlacementIntent, string) (bool, error)
 	UpdatePlacementStatus(context.Context, *spacev1.SpacePlacementIntent) error
@@ -85,14 +91,12 @@ func (c *Controller) Reconcile(ctx context.Context, key MissionKey) (ReconcileRe
 		observer.PlanningFinished(c.clock().Now().Sub(start), "invalid")
 		return ReconcileResult{}, nil
 	}
-	summaries, err := c.Repository.ListResourceSummaries(ctx)
+	snapshot, err := c.Repository.PlanningSnapshot(ctx)
 	if err != nil {
-		return c.fail(observer, start, "resource_list", err)
+		return c.fail(observer, start, "planning_snapshot", err)
 	}
-	links, err := c.Repository.ListLinkSnapshots(ctx)
-	if err != nil {
-		return c.fail(observer, start, "link_list", err)
-	}
+	summaries := snapshot.ResourceSummaries
+	links := snapshot.LinkSnapshots
 	for _, summary := range summaries {
 		if summary != nil {
 			observer.SnapshotAge(c.clock().Now().Sub(summary.Spec.ObservedAt.Time))
@@ -114,6 +118,8 @@ func (c *Controller) Reconcile(ctx context.Context, key MissionKey) (ReconcileRe
 		observer.PlanningFinished(c.clock().Now().Sub(start), "blocked")
 		return ReconcileResult{RequeueAfter: boundedRequeue(mission.Spec.Deadline.Time.Sub(c.clock().Now()))}, nil
 	}
+	decision.Placement.Spec.PlanningInputDigest = snapshot.InputDigest
+	decision.Placement.Spec.CacheResourceVersions = cloneStringMap(snapshot.CacheVersions)
 	existing, getErr := c.Repository.GetPlacement(ctx, key)
 	if getErr != nil && !errors.Is(getErr, ErrNotFound) {
 		return c.fail(observer, start, "placement_read", getErr)
@@ -192,6 +198,34 @@ func (c *Controller) Reconcile(ctx context.Context, key MissionKey) (ReconcileRe
 	observer.LinkRisk(linkRiskClass(decision.Placement.Spec.Score.LinkRisk))
 	observer.PlanningFinished(c.clock().Now().Sub(start), "planned")
 	return ReconcileResult{RequeueAfter: untilExpiry(c.clock().Now(), decision.Placement.Spec.ExpiresAt.Time)}, nil
+}
+
+func cloneStringMap(in map[string]string) map[string]string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(in))
+	for key, value := range in {
+		out[key] = value
+	}
+	return out
+}
+
+func (c *Controller) MarkRetryExhausted(ctx context.Context, key MissionKey, cause error) error {
+	mission, err := c.Repository.GetMission(ctx, key)
+	if errors.Is(err, ErrNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	mission.Status.Phase = spacev1.MissionBlocked
+	setMissionCondition(mission, c.clock(), metav1.ConditionFalse, "ControllerRetryExhausted", boundedMessage(cause.Error(), 512))
+	if err := c.Repository.UpdateMissionStatus(ctx, mission); err != nil {
+		return err
+	}
+	c.Repository.Event(ctx, key, "Warning", "MissionReconcileRetryExhausted", boundedMessage(cause.Error(), 512))
+	return nil
 }
 
 func (c *Controller) fail(observer Observer, start time.Time, reason string, err error) (ReconcileResult, error) {

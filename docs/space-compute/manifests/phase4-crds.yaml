@@ -317,6 +317,8 @@ spec:
               inputTransfers: {type: array, maxItems: 128, items: {type: object, x-kubernetes-preserve-unknown-fields: true}}
               resultTransfer: {type: object, nullable: true, x-kubernetes-preserve-unknown-fields: true}
               materialInputDigest: {type: string, pattern: '^[a-f0-9]{64}$'}
+              planningInputDigest: {type: string, pattern: '^[a-f0-9]{64}$'}
+              cacheResourceVersions: {type: object, maxProperties: 2, additionalProperties: {type: string, maxLength: 128}}
               snapshotSequences: {type: object, maxProperties: 128, additionalProperties: {type: integer, format: int64}}
               score: {type: object, x-kubernetes-preserve-unknown-fields: true}
               explanations: {type: array, maxItems: 128, items: {type: object, x-kubernetes-preserve-unknown-fields: true}}

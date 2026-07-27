@@ -126,6 +126,7 @@ func (in *SpacePlacementIntent) DeepCopy() *SpacePlacementIntent {
 		v := *in.Spec.ResultTransfer
 		out.Spec.ResultTransfer = &v
 	}
+	out.Spec.CacheResourceVersions = copyStringMap(in.Spec.CacheResourceVersions)
 	out.Spec.SnapshotSequences = make(map[string]int64, len(in.Spec.SnapshotSequences))
 	for k, v := range in.Spec.SnapshotSequences {
 		out.Spec.SnapshotSequences[k] = v

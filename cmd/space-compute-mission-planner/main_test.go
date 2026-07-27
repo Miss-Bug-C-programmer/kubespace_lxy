@@ -50,7 +50,7 @@ func TestControllerRolesAreMutuallyExplicit(t *testing.T) {
 
 func TestPhase4AndPhase6ManifestsHaveAdmissionIsolationAndLeastPrivilege(t *testing.T) {
 	root := filepath.Join("..", "..", "docs", "space-compute", "manifests")
-	for _, name := range []string{"phase4-crds.yaml", "phase4-admission.yaml", "mission-planner.yaml", "reporter-admission-webhook.yaml", "mission-admission-webhook.yaml"} {
+	for _, name := range []string{"phase4-crds.yaml", "phase4-admission.yaml", "mission-planner.yaml", "reporter-admission-webhook.yaml", "mission-admission-webhook.yaml", "controller-quotas.yaml"} {
 		raw, err := os.ReadFile(filepath.Join(root, name))
 		if err != nil {
 			t.Fatal(err)
@@ -91,6 +91,8 @@ func TestPhase4AndPhase6ManifestsHaveAdmissionIsolationAndLeastPrivilege(t *test
 				"maximumSnapshotAgeSeconds: {type: integer, format: int64, minimum: 1, maximum: 604800}",
 				"items: &missionDataLocation",
 				"self.durationUncertaintySeconds <= self.maximumDurationSeconds - self.expectedDurationSeconds",
+				"planningInputDigest: {type: string, pattern: '^[a-f0-9]{64}$'}",
+				"cacheResourceVersions: {type: object, maxProperties: 2",
 			} {
 				if !strings.Contains(text, required) {
 					t.Fatalf("phase7 CRD bound/location schema missing %q", required)
@@ -127,6 +129,9 @@ func TestPhase4AndPhase6ManifestsHaveAdmissionIsolationAndLeastPrivilege(t *test
 				"--controller-role=node-projector",
 				"--controller-role=transport-agent",
 				"verbs: [get, list, watch, patch]",
+				"--max-pending-unique-keys=10000",
+				"--api-qps=20",
+				"--api-burst=40",
 			} {
 				if !strings.Contains(text, required) {
 					t.Fatalf("split planner manifest missing %q", required)
@@ -154,9 +159,16 @@ func TestPhase4AndPhase6ManifestsHaveAdmissionIsolationAndLeastPrivilege(t *test
 			}
 		}
 		if name == "reporter-admission-webhook.yaml" {
-			for _, required := range []string{"kind: ValidatingWebhookConfiguration", "failurePolicy: Fail", "space-compute-reporter-public-keys", "resourceNames: [space-compute-reporter-public-keys]", "resources: [spacedomainreporterbindings]", "spacetransferreceipts", "spaceresultreceipts"} {
+			for _, required := range []string{"kind: ValidatingWebhookConfiguration", "failurePolicy: Fail", "space-compute-reporter-public-keys", "resourceNames: [space-compute-reporter-public-keys]", "resources: [spacedomainreporterbindings]", "resources: [spacelinksnapshots, spacedomainresourcesummaries]", "--max-link-snapshots=10000", "--max-resource-summaries=10000", "--reporter-qps=20", "--reporter-burst=40", "spacetransferreceipts", "spaceresultreceipts"} {
 				if !strings.Contains(text, required) {
 					t.Fatalf("reporter webhook manifest missing %q", required)
+				}
+			}
+		}
+		if name == "controller-quotas.yaml" {
+			for _, required := range []string{"kind: ResourceQuota", "count/spacemissions.spacecompute.k3s.io", "count/spaceplacementintents.spacecompute.k3s.io", "maxPendingUniqueKeys", "maxLinkSnapshots", "reporterQPS"} {
+				if !strings.Contains(text, required) {
+					t.Fatalf("controller quota manifest missing %q", required)
 				}
 			}
 		}

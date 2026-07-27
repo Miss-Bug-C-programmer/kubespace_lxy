@@ -72,7 +72,11 @@ Pod requests; this API does not allocate virtual devices.
 
 For each domain, the planner evaluates capability/software compatibility,
 validated snapshot freshness, transfer fit, predicted bounded compute time,
-return fit and guarded deadline. It selects the highest deterministic score,
+return fit and guarded deadline. Planning inputs are pinned from synchronized
+informer caches as one immutable resource/link snapshot; every placement records
+the cache resourceVersion watermarks plus a deterministic input digest. Updates
+observed after that pin only enqueue a subsequent reconciliation. The planner
+selects the highest deterministic score,
 then earliest completion, then lexical domain identity. The fixed planner score
 is:
 
@@ -108,8 +112,14 @@ score. It never invents a window or performs API/exporter/network I/O in
 ## State and restart behavior
 
 Planner state is persisted in `SpacePlacementIntent`, not process memory.
-Material input digest and plan ID make duplicate reconciliation a no-op. An
-expired or materially changed plan is replaced only after the active attempt is
+Material input digest and plan ID make duplicate reconciliation a no-op. Mission,
+placement, Pod and trusted-evidence reads use synchronized informer stores; API
+clients remain the write path. Mission/resource/link/placement dependencies are
+indexed by full domain/data-location identity, capability class and mission UID,
+so unrelated cluster-scoped updates do not scan or enqueue every Mission. Status
+conflicts re-read the latest object and merge monotonic state/conditions instead
+of replacing current status with a stale snapshot. An expired or materially
+changed plan is replaced only after the active attempt is
 fenced. A checkpointable attempt moves through `Replanning` and
 `Checkpointed`; a non-checkpointable attempt fails rather than allowing a
 second execution. Observation sequence and attempt number discard duplicates
@@ -125,8 +135,15 @@ Planner metrics use the `space_compute_planner_` prefix:
 - `replans_total{reason}` and `reconciliation_errors_total{stage}`;
 - `deadline_slack_seconds`, `snapshot_age_seconds` and
   `link_risk_decisions_total{class}`;
-- `queue_depth{queue}`, `retry_exhausted_total{queue}` and
-  `api_writes_total{resource,operation,result}`.
+- `queue_depth{queue}`, `queue_oldest_age_seconds{queue}`,
+  `queue_capacity{queue}`, `queue_saturation_total{queue}`,
+  `retry_exhausted_total{queue}` and `api_writes_total{resource,operation,result}`.
+
+Controller queues have a hard unique-key capacity. Saturation stops reconciliation,
+fails readiness and emits a bounded alert signal instead of silently discarding
+work. API clients use explicit QPS/burst throttling; 429 responses remain retryable.
+Use one namespaced `ResourceQuota` per Mission namespace and the reporter webhook's
+cluster object/rate limits; see `manifests/controller-quotas.yaml`.
 
 All labels are closed bounded enums; no mission, Node, endpoint, reporter or
 device identity is a label. Scheduler/exporter metrics remain documented in

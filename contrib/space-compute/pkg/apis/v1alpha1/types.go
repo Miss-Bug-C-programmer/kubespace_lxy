@@ -401,20 +401,22 @@ type ConstraintExplanation struct {
 }
 
 type SpacePlacementIntentSpec struct {
-	MissionRef          corev1.ObjectReference  `json:"missionRef"`
-	PlanID              string                  `json:"planID"`
-	Attempt             int32                   `json:"attempt"`
-	Target              DomainReference         `json:"target"`
-	NotBefore           metav1.Time             `json:"notBefore"`
-	ExpiresAt           metav1.Time             `json:"expiresAt"`
-	ComputeStart        metav1.Time             `json:"computeStart"`
-	ComputeEnd          metav1.Time             `json:"computeEnd"`
-	InputTransfers      []TransferEpoch         `json:"inputTransfers,omitempty"`
-	ResultTransfer      *TransferEpoch          `json:"resultTransfer,omitempty"`
-	MaterialInputDigest string                  `json:"materialInputDigest"`
-	SnapshotSequences   map[string]int64        `json:"snapshotSequences"`
-	Score               DecisionScore           `json:"score"`
-	Explanations        []ConstraintExplanation `json:"explanations"`
+	MissionRef            corev1.ObjectReference  `json:"missionRef"`
+	PlanID                string                  `json:"planID"`
+	Attempt               int32                   `json:"attempt"`
+	Target                DomainReference         `json:"target"`
+	NotBefore             metav1.Time             `json:"notBefore"`
+	ExpiresAt             metav1.Time             `json:"expiresAt"`
+	ComputeStart          metav1.Time             `json:"computeStart"`
+	ComputeEnd            metav1.Time             `json:"computeEnd"`
+	InputTransfers        []TransferEpoch         `json:"inputTransfers,omitempty"`
+	ResultTransfer        *TransferEpoch          `json:"resultTransfer,omitempty"`
+	MaterialInputDigest   string                  `json:"materialInputDigest"`
+	PlanningInputDigest   string                  `json:"planningInputDigest,omitempty"`
+	CacheResourceVersions map[string]string       `json:"cacheResourceVersions,omitempty"`
+	SnapshotSequences     map[string]int64        `json:"snapshotSequences"`
+	Score                 DecisionScore           `json:"score"`
+	Explanations          []ConstraintExplanation `json:"explanations"`
 }
 
 type PlacementPhase string

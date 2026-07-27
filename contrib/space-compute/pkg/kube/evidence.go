@@ -7,6 +7,7 @@ import (
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	spacev1 "github.com/k3s-io/k3s/contrib/space-compute/pkg/apis/v1alpha1"
@@ -47,7 +48,30 @@ func (s *WorkloadStore) EnsureTransferIntent(ctx context.Context, desired *space
 	}
 	return nil
 }
+func cachedUnstructuredList[T any](store interface{ List() []interface{} }, decode func(*unstructured.Unstructured) (*T, error)) ([]*T, error) {
+	objects := store.List()
+	out := make([]*T, 0, len(objects))
+	for _, object := range objects {
+		u, ok := object.(*unstructured.Unstructured)
+		if !ok {
+			return nil, fmt.Errorf("unexpected evidence cache object %T", object)
+		}
+		value, err := decode(u)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, value)
+	}
+	return out, nil
+}
+
 func (s *WorkloadStore) ListTransferReceipts(ctx context.Context) ([]*spacev1.SpaceTransferReceipt, error) {
+	if s.TransferReceiptStore != nil {
+		return cachedUnstructuredList(s.TransferReceiptStore, func(u *unstructured.Unstructured) (*spacev1.SpaceTransferReceipt, error) {
+			v := &spacev1.SpaceTransferReceipt{}
+			return v, fromUnstructured(u, v)
+		})
+	}
 	list, err := s.Repository.Dynamic.Resource(TransferReceiptGVR).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return nil, err
@@ -63,6 +87,12 @@ func (s *WorkloadStore) ListTransferReceipts(ctx context.Context) ([]*spacev1.Sp
 	return out, nil
 }
 func (s *WorkloadStore) ListExecutionLeases(ctx context.Context) ([]*spacev1.SpaceExecutionLease, error) {
+	if s.ExecutionLeaseStore != nil {
+		return cachedUnstructuredList(s.ExecutionLeaseStore, func(u *unstructured.Unstructured) (*spacev1.SpaceExecutionLease, error) {
+			v := &spacev1.SpaceExecutionLease{}
+			return v, fromUnstructured(u, v)
+		})
+	}
 	list, err := s.Repository.Dynamic.Resource(ExecutionLeaseGVR).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return nil, err
@@ -78,6 +108,24 @@ func (s *WorkloadStore) ListExecutionLeases(ctx context.Context) ([]*spacev1.Spa
 	return out, nil
 }
 func (s *WorkloadStore) GetExecutionLease(ctx context.Context, name string) (*spacev1.SpaceExecutionLease, error) {
+	if s.ExecutionLeaseStore != nil {
+		object, exists, err := s.ExecutionLeaseStore.GetByKey(name)
+		if err != nil {
+			return nil, err
+		}
+		if !exists {
+			return nil, planner.ErrNotFound
+		}
+		u, ok := object.(*unstructured.Unstructured)
+		if !ok {
+			return nil, fmt.Errorf("unexpected execution lease cache object %T", object)
+		}
+		v := &spacev1.SpaceExecutionLease{}
+		if err := fromUnstructured(u, v); err != nil {
+			return nil, err
+		}
+		return v, nil
+	}
 	u, err := s.Repository.Dynamic.Resource(ExecutionLeaseGVR).Get(ctx, name, metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
 		return nil, planner.ErrNotFound
@@ -92,6 +140,12 @@ func (s *WorkloadStore) GetExecutionLease(ctx context.Context, name string) (*sp
 	return v, nil
 }
 func (s *WorkloadStore) ListExecutionObservations(ctx context.Context) ([]*spacev1.SpaceExecutionObservation, error) {
+	if s.ExecutionObservationStore != nil {
+		return cachedUnstructuredList(s.ExecutionObservationStore, func(u *unstructured.Unstructured) (*spacev1.SpaceExecutionObservation, error) {
+			v := &spacev1.SpaceExecutionObservation{}
+			return v, fromUnstructured(u, v)
+		})
+	}
 	list, err := s.Repository.Dynamic.Resource(ExecutionObservationGVR).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return nil, err
@@ -107,6 +161,12 @@ func (s *WorkloadStore) ListExecutionObservations(ctx context.Context) ([]*space
 	return out, nil
 }
 func (s *WorkloadStore) ListResultReceipts(ctx context.Context) ([]*spacev1.SpaceResultReceipt, error) {
+	if s.ResultReceiptStore != nil {
+		return cachedUnstructuredList(s.ResultReceiptStore, func(u *unstructured.Unstructured) (*spacev1.SpaceResultReceipt, error) {
+			v := &spacev1.SpaceResultReceipt{}
+			return v, fromUnstructured(u, v)
+		})
+	}
 	list, err := s.Repository.Dynamic.Resource(ResultReceiptGVR).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return nil, err

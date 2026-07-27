@@ -3,6 +3,7 @@ package admission
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -59,7 +60,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if review.Request != nil {
 		response.UID = review.Request.UID
 		if err := h.validator.Validate(r.Context(), review.Request); err != nil {
-			response.Result = &metav1.Status{Status: metav1.StatusFailure, Reason: metav1.StatusReasonInvalid, Message: boundedMessage(err.Error(), 1024), Code: http.StatusUnprocessableEntity}
+			code := int32(http.StatusUnprocessableEntity)
+			reason := metav1.StatusReasonInvalid
+			var statusErr interface {
+				AdmissionStatus() (int32, metav1.StatusReason)
+			}
+			if errors.As(err, &statusErr) {
+				code, reason = statusErr.AdmissionStatus()
+			}
+			response.Result = &metav1.Status{Status: metav1.StatusFailure, Reason: reason, Message: boundedMessage(err.Error(), 1024), Code: code}
 		} else {
 			response.Allowed = true
 			response.Result = &metav1.Status{Status: metav1.StatusSuccess, Code: http.StatusOK}

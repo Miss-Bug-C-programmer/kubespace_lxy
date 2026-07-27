@@ -93,6 +93,18 @@ inspection or compilation.
 - Exact successful gates: focused package tests including the Phase 4 scheduler integration fixture; planner/API race tests; `scripts/space-compute all`; YAML parse and explicit default-scheduler/Phase-7 invariants.
 - Default K3s scheduler production source/profile/manifest remained outside this diff; only its Phase 4 test fixture was migrated to the structured identity API. Existing legacy v1alpha1 Missions with string locations require explicit migration to structured `DataLocation` objects.
 
+
+## Phase 8 controller idempotency, error handling and scalability hardening
+
+- GitHub Actions run `30230343778` validated the production patch from main baseline `b95cbcd79205321926ce16661fd7abb286967250` before fast-forward publication.
+- Planner/workload read paths use synchronized informer stores. Each planner reconcile pins one immutable resource/link input snapshot, records its deterministic SHA-256 plus resource/link cache resourceVersion watermarks, and lets later informer updates trigger the next reconcile. API clients remain the write path.
+- Mission dependencies are indexed by full domain, structured input location, result destination, required/alternative capability class, Mission UID and placement target. Link/resource/evidence callbacks enqueue only affected Missions and no longer scan the Mission store.
+- Mission/placement/Pod refresh errors are never discarded; 429 and other non-NotFound failures remain rate-limited retries. Status conflict retries merge against the latest object and preserve monotonic terminal/execution state and independent conditions. Planner/dispatcher retry exhaustion writes a fail-closed Condition/Event terminal state when the API is available.
+- Controller queues enforce a configurable hard pending-unique-key cap and expose depth, capacity, oldest-age, saturation and retry-exhaustion metrics. Saturation stops reconciliation and fails readiness instead of silently dropping work. API QPS/burst are explicit.
+- `manifests/controller-quotas.yaml` provides namespaced Mission/Placement ResourceQuota examples. Reporter admission adds bounded per-principal QPS/burst and administrator-configured cluster SpaceLinkSnapshot/SpaceDomainResourceSummary object-count limits backed by synchronized informer state.
+- Exact successful gates: focused changed-package tests, focused race tests, unchanged `scripts/space-compute all`, YAML/diff/invariant checks, and `go test ./pkg/executor/embed -count=1`. Tests include API 429 retry, watch disconnect/410 relist, cache-pinned snapshot, dependency-index selectivity, queue saturation and status-conflict merge regressions.
+- The default K3s scheduler source/profile/manifest remains outside this Phase 8 diff. External sustained API-server throttling/soak remains a deployment qualification item under R9; it was not reclassified as executed by these deterministic tests.
+
 ## Verified plugin catalogue
 
 - Entry points are `New`, `PreFilter`, `Filter`, `PreScore`, `Score`, `Close`,

@@ -572,6 +572,23 @@ func ValidatePlacement(placement *SpacePlacementIntent, mission *SpaceMission) e
 	if strings.TrimSpace(placement.Spec.MaterialInputDigest) == "" {
 		errs.add("spec.materialInputDigest", "is required")
 	}
+	if placement.Spec.PlanningInputDigest != "" {
+		decoded, err := hex.DecodeString(placement.Spec.PlanningInputDigest)
+		if err != nil || len(decoded) != 32 || strings.ToLower(placement.Spec.PlanningInputDigest) != placement.Spec.PlanningInputDigest {
+			errs.add("spec.planningInputDigest", "must be a lowercase hexadecimal SHA-256 digest")
+		}
+	}
+	if len(placement.Spec.CacheResourceVersions) > 2 {
+		errs.add("spec.cacheResourceVersions", "cannot contain more than resourceSummaries and linkSnapshots")
+	}
+	for key, value := range placement.Spec.CacheResourceVersions {
+		if key != "resourceSummaries" && key != "linkSnapshots" {
+			errs.add("spec.cacheResourceVersions", "contains an unsupported cache key")
+		}
+		if len(value) > 128 {
+			errs.add("spec.cacheResourceVersions."+key, "cannot exceed 128 bytes")
+		}
+	}
 	if mission.Spec.ResultReturnRequired && placement.Spec.ResultTransfer == nil {
 		errs.add("spec.resultTransfer", "is required by the mission")
 	}

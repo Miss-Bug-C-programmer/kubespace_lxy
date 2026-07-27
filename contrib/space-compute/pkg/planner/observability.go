@@ -18,7 +18,10 @@ var (
 	linkRiskDecisions    = metrics.NewCounterVec(&metrics.CounterOpts{Subsystem: "space_compute_planner", Name: "link_risk_decisions_total", Help: "Selected plans by bounded link-risk class.", StabilityLevel: metrics.ALPHA}, []string{"class"})
 	reconciliationErrors = metrics.NewCounterVec(&metrics.CounterOpts{Subsystem: "space_compute_planner", Name: "reconciliation_errors_total", Help: "Planner reconciliation errors by bounded stage.", StabilityLevel: metrics.ALPHA}, []string{"stage"})
 	controllerQueueDepth = metrics.NewGaugeVec(&metrics.GaugeOpts{Subsystem: "space_compute_planner", Name: "queue_depth", Help: "Current controller work queue depth by bounded queue.", StabilityLevel: metrics.ALPHA}, []string{"queue"})
-	retryExhausted       = metrics.NewCounterVec(&metrics.CounterOpts{Subsystem: "space_compute_planner", Name: "retry_exhausted_total", Help: "Controller items dropped after the bounded retry budget.", StabilityLevel: metrics.ALPHA}, []string{"queue"})
+	queueOldestAge       = metrics.NewGaugeVec(&metrics.GaugeOpts{Subsystem: "space_compute_planner", Name: "queue_oldest_age_seconds", Help: "Age of the oldest pending unique controller key.", StabilityLevel: metrics.ALPHA}, []string{"queue"})
+	queueCapacity        = metrics.NewGaugeVec(&metrics.GaugeOpts{Subsystem: "space_compute_planner", Name: "queue_capacity", Help: "Configured maximum pending unique controller keys.", StabilityLevel: metrics.ALPHA}, []string{"queue"})
+	queueSaturated       = metrics.NewCounterVec(&metrics.CounterOpts{Subsystem: "space_compute_planner", Name: "queue_saturation_total", Help: "Controller queue attempts rejected at the hard unique-key capacity.", StabilityLevel: metrics.ALPHA}, []string{"queue"})
+	retryExhausted       = metrics.NewCounterVec(&metrics.CounterOpts{Subsystem: "space_compute_planner", Name: "retry_exhausted_total", Help: "Controller items terminated after the bounded retry budget.", StabilityLevel: metrics.ALPHA}, []string{"queue"})
 	apiWrites            = metrics.NewCounterVec(&metrics.CounterOpts{Subsystem: "space_compute_planner", Name: "api_writes_total", Help: "Controller API writes by bounded resource, operation, and result.", StabilityLevel: metrics.ALPHA}, []string{"resource", "operation", "result"})
 )
 
@@ -26,7 +29,7 @@ type PrometheusObserver struct{}
 
 func NewPrometheusObserver() PrometheusObserver {
 	registerMetrics.Do(func() {
-		legacyregistry.MustRegister(planningLatency, planningActive, replans, deadlineSlack, plannerSnapshotAge, linkRiskDecisions, reconciliationErrors, controllerQueueDepth, retryExhausted, apiWrites)
+		legacyregistry.MustRegister(planningLatency, planningActive, replans, deadlineSlack, plannerSnapshotAge, linkRiskDecisions, reconciliationErrors, controllerQueueDepth, queueOldestAge, queueCapacity, queueSaturated, retryExhausted, apiWrites)
 	})
 	return PrometheusObserver{}
 }
@@ -60,6 +63,18 @@ func (PrometheusObserver) LinkRisk(class string) {
 func (PrometheusObserver) QueueDepth(queue string, depth int) {
 	controllerQueueDepth.WithLabelValues(boundedQueue(queue)).Set(float64(depth))
 }
+func (PrometheusObserver) QueueOldestAge(queue string, age time.Duration) {
+	if age < 0 {
+		age = 0
+	}
+	queueOldestAge.WithLabelValues(boundedQueue(queue)).Set(age.Seconds())
+}
+func (PrometheusObserver) QueueCapacity(queue string, capacity int) {
+	queueCapacity.WithLabelValues(boundedQueue(queue)).Set(float64(capacity))
+}
+func (PrometheusObserver) QueueSaturated(queue string) {
+	queueSaturated.WithLabelValues(boundedQueue(queue)).Inc()
+}
 func (PrometheusObserver) RetryExhausted(queue string) {
 	retryExhausted.WithLabelValues(boundedQueue(queue)).Inc()
 }
@@ -67,10 +82,12 @@ func (PrometheusObserver) APIWrite(resource, operation, result string) {
 	apiWrites.WithLabelValues(boundedResource(resource), boundedOperation(operation), boundedWriteResult(result)).Inc()
 }
 func boundedQueue(value string) string {
-	if value == "missions" || value == "resources" {
+	switch value {
+	case "planner_missions", "resource_status", "dispatch_missions", "dispatch_evidence", "transport_missions", "node_projection":
 		return value
+	default:
+		return "other"
 	}
-	return "other"
 }
 func boundedResource(value string) string {
 	switch value {
@@ -112,7 +129,7 @@ func boundedReplan(value string) string {
 }
 func boundedStage(value string) string {
 	switch value {
-	case "mission_read", "mission_status", "resource_list", "link_list", "placement_read", "placement_status", "placement_apply":
+	case "mission_read", "mission_status", "planning_snapshot", "placement_read", "placement_status", "placement_apply", "retry_terminal_status":
 		return value
 	default:
 		return "other"

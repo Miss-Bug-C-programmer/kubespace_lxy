@@ -1,0 +1,29 @@
+# Apply one ResourceQuota per Mission namespace. Replace `space-missions-example`
+# with the authorized namespace name and size the count from the controller queue
+# capacity and API-server SLO. Kubernetes ResourceQuota is namespaced, so the
+# cluster-scoped link/resource quotas are enforced by the fail-closed reporter
+# admission webhook configured in reporter-admission-webhook.yaml.
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: space-compute-mission-count
+  namespace: space-missions-example
+spec:
+  hard:
+    count/spacemissions.spacecompute.k3s.io: "1000"
+    count/spaceplacementintents.spacecompute.k3s.io: "1000"
+---
+# This ConfigMap is documentation/operations metadata for administrators and can
+# be consumed by deployment tooling. The authoritative runtime limits are the
+# explicit reporter webhook flags in reporter-admission-webhook.yaml.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: space-compute-controller-capacity-policy
+  namespace: kube-system
+data:
+  maxPendingUniqueKeys: "10000"
+  maxLinkSnapshots: "10000"
+  maxResourceSummaries: "10000"
+  reporterQPS: "20"
+  reporterBurst: "40"
