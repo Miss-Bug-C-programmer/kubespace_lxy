@@ -37,6 +37,9 @@ jobs:
         echo 'ffa652ac4ceaa623d7c0288be452bd8962090d0d54e99b43f058f8c92e639204  /tmp/stage9.patch' | sha256sum -c -
         git apply --check --whitespace=error-all /tmp/stage9.patch
         git apply /tmp/stage9.patch
+        echo '3fdf48845339f5c802563b018852bfe6a6653677cddd6aa1265137b6f641768c  .github/stage9-payload/fix.patch' | sha256sum -c -
+        git apply --check --whitespace=error-all .github/stage9-payload/fix.patch
+        git apply .github/stage9-payload/fix.patch
     - name: Verify Phase 9 schemas and isolation
       run: |
         set -euo pipefail
