@@ -1,0 +1,63 @@
+diff --git a/contrib/space-compute/pkg/planner/phase9_test.go b/contrib/space-compute/pkg/planner/phase9_test.go
+index 7da710f..aee9b46 100644
+--- a/contrib/space-compute/pkg/planner/phase9_test.go
++++ b/contrib/space-compute/pkg/planner/phase9_test.go
+@@ -19,9 +19,8 @@ func TestPhase9WorkingMemoryAndStorageAreHardAcrossAllStatePolicies(t *testing.T
+ 			mission.Spec.WorkingMemoryBytes = 8 << 30
+ 			summary := phase9CapacitySummary(now)
+ 			summary.Spec.SystemMemoryBytes = spacev1.ScalarCapacity{Capacity: 16 << 30, Available: 4 << 30}
+-			if _, err := Plan(mission, []*spacev1.SpaceDomainResourceSummary{summary}, nil, testClock{now}); err == nil || !strings.Contains(err.Error(), "working_memory_insufficient") || !strings.Contains(err.Error(), "statePolicy="+string(policy)) {
+-				t.Fatalf("policy=%s did not enforce memory hard constraint: %v", policy, err)
+-			}
++			decision, err := Plan(mission, []*spacev1.SpaceDomainResourceSummary{summary}, nil, testClock{now})
++			assertPhase9HardRejection(t, decision, err, "working_memory_insufficient", policy, "working-memory/storage/link limits")
+ 		})
+ 		t.Run(string(policy)+"-storage", func(t *testing.T) {
+ 			mission := phase9CapacityMission(now)
+@@ -30,9 +29,8 @@ func TestPhase9WorkingMemoryAndStorageAreHardAcrossAllStatePolicies(t *testing.T
+ 			summary := phase9CapacitySummary(now)
+ 			summary.Spec.EphemeralStorageBytes = spacev1.ScalarCapacity{Capacity: 10 << 30, Available: 4 << 30}
+ 			summary.Spec.PersistentStorage = []spacev1.StorageCapacity{{Class: "nvme", CapacityBytes: 20 << 30, AvailableBytes: 8 << 30}}
+-			if _, err := Plan(mission, []*spacev1.SpaceDomainResourceSummary{summary}, nil, testClock{now}); err == nil || !strings.Contains(err.Error(), "working_storage_insufficient") || !strings.Contains(err.Error(), "statePolicy="+string(policy)) {
+-				t.Fatalf("policy=%s did not enforce storage hard constraint: %v", policy, err)
+-			}
++			decision, err := Plan(mission, []*spacev1.SpaceDomainResourceSummary{summary}, nil, testClock{now})
++			assertPhase9HardRejection(t, decision, err, "working_storage_insufficient", policy, "working-memory/storage/link limits")
+ 		})
+ 	}
+ }
+@@ -53,10 +51,8 @@ func TestPhase9LinkQualityLimitsAreHardAcrossAllStatePolicies(t *testing.T) {
+ 		link := plannerLink("quality", source, target, now, now, now.Add(10*time.Minute), 1_000_000)
+ 		link.Spec.Windows[0].RTTMicroseconds = 30_000
+ 		link.Spec.Windows[0].LossPartsPerMillion = 200
+-		_, err := Plan(mission, []*spacev1.SpaceDomainResourceSummary{summary}, []*spacev1.SpaceLinkSnapshot{link}, testClock{now})
+-		if err == nil || !strings.Contains(err.Error(), "input_transfer_window_missing") || !strings.Contains(err.Error(), "statePolicy="+string(policy)) || !strings.Contains(err.Error(), "bandwidth/RTT/loss hard constraints") {
+-			t.Fatalf("policy=%s did not enforce link hard constraints: %v", policy, err)
+-		}
++		decision, err := Plan(mission, []*spacev1.SpaceDomainResourceSummary{summary}, []*spacev1.SpaceLinkSnapshot{link}, testClock{now})
++		assertPhase9HardRejection(t, decision, err, "input_transfer_window_missing", policy, "bandwidth/RTT/loss hard constraints")
+ 	}
+ }
+ 
+@@ -114,3 +110,21 @@ func phase9CapacityMission(now time.Time) *spacev1.SpaceMission {
+ func phase9CapacitySummary(now time.Time) *spacev1.SpaceDomainResourceSummary {
+ 	return capacitySummary(now, []spacev1.DeviceCapacity{{Class: "gpu", Count: 1, ComputeMilli: 1000, FragmentationMilli: 500}})
+ }
++
++func assertPhase9HardRejection(t *testing.T, decision Decision, err error, code string, policy spacev1.StatePolicy, messageFragment string) {
++	t.Helper()
++	if err == nil {
++		t.Fatalf("policy=%s code=%s unexpectedly feasible", policy, code)
++	}
++	for _, rejected := range decision.Rejected {
++		for _, explanation := range rejected.Explanations {
++			if explanation.Code == code {
++				if !strings.Contains(explanation.Message, "statePolicy="+string(policy)) || !strings.Contains(explanation.Message, messageFragment) {
++					t.Fatalf("policy=%s code=%s explanation lacks hard-constraint semantics: %+v", policy, code, explanation)
++				}
++				return
++			}
++		}
++	}
++	t.Fatalf("policy=%s missing structured rejection code=%s: decision=%+v err=%v", policy, code, decision.Rejected, err)
++}
