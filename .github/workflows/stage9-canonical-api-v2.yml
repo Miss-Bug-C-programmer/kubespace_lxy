@@ -1,0 +1,63 @@
+name: stage9-canonical-api-v2
+on:
+  push:
+    branches: [main]
+    paths: [.github/stage9-gate-trigger-v2]
+permissions: {contents: write, statuses: write}
+concurrency: {group: stage9-canonical-api-v2-main, cancel-in-progress: false}
+jobs:
+  validate-and-publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 210
+    steps:
+    - name: Publish pending status
+      env: {GH_TOKEN: "${{ github.token }}"}
+      run: gh api --method POST "repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=pending -f context="sandbox/stage9-canonical-api-v2-${GITHUB_RUN_ID}" -f target_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" -f description="Validating Phase 9 canonical API upgrade"
+    - uses: actions/checkout@v4
+      with: {ref: "${{ github.sha }}", fetch-depth: 0}
+    - uses: actions/setup-go@v5
+      with: {go-version-file: go.mod, cache: true}
+    - name: Apply exact reviewed production tree
+      run: bash .github/stage9-payload/apply-v2.sh
+    - name: Verify schemas and default scheduler isolation
+      run: bash .github/stage9-payload/invariants-v2.sh
+    - name: Run focused, race, complete, module and isolation gates
+      run: bash .github/stage9-payload/tests-v2.sh
+    - name: Record verified Phase 9 evidence
+      run: python3 .github/stage9-payload/record-status-v2.py
+    - name: Upload failure logs
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: stage9-canonical-api-v2-error
+        path: |
+          /tmp/stage9-focused.log
+          /tmp/stage9-race.log
+          /tmp/space-compute-all.log
+        if-no-files-found: ignore
+    - name: Fast-forward Phase 9 production source
+      id: publish
+      run: |
+        set -euo pipefail
+        git fetch origin main
+        test "$(git rev-parse origin/main)" = "$GITHUB_SHA"
+        rm -rf bin
+        git rm -rf .github/stage9-source-trigger .github/stage9-gate-trigger .github/stage9-gate-trigger-v2 .github/stage9-payload .github/workflows/stage9-source-snapshot.yml .github/workflows/stage9-canonical-api.yml .github/workflows/stage9-canonical-api-v2.yml
+        git add -A
+        git diff --cached --check
+        git config user.name space-compute-stage9-bot
+        git config user.email space-compute-stage9-bot@users.noreply.github.com
+        git commit -m 'feat: upgrade space-compute canonical API'
+        new_sha="$(git rev-parse HEAD)"
+        git push origin HEAD:main
+        echo "new_sha=$new_sha" >> "$GITHUB_OUTPUT"
+    - name: Publish success status
+      if: success()
+      env: {GH_TOKEN: "${{ github.token }}", NEW_SHA: "${{ steps.publish.outputs.new_sha }}"}
+      run: |
+        gh api --method POST "repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=success -f context="sandbox/stage9-canonical-api-v2-${GITHUB_RUN_ID}" -f target_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" -f description="Phase 9 gate passed and main fast-forwarded"
+        gh api --method POST "repos/${GITHUB_REPOSITORY}/statuses/${NEW_SHA}" -f state=success -f context="sandbox/stage9-canonical-api" -f target_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" -f description="Canonical API v1beta1 upgrade verified"
+    - name: Publish failure status
+      if: failure()
+      env: {GH_TOKEN: "${{ github.token }}"}
+      run: gh api --method POST "repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=failure -f context="sandbox/stage9-canonical-api-v2-${GITHUB_RUN_ID}" -f target_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" -f description="Phase 9 canonical API gate failed; production source not published"
