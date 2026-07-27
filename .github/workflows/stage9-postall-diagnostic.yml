@@ -1,0 +1,27 @@
+name: stage9-postall-diagnostic
+on:
+  push:
+    branches: [main]
+    paths: [.github/stage9-postall-trigger]
+permissions: {contents: read}
+jobs:
+  diagnose:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+    - uses: actions/checkout@v4
+      with: {ref: "${{ github.sha }}", fetch-depth: 0}
+    - uses: actions/setup-go@v5
+      with: {go-version-file: go.mod, cache: true}
+    - name: Apply exact Phase 9 tree
+      run: bash .github/stage9-payload/apply-v2.sh
+    - name: Diagnose post-all gates
+      run: |
+        set -o pipefail
+        { echo '=== go mod verify ==='; go mod verify; echo '=== go mod tidy -diff ==='; go mod tidy -diff; echo '=== embed ==='; go test ./pkg/executor/embed -count=1; } 2>&1 | tee /tmp/stage9-postall.log
+    - uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: stage9-postall-diagnostic
+        path: /tmp/stage9-postall.log
+        if-no-files-found: ignore
