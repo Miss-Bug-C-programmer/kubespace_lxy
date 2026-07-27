@@ -23,4 +23,7 @@ git apply .github/stage9-payload/fix.patch
 echo '504671bc72ff414c250954e22bbcafe7442aed9b446b75da77568c3b2e30a5ce  .github/stage9-payload/fix2.patch' | sha256sum -c -
 git apply --check --whitespace=error-all .github/stage9-payload/fix2.patch
 git apply .github/stage9-payload/fix2.patch
+echo '216bd68a5983057eaec26cd4c2dfc0622d5386c4af58e919e920b656ddde2c15  .github/stage9-payload/fix3.patch' | sha256sum -c -
+git apply --check --whitespace=error-all .github/stage9-payload/fix3.patch
+git apply .github/stage9-payload/fix3.patch
 git diff --check
