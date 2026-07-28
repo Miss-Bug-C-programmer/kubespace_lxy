@@ -4,7 +4,7 @@ on:
     branches: [main]
     paths: [.github/stage10-race-v6-trigger]
 permissions:
-  contents: read
+  contents: write
   statuses: write
 jobs:
   verify:
@@ -46,6 +46,8 @@ jobs:
           git apply --check --whitespace=error-all /tmp/fix4.patch
           git apply /tmp/fix4.patch
           git diff --check
+          git add -A
+          git diff --cached --check
       - name: Source invariants and scheduler isolation
         shell: bash
         run: |
@@ -90,6 +92,21 @@ jobs:
           name: stage10-race-v6-evidence
           path: /tmp/stage10-v6
           retention-days: 7
+      - name: Publish verified production patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff HEAD --check
+          test -z "$(git diff --name-only HEAD -- .github)"
+          test -z "$(git diff --name-only HEAD -- pkg/executor/embed cmd/space-compute-scheduler docs/gpu-scheduler/manifests/space-compute-scheduler.yaml)"
+          if git diff --cached --quiet; then
+            echo 'verified Phase 10 patch is unexpectedly empty' >&2
+            exit 1
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'perf(space-compute): optimize collector and planner runtime'
+          git push origin HEAD:main
       - name: Publish success
         if: success()
         shell: bash
