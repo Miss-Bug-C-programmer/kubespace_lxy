@@ -6,10 +6,19 @@ on:
       - .github/stage10-source-trigger
 permissions:
   contents: read
+  statuses: write
 jobs:
   snapshot:
     runs-on: ubuntu-latest
     steps:
+      - name: Publish snapshot pending
+        shell: bash
+        run: |
+          curl --fail --silent --show-error -X POST \
+            -H "Authorization: Bearer ${{ github.token }}" \
+            -H "Accept: application/vnd.github+json" \
+            "${{ github.api_url }}/repos/${{ github.repository }}/statuses/${{ github.sha }}" \
+            -d "{\"state\":\"pending\",\"context\":\"sandbox/stage10-source-${{ github.run_id }}\",\"target_url\":\"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}"
       - uses: actions/checkout@v4
       - name: Capture exact Phase 10 source surface
         shell: bash
@@ -51,3 +60,21 @@ jobs:
           name: stage10-source
           path: /tmp/stage10-source.tgz
           retention-days: 7
+      - name: Publish snapshot success
+        if: success()
+        shell: bash
+        run: |
+          curl --fail --silent --show-error -X POST \
+            -H "Authorization: Bearer ${{ github.token }}" \
+            -H "Accept: application/vnd.github+json" \
+            "${{ github.api_url }}/repos/${{ github.repository }}/statuses/${{ github.sha }}" \
+            -d "{\"state\":\"success\",\"context\":\"sandbox/stage10-source-${{ github.run_id }}\",\"target_url\":\"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}"
+      - name: Publish snapshot failure
+        if: failure()
+        shell: bash
+        run: |
+          curl --fail --silent --show-error -X POST \
+            -H "Authorization: Bearer ${{ github.token }}" \
+            -H "Accept: application/vnd.github+json" \
+            "${{ github.api_url }}/repos/${{ github.repository }}/statuses/${{ github.sha }}" \
+            -d "{\"state\":\"failure\",\"context\":\"sandbox/stage10-source-${{ github.run_id }}\",\"target_url\":\"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}"
