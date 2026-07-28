@@ -1,0 +1,53 @@
+name: stage10-race-v6
+on:
+  push:
+    branches: [main]
+    paths: [.github/stage10-race-v6-trigger]
+permissions:
+  contents: read
+  statuses: write
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish pending
+        shell: bash
+        run: |
+          curl --fail --silent --show-error -X POST -H "Authorization: Bearer ${{ github.token }}" -H "Accept: application/vnd.github+json" "${{ github.api_url }}/repos/${{ github.repository }}/statuses/${{ github.sha }}" -d "{\"state\":\"pending\",\"context\":\"sandbox/stage10-race-v6-${{ github.run_id }}\",\"target_url\":\"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}"
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: {go-version: '1.25.12', cache: true}
+      - name: Apply reviewed candidate and fixes
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat .github/stage10-payload/payload-[0-9][0-9] > /tmp/stage10.patch.xz.b64
+          echo 'ef369be65e80690ed7b116871ebb3638c3266f64bb31e2b1aa0f976e7d819f1a  /tmp/stage10.patch.xz.b64' | sha256sum -c -
+          base64 -d /tmp/stage10.patch.xz.b64 | xz -dc > /tmp/stage10.patch
+          echo '0e039fc2bbb25c020901ea5d1f6c079b3e117bf8c71fa1534838b52f2f66cf86  /tmp/stage10.patch' | sha256sum -c -
+          git apply /tmp/stage10.patch
+          for spec in \
+            'fix1.patch:6af9cd116950034598fbeac91dd4432b9f79f6298c21f1ee0149b7db1a69ed9a' \
+            'fix2.patch:b16ef3bde45ca1d3ed3cf3ad383ae3aff396af749843fa18c9c28d394e9ebf43' \
+            'fix3.patch:4680e26bbcb7b221408aebda5a1a28b19b580e391a8f77afd092d1e23807b171' \
+            'fix4.patch:29a0aee99e56a415bb1e81df36a2fa6cecb6b2d59f76bbe16c88db426873ba37'; do
+            f=${spec%%:*}; h=${spec#*:}; echo "$h  .github/stage10-payload/$f" | sha256sum -c -; git apply --check --whitespace=error-all ".github/stage10-payload/$f"; git apply ".github/stage10-payload/$f";
+          done
+          git diff --check
+      - name: Focused and race
+        shell: bash
+        run: |
+          set -euo pipefail
+          go test ./pkg/scheduler/plugins/gpustability -run 'Phase10|CollectorBackoffAndCircuitState|CollectorScaleBoundsAndLifecycle|CycleSnapshotExpiryAppliesNextCycleOnly|ConcurrentTargetReloadAndSnapshotAccess|UnifiedSnapshotCarriesNodeResourceContext' -count=1
+          go test ./contrib/space-compute/pkg/planner ./contrib/space-compute/pkg/kube ./cmd/space-compute-mission-planner -run 'Phase10|ControllerRestartDuplicateIntentAndCrossDomainFence|StabilityOnlyChangeChangesDigestMaterialInputAndTriggersReplan' -count=1
+          go test -race ./pkg/scheduler/plugins/gpustability ./contrib/space-compute/pkg/planner ./contrib/space-compute/pkg/kube ./cmd/space-compute-mission-planner -count=1
+      - name: Publish success
+        if: success()
+        shell: bash
+        run: |
+          curl --fail --silent --show-error -X POST -H "Authorization: Bearer ${{ github.token }}" -H "Accept: application/vnd.github+json" "${{ github.api_url }}/repos/${{ github.repository }}/statuses/${{ github.sha }}" -d "{\"state\":\"success\",\"context\":\"sandbox/stage10-race-v6-${{ github.run_id }}\",\"target_url\":\"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}"
+      - name: Publish failure
+        if: failure()
+        shell: bash
+        run: |
+          curl --fail --silent --show-error -X POST -H "Authorization: Bearer ${{ github.token }}" -H "Accept: application/vnd.github+json" "${{ github.api_url }}/repos/${{ github.repository }}/statuses/${{ github.sha }}" -d "{\"state\":\"failure\",\"context\":\"sandbox/stage10-race-v6-${{ github.run_id }}\",\"target_url\":\"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}"
