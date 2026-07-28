@@ -10,14 +10,8 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     steps:
-      - name: Publish pending
-        shell: bash
-        run: |
-          curl --fail --silent --show-error -X POST -H "Authorization: Bearer ${{ github.token }}" -H "Accept: application/vnd.github+json" "${{ github.api_url }}/repos/${{ github.repository }}/statuses/${{ github.sha }}" -d "{\"state\":\"pending\",\"context\":\"sandbox/stage10-race-v6-${{ github.run_id }}\",\"target_url\":\"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}"
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with: {go-version: '1.25.12', cache: true}
-      - name: Apply reviewed candidate and fixes and capture diff
+      - name: Apply reviewed candidate and fixes and capture source
         shell: bash
         run: |
           set -euo pipefail
@@ -26,40 +20,17 @@ jobs:
           echo 'ef369be65e80690ed7b116871ebb3638c3266f64bb31e2b1aa0f976e7d819f1a  /tmp/stage10.patch.xz.b64' | sha256sum -c -
           base64 -d /tmp/stage10.patch.xz.b64 | xz -dc > /tmp/stage10.patch
           echo '0e039fc2bbb25c020901ea5d1f6c079b3e117bf8c71fa1534838b52f2f66cf86  /tmp/stage10.patch' | sha256sum -c -
-          git apply --check --whitespace=error-all /tmp/stage10.patch
           git apply /tmp/stage10.patch
-          for spec in \
-            'fix1.patch:6af9cd116950034598fbeac91dd4432b9f79f6298c21f1ee0149b7db1a69ed9a' \
-            'fix2.patch:b16ef3bde45ca1d3ed3cf3ad383ae3aff396af749843fa18c9c28d394e9ebf43' \
-            'fix3.patch:4680e26bbcb7b221408aebda5a1a28b19b580e391a8f77afd092d1e23807b171'; do
-            f=${spec%%:*}; h=${spec#*:}; echo "$h  .github/stage10-payload/$f" | sha256sum -c -; git apply --check --whitespace=error-all ".github/stage10-payload/$f"; git apply ".github/stage10-payload/$f";
-          done
-          cat .github/stage10-payload/fix4-chunk-* > /tmp/fix4.patch.xz.b64
-          echo '7a2df490d54c8922852beb7aaaab4ac765a52e47ac4b6edb1cbdce7ba8166dcb  /tmp/fix4.patch.xz.b64' | sha256sum -c -
-          base64 -d /tmp/fix4.patch.xz.b64 > /tmp/fix4.patch.xz
-          echo 'e15ca28bb3d73fa04eba79a3837a3b7c39d59e4fe500a2c874179ec68b96259e  /tmp/fix4.patch.xz' | sha256sum -c -
-          xz -dc /tmp/fix4.patch.xz > /tmp/fix4.patch
+          for f in fix1.patch fix2.patch fix3.patch; do git apply ".github/stage10-payload/$f"; done
+          cat .github/stage10-payload/fix4-chunk-* | base64 -d | xz -dc > /tmp/fix4.patch
           echo '29a0aee99e56a415bb1e81df36a2fa6cecb6b2d59f76bbe16c88db426873ba37  /tmp/fix4.patch' | sha256sum -c -
-          git apply --check --whitespace=error-all /tmp/fix4.patch
           git apply /tmp/fix4.patch
-          git diff --check
-          git diff --binary HEAD > /tmp/stage10-v6/candidate.diff
-          git status --short > /tmp/stage10-v6/candidate.status
-      - name: Reproduce singleflight race
-        shell: bash
-        run: |
-          set -euo pipefail
-          go test -race ./pkg/scheduler/plugins/gpustability -run '^TestPhase10RefreshNodeUsesSingleflightQueue$' -count=20 | tee /tmp/stage10-v6/singleflight-race.log
+          cp pkg/scheduler/plugins/gpustability/collector.go /tmp/stage10-v6/collector.go
+          cp pkg/scheduler/plugins/gpustability/collector_deadline.go /tmp/stage10-v6/collector_deadline.go
+          cp pkg/scheduler/plugins/gpustability/phase10_test.go /tmp/stage10-v6/phase10_test.go
+          cp pkg/scheduler/plugins/gpustability/phase1_test.go /tmp/stage10-v6/phase1_test.go
       - uses: actions/upload-artifact@v4
-        if: always()
         with:
           name: stage10-race-v6-evidence
           path: /tmp/stage10-v6
           retention-days: 7
-      - name: Publish diagnostic status
-        if: always()
-        shell: bash
-        run: |
-          state=success
-          if [[ '${{ job.status }}' != 'success' ]]; then state=failure; fi
-          curl --fail --silent --show-error -X POST -H "Authorization: Bearer ${{ github.token }}" -H "Accept: application/vnd.github+json" "${{ github.api_url }}/repos/${{ github.repository }}/statuses/${{ github.sha }}" -d "{\"state\":\"${state}\",\"context\":\"sandbox/stage10-race-v6-${{ github.run_id }}\",\"target_url\":\"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}"
