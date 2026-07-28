@@ -116,6 +116,17 @@ inspection or compilation.
 - Successful gates: focused unit/race, unchanged `scripts/space-compute all`, `go mod verify`, `go mod tidy -diff`, YAML/schema/isolation checks and `go test ./pkg/executor/embed -count=1`. Tests cover alpha->beta, beta->alpha, round trip, schema-admitted unknown/new data and large integers, stored-version migration, rollback and hard-field preservation.
 - Default K3s scheduler source/profile/manifest stayed outside the Phase 9 production diff. Full-agent K3s patch-upgrade and physical-hardware qualification remain separate release gates.
 
+## Phase 10 performance and runtime optimization
+
+- Executed on 2026-07-28 by GitHub Actions run `30335789459`; the verified production commit is `19609892ada3e46ba0ec93f1b0d128e330263e2c` and was published to `main` by a non-force fast-forward push only after all gates passed.
+- Collector response parsing now uses `bytes.NewReader(raw)` and pooled byte buffers, eliminating the `string(raw)` response copy. Deadline work is driven by a min-heap instead of periodic all-target `scheduleDue` scans, and duplicate target updates are coalesced before collection.
+- Snapshot storage is a globally bounded sharded LRU. Active reads update eviction recency but never observation/expiry timestamps, so eviction weight changes cannot extend freshness.
+- Explicit `refreshNode` requests use the same generation check, pending-flight singleflight, backoff/circuit and bounded worker queue as background refreshes. The concurrency regression synchronizes all 32 callers onto one in-flight collection before exporter release; explicit subsequent refresh failures remain observable and Phase 5 multi-Agent isolation semantics are unchanged.
+- Planner reconciliation uses an immutable informer-backed `PlanningIndex`, precomputed prepared inputs and canonical material digests. Unchanged informer generations reuse the same prepared snapshot, dependency indexes avoid full Mission scans, and no-op Mission/Placement status writes are suppressed.
+- Final 5,000-target Collector evidence is `474.468 ms/op`, `191.332 MB/op`, `3,311,584 allocs/op`, versus the Phase 5 `916.426 ms`, `233.92 MB`, `3,436,213 allocs` baseline. Allocation bytes fell about 18.2% and one-shot latency about 48.2%. The 5,000-domain prepared Planner measured `55.754 ms/op`, `28.527 MB/op`, `366,584 allocs/op`.
+- Exact final gates included source invariants and scheduler isolation, focused tests, deterministic singleflight/backoff/Agent-isolation race repetitions, full changed-package race, unchanged `scripts/space-compute all`, `go test ./pkg/executor/embed -count=1`, `go mod verify`, `go mod tidy -diff`, and post-change Collector/Planner pprof benchmarks.
+- The production diff contains no changes under `pkg/executor/embed`, `cmd/space-compute-scheduler`, or `docs/gpu-scheduler/manifests/space-compute-scheduler.yaml`; the default K3s scheduler remains fully independent.
+
 ## Verified plugin catalogue
 
 - Entry points are `New`, `PreFilter`, `Filter`, `PreScore`, `Score`, `Close`,
@@ -187,6 +198,11 @@ inspection or compilation.
 | 3 — Independent scheduler | Complete | Version-matched K3s API e2e, two-process Lease failover, probes/RBAC/install-uninstall, exporter-backed binding, unit/race/static/fuzz/scale gates passed on 2026-07-20 |
 | 4 — Space-aware orchestration | Complete | Versioned CRDs/admission, accepted-generation link/resource control, deterministic planner/local policy, restart-safe workload state, CPU-only fixtures and real K3s full-flow/race e2e passed on 2026-07-21 |
 | 5 — Production qualification | Executed; Not ready | CPU gates, 5,000-node scale, K3s lifecycle, admission/security review and vulnerability remediation completed on 2026-07-21; full-agent, upgrade, hardware, API and transport gates remain open |
+| 6 — Mission-to-Pod authorization hardening | Complete | Fail-closed authorization/security hardening and full gates passed on 2026-07-26 |
+| 7 — Planner correctness hardening | Complete | Capability allocation, checked arithmetic, structured domain identity and full gates passed on 2026-07-26 |
+| 8 — Controller idempotency/scalability hardening | Complete | Informer snapshots/indexes, bounded queues, retry/error semantics and full gates passed on 2026-07-26 |
+| 9 — Canonical API upgrade | Complete | v1beta1 storage/conversion/migration, hard constraints and full gates passed on 2026-07-27 |
+| 10 — Performance and runtime optimization | Complete | Actions run `30335789459`; production `19609892ada3e46ba0ec93f1b0d128e330263e2c`; full race/space-compute/pprof gates passed on 2026-07-28 |
 
 ## Latest Phase 3 work
 
