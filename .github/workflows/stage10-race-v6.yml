@@ -10,6 +10,10 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     steps:
+      - name: Publish pending
+        shell: bash
+        run: |
+          curl --fail --silent --show-error -X POST -H "Authorization: Bearer ${{ github.token }}" -H "Accept: application/vnd.github+json" "${{ github.api_url }}/repos/${{ github.repository }}/statuses/${{ github.sha }}" -d "{\"state\":\"pending\",\"context\":\"sandbox/stage10-race-v6-${{ github.run_id }}\",\"target_url\":\"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}"
       - uses: actions/checkout@v4
       - name: Apply reviewed candidate and fixes and capture source
         shell: bash
@@ -34,3 +38,7 @@ jobs:
           name: stage10-race-v6-evidence
           path: /tmp/stage10-v6
           retention-days: 7
+      - name: Publish success
+        shell: bash
+        run: |
+          curl --fail --silent --show-error -X POST -H "Authorization: Bearer ${{ github.token }}" -H "Accept: application/vnd.github+json" "${{ github.api_url }}/repos/${{ github.repository }}/statuses/${{ github.sha }}" -d "{\"state\":\"success\",\"context\":\"sandbox/stage10-race-v6-${{ github.run_id }}\",\"target_url\":\"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}"
