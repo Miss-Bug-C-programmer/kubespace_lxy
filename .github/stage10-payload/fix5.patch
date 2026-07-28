@@ -1,0 +1,20 @@
+--- a/pkg/scheduler/plugins/gpustability/collector.go
++++ b/pkg/scheduler/plugins/gpustability/collector.go
+@@ -469,6 +469,17 @@
+ 		observeRefreshSuppressed("backoff")
+ 		return false, fmt.Errorf("target refresh is in backoff until %s", next.UTC().Format(time.RFC3339Nano))
+ 	}
++	// A synchronous refresh that arrives just after the previous flight completed
++	// must not create a second exporter request for the same fresh generation.
++	// Keep this check inside the unified admission path and after backoff/circuit
++	// handling so failures remain authoritative. Store lookup only touches eviction
++	// recency; it never extends or otherwise changes snapshot freshness.
++	if waiter != nil && c.store.lookup(target, now).State == snapshotFresh {
++		c.mu.Unlock()
++		waiter <- nil
++		observeRefreshSuppressed("fresh_reuse")
++		return false, nil
++	}
+ 	flight := &collectionFlight{}
+ 	if waiter != nil {
+ 		flight.waiters = append(flight.waiters, waiter)
