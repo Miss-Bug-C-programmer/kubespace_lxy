@@ -21,6 +21,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          mkdir -p /tmp/stage10-v6
           cat .github/stage10-payload/payload-[0-9][0-9] > /tmp/stage10.patch.xz.b64
           echo 'ef369be65e80690ed7b116871ebb3638c3266f64bb31e2b1aa0f976e7d819f1a  /tmp/stage10.patch.xz.b64' | sha256sum -c -
           base64 -d /tmp/stage10.patch.xz.b64 | xz -dc > /tmp/stage10.patch
@@ -45,13 +46,50 @@ jobs:
           git apply --check --whitespace=error-all /tmp/fix4.patch
           git apply /tmp/fix4.patch
           git diff --check
+      - name: Source invariants and scheduler isolation
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -z "$(gofmt -l cmd/space-compute-mission-planner contrib/space-compute/pkg/kube contrib/space-compute/pkg/planner pkg/scheduler/plugins/gpustability)"
+          ! grep -n 'strings.NewReader(string(raw))' pkg/scheduler/plugins/gpustability/collector.go
+          ! grep -R -n 'scheduleDue' pkg/scheduler/plugins/gpustability
+          grep -n 'bytes.NewReader(raw)' pkg/scheduler/plugins/gpustability/collector.go
+          grep -n 'deadline-driven' pkg/scheduler/plugins/gpustability/collector.go
+          grep -n 'PlanningIndex' cmd/space-compute-mission-planner/main.go contrib/space-compute/pkg/kube/repository.go
+          grep -n 'materialCanonicalDigest' contrib/space-compute/pkg/planner/prepared_inputs.go
+          test -z "$(git diff --name-only HEAD -- pkg/executor/embed cmd/space-compute-scheduler docs/gpu-scheduler/manifests/space-compute-scheduler.yaml)"
+          test -z "$(git diff --name-only HEAD -- .github)"
       - name: Focused and race
         shell: bash
         run: |
           set -euo pipefail
-          go test ./pkg/scheduler/plugins/gpustability -run 'Phase10|CollectorBackoffAndCircuitState|CollectorScaleBoundsAndLifecycle|CycleSnapshotExpiryAppliesNextCycleOnly|ConcurrentTargetReloadAndSnapshotAccess|UnifiedSnapshotCarriesNodeResourceContext' -count=1
-          go test ./contrib/space-compute/pkg/planner ./contrib/space-compute/pkg/kube ./cmd/space-compute-mission-planner -run 'Phase10|ControllerRestartDuplicateIntentAndCrossDomainFence|StabilityOnlyChangeChangesDigestMaterialInputAndTriggersReplan' -count=1
-          go test -race ./pkg/scheduler/plugins/gpustability ./contrib/space-compute/pkg/planner ./contrib/space-compute/pkg/kube ./cmd/space-compute-mission-planner -count=1
+          go test ./pkg/scheduler/plugins/gpustability -run 'Phase10|CollectorBackoffAndCircuitState|CollectorScaleBoundsAndLifecycle|CycleSnapshotExpiryAppliesNextCycleOnly|ConcurrentTargetReloadAndSnapshotAccess|UnifiedSnapshotCarriesNodeResourceContext' -count=1 | tee /tmp/stage10-v6/focused-gpu.log
+          go test ./contrib/space-compute/pkg/planner ./contrib/space-compute/pkg/kube ./cmd/space-compute-mission-planner -run 'Phase10|ControllerRestartDuplicateIntentAndCrossDomainFence|StabilityOnlyChangeChangesDigestMaterialInputAndTriggersReplan' -count=1 | tee /tmp/stage10-v6/focused-controller.log
+          go test -race ./pkg/scheduler/plugins/gpustability ./contrib/space-compute/pkg/planner ./contrib/space-compute/pkg/kube ./cmd/space-compute-mission-planner -count=1 | tee /tmp/stage10-v6/race.log
+      - name: Complete repository gates
+        shell: bash
+        run: |
+          set -euo pipefail
+          scripts/space-compute all | tee /tmp/stage10-v6/space-compute-all.log
+          go test ./pkg/executor/embed -count=1 | tee /tmp/stage10-v6/embed.log
+          go mod verify | tee /tmp/stage10-v6/mod-verify.log
+          go mod tidy -diff | tee /tmp/stage10-v6/mod-tidy.log
+      - name: Post-change pprof and 5000-scale benchmarks
+        shell: bash
+        run: |
+          set -euo pipefail
+          go test -c -o /tmp/stage10-v6/gpustability.test ./pkg/scheduler/plugins/gpustability
+          /tmp/stage10-v6/gpustability.test -test.run '^$' -test.bench '^BenchmarkCollectorTargetDatasets/5000$' -test.benchtime=1x -test.benchmem -test.count=1 -test.memprofile=/tmp/stage10-v6/collector.mem -test.cpuprofile=/tmp/stage10-v6/collector.cpu | tee /tmp/stage10-v6/collector-bench.txt
+          go tool pprof -top -alloc_space -nodecount=40 /tmp/stage10-v6/gpustability.test /tmp/stage10-v6/collector.mem | tee /tmp/stage10-v6/collector-alloc-top.txt
+          go test -c -o /tmp/stage10-v6/planner.test ./contrib/space-compute/pkg/planner
+          /tmp/stage10-v6/planner.test -test.run '^$' -test.bench '^BenchmarkPreparedMissionPlanningDatasets/5000$' -test.benchtime=3x -test.benchmem -test.count=1 -test.memprofile=/tmp/stage10-v6/planner.mem | tee /tmp/stage10-v6/planner-bench.txt
+          go tool pprof -top -alloc_space -nodecount=40 /tmp/stage10-v6/planner.test /tmp/stage10-v6/planner.mem | tee /tmp/stage10-v6/planner-alloc-top.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: stage10-race-v6-evidence
+          path: /tmp/stage10-v6
+          retention-days: 7
       - name: Publish success
         if: success()
         shell: bash
