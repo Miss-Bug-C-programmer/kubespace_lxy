@@ -1,0 +1,125 @@
+name: stage10-performance-candidate-v2
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/stage10-gate-v2-trigger
+permissions:
+  contents: read
+  statuses: write
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish pending
+        shell: bash
+        run: |
+          curl --fail --silent --show-error -X POST -H "Authorization: Bearer ${{ github.token }}" -H "Accept: application/vnd.github+json" \
+            "${{ github.api_url }}/repos/${{ github.repository }}/statuses/${{ github.sha }}" \
+            -d "{\"state\":\"pending\",\"context\":\"sandbox/stage10-performance-v2-${{ github.run_id }}\",\"target_url\":\"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}"
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.12'
+          cache: true
+      - name: Reconstruct exact reviewed candidate plus focused fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/stage10-v2
+          cat > /tmp/stage10-payload.sha256 <<'EOF'
+          5bd79f9ca9b795303475146629cf320946972f7c38711b7796d12877793ee31a  .github/stage10-payload/payload-00
+          19c26769637b2b56d78d7546c6b3deb35c0efe4d84c713cf5ca8c95689eb97f3  .github/stage10-payload/payload-01
+          561e7540de60c4a191a3fcdfe3ad8a42b95c0b8dbd900868b6fe711a19cfd0a3  .github/stage10-payload/payload-02
+          0694a0db10ac6327fb2d4660e0db7e3693636d8ee2c1d430ea0c9287a377e817  .github/stage10-payload/payload-03
+          22bf926ae85fb85e6b872f99aeaa713f5bc9ab94f4b26c41adbc3c42b3597a57  .github/stage10-payload/payload-04
+          9b6e61b7a08e661af5c494461f73f637a771312080086243e8c4e03e656ea036  .github/stage10-payload/payload-05
+          59e5f9acd8fedf037747d2961c4920248d6bd843123bfd98bc0f9d98e7691ed6  .github/stage10-payload/payload-06
+          ea73da3f9e98f1beb0d954dfb7a6a3fb7a4cb1298f75cf546d8c1324af656892  .github/stage10-payload/payload-07
+          b0c38be44879c172524c9e334d3f758ceff2ef724ef812ccfe76381e7af7aecb  .github/stage10-payload/payload-08
+          a28a7e53ef87ee997fb3523808ae1562bbdd74915fbdceb41189d3f58da45a0b  .github/stage10-payload/payload-09
+          e2e2e172d630a03180dc541f4d5d25167ddc6fb56bce31ec0a5bf4c925434221  .github/stage10-payload/payload-10
+          d9b64ae4592089216f65d8a3a1b135d9fa12746ae3d66879b2f96576ef30f2fe  .github/stage10-payload/payload-11
+          f2e5865462b03fce02f07c1826a51c8e1fa879b04bf097bbd2cbf40f2fcbaf0a3  .github/stage10-payload/payload-12
+          ba34c2ebc72308b02c26351db0c4acb5e476a19dfbc003eea806cdcae05cb723  .github/stage10-payload/payload-13
+          EOF
+          sha256sum -c /tmp/stage10-payload.sha256
+          cat .github/stage10-payload/payload-[0-9][0-9] > /tmp/stage10.patch.xz.b64
+          echo 'ef369be65e80690ed7b116871ebb3638c3266f64bb31e2b1aa0f976e7d819f1a  /tmp/stage10.patch.xz.b64' | sha256sum -c -
+          base64 -d /tmp/stage10.patch.xz.b64 > /tmp/stage10.patch.xz
+          echo 'f0761626720ed050f1975faf01e26f8da2304c4470780a1d4e446496c932d12f  /tmp/stage10.patch.xz' | sha256sum -c -
+          xz -dc /tmp/stage10.patch.xz > /tmp/stage10.patch
+          echo '0e039fc2bbb25c020901ea5d1f6c079b3e117bf8c71fa1534838b52f2f66cf86  /tmp/stage10.patch' | sha256sum -c -
+          echo '6af9cd116950034598fbeac91dd4432b9f79f6298c21f1ee0149b7db1a69ed9a  .github/stage10-payload/fix1.patch' | sha256sum -c -
+          git apply --check --whitespace=error-all /tmp/stage10.patch
+          git apply /tmp/stage10.patch
+          git apply --check --whitespace=error-all .github/stage10-payload/fix1.patch
+          git apply .github/stage10-payload/fix1.patch
+          git diff --check
+          cp /tmp/stage10.patch /tmp/stage10-v2/reviewed-base.patch
+          cp .github/stage10-payload/fix1.patch /tmp/stage10-v2/fix1.patch
+      - name: Verify Phase 10 source invariants
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -z "$(gofmt -l cmd/space-compute-mission-planner contrib/space-compute/pkg/kube contrib/space-compute/pkg/planner pkg/scheduler/plugins/gpustability)"
+          ! grep -n 'strings.NewReader(string(raw))' pkg/scheduler/plugins/gpustability/collector.go
+          ! grep -R -n 'scheduleDue' pkg/scheduler/plugins/gpustability
+          grep -n 'bytes.NewReader(raw)' pkg/scheduler/plugins/gpustability/collector.go
+          grep -n 'deadline-driven' pkg/scheduler/plugins/gpustability/collector.go
+          grep -n 'PlanningIndex' cmd/space-compute-mission-planner/main.go contrib/space-compute/pkg/kube/repository.go
+          grep -n 'materialCanonicalDigest' contrib/space-compute/pkg/planner/prepared_inputs.go
+          git diff --name-only HEAD -- pkg/executor/embed cmd/space-compute-scheduler docs/gpu-scheduler/manifests/space-compute-scheduler.yaml | (! grep .)
+      - name: Focused Phase 10 tests with persisted diagnostics
+        shell: bash
+        run: |
+          set +e
+          go test ./pkg/scheduler/plugins/gpustability -run 'Phase10|CollectorBackoffAndCircuitState|ConcurrentTargetReloadAndSnapshotAccess|UnifiedSnapshotCarriesNodeResourceContext' -count=1 2>&1 | tee /tmp/stage10-v2/focused-gpustability.log
+          gpu=${PIPESTATUS[0]}
+          go test ./contrib/space-compute/pkg/planner ./contrib/space-compute/pkg/kube ./cmd/space-compute-mission-planner -run 'Phase10' -count=1 2>&1 | tee /tmp/stage10-v2/focused-controller.log
+          ctrl=${PIPESTATUS[0]}
+          printf 'gpustability=%d controller=%d\n' "$gpu" "$ctrl" > /tmp/stage10-v2/focused-status.txt
+          if [ "$gpu" -ne 0 ] || [ "$ctrl" -ne 0 ]; then exit 1; fi
+      - name: Race tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          go test -race ./pkg/scheduler/plugins/gpustability ./contrib/space-compute/pkg/planner ./contrib/space-compute/pkg/kube ./cmd/space-compute-mission-planner -count=1 | tee /tmp/stage10-v2/race.log
+      - name: Complete repository gates
+        shell: bash
+        run: |
+          set -euo pipefail
+          scripts/space-compute all | tee /tmp/stage10-v2/space-compute-all.log
+          go test ./pkg/executor/embed -count=1 | tee /tmp/stage10-v2/embed.log
+          go mod verify | tee /tmp/stage10-v2/mod-verify.log
+          go mod tidy -diff | tee /tmp/stage10-v2/mod-tidy.log
+      - name: Profile optimized 5000-target and 5000-domain paths
+        shell: bash
+        run: |
+          set -euo pipefail
+          go test -c -o /tmp/stage10-v2/gpustability.test ./pkg/scheduler/plugins/gpustability
+          /tmp/stage10-v2/gpustability.test -test.run '^$' -test.bench '^BenchmarkCollectorTargetDatasets/5000$' -test.benchtime=1x -test.benchmem -test.count=1 -test.memprofile=/tmp/stage10-v2/collector.mem -test.cpuprofile=/tmp/stage10-v2/collector.cpu | tee /tmp/stage10-v2/collector-bench.txt
+          go tool pprof -top -alloc_space -nodecount=40 /tmp/stage10-v2/gpustability.test /tmp/stage10-v2/collector.mem > /tmp/stage10-v2/collector-alloc-top.txt
+          go test -c -o /tmp/stage10-v2/planner.test ./contrib/space-compute/pkg/planner
+          /tmp/stage10-v2/planner.test -test.run '^$' -test.bench '^BenchmarkPreparedMissionPlanningDatasets/5000$' -test.benchtime=3x -test.benchmem -test.count=1 -test.memprofile=/tmp/stage10-v2/planner.mem | tee /tmp/stage10-v2/planner-bench.txt
+          go tool pprof -top -alloc_space -nodecount=40 /tmp/stage10-v2/planner.test /tmp/stage10-v2/planner.mem > /tmp/stage10-v2/planner-alloc-top.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: stage10-performance-candidate-v2
+          path: /tmp/stage10-v2
+          retention-days: 7
+      - name: Publish success
+        if: success()
+        shell: bash
+        run: |
+          curl --fail --silent --show-error -X POST -H "Authorization: Bearer ${{ github.token }}" -H "Accept: application/vnd.github+json" \
+            "${{ github.api_url }}/repos/${{ github.repository }}/statuses/${{ github.sha }}" \
+            -d "{\"state\":\"success\",\"context\":\"sandbox/stage10-performance-v2-${{ github.run_id }}\",\"target_url\":\"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}"
+      - name: Publish failure
+        if: failure()
+        shell: bash
+        run: |
+          curl --fail --silent --show-error -X POST -H "Authorization: Bearer ${{ github.token }}" -H "Accept: application/vnd.github+json" \
+            "${{ github.api_url }}/repos/${{ github.repository }}/statuses/${{ github.sha }}" \
+            -d "{\"state\":\"failure\",\"context\":\"sandbox/stage10-performance-v2-${{ github.run_id }}\",\"target_url\":\"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}"
