@@ -1,0 +1,62 @@
+diff --git a/contrib/space-compute/pkg/planner/controller.go b/contrib/space-compute/pkg/planner/controller.go
+index e269193..a8f886d 100644
+--- a/contrib/space-compute/pkg/planner/controller.go
++++ b/contrib/space-compute/pkg/planner/controller.go
+@@ -107,7 +107,8 @@ func (c *Controller) Reconcile(ctx context.Context, key MissionKey) (ReconcileRe
+ 	// durable placement authoritative until its guarded expiry. This O(1) fast
+ 	// path avoids rescanning every domain and rebuilding material digests for
+ 	// duplicate/retry reconciles.
+-	if existing != nil && mission.Status.ObservedGeneration == mission.Generation &&
++	if existing != nil && existing.Status.Phase == spacev1.PlacementPending && mission.Status.Phase == spacev1.MissionPlanned &&
++		mission.Status.ObservedGeneration == mission.Generation &&
+ 		existing.Spec.PlanningInputDigest != "" && existing.Spec.PlanningInputDigest == snapshot.InputDigest &&
+ 		mission.Status.LastDecisionDigest == existing.Spec.MaterialInputDigest && existing.Spec.ExpiresAt.After(c.clock().Now()) {
+ 		previousStatus := mission.Status
+diff --git a/pkg/scheduler/plugins/gpustability/collector.go b/pkg/scheduler/plugins/gpustability/collector.go
+index e311eed..ecce9e6 100644
+--- a/pkg/scheduler/plugins/gpustability/collector.go
++++ b/pkg/scheduler/plugins/gpustability/collector.go
+@@ -115,6 +115,10 @@ func (c *collector) notifySnapshotReady(nodeName string, generation uint64) {
+ }
+ 
+ func newCollector(ctx context.Context, cfg Config, client *http.Client) (*collector, error) {
++	// Direct collector users (including integration/scale paths) may start workers
++	// before the scheduler Plugin constructor runs. Initialize lazy metrics before
++	// any worker can observe them so registration and observation cannot race.
++	registerPluginMetrics()
+ 	registry, err := newProfileRegistry(cfg)
+ 	if err != nil {
+ 		return nil, fmt.Errorf("create metric profile registry: %w", err)
+diff --git a/pkg/scheduler/plugins/gpustability/phase5_cycle_snapshot_test.go b/pkg/scheduler/plugins/gpustability/phase5_cycle_snapshot_test.go
+index b9c187f..ac584d4 100644
+--- a/pkg/scheduler/plugins/gpustability/phase5_cycle_snapshot_test.go
++++ b/pkg/scheduler/plugins/gpustability/phase5_cycle_snapshot_test.go
+@@ -4,6 +4,7 @@ import (
+ 	"context"
+ 	"fmt"
+ 	"sync"
++	"sync/atomic"
+ 	"testing"
+ 	"time"
+ 
+@@ -65,8 +66,9 @@ func TestCycleSnapshotExpiryAppliesNextCycleOnly(t *testing.T) {
+ 	nodeInfo := nodeInfoWithEndpointAndGPUCapacity("http://gpu-node:32021/metrics", 1)
+ 	nodeInfo.Node().UID = types.UID("cycle-expiry-uid")
+ 
+-	now := time.Unix(1_800_000_000, 0)
+-	plugin.collector.now = func() time.Time { return now }
++	var nowUnixNano atomic.Int64
++	nowUnixNano.Store(time.Unix(1_800_000_000, 0).UnixNano())
++	plugin.collector.now = func() time.Time { return time.Unix(0, nowUnixNano.Load()) }
+ 	warmNode(t, plugin, nodeInfo)
+ 
+ 	state := cycleStateForPod(t, plugin, pod)
+@@ -78,7 +80,7 @@ func TestCycleSnapshotExpiryAppliesNextCycleOnly(t *testing.T) {
+ 		t.Fatalf("pinned state = %s, want fresh", pinned.Snapshot.State)
+ 	}
+ 
+-	now = pinned.Snapshot.ValidUntil.Add(time.Nanosecond)
++	nowUnixNano.Store(pinned.Snapshot.ValidUntil.Add(time.Nanosecond).UnixNano())
+ 	if current := plugin.collector.lookupSnapshotForNodeInfo(nodeInfo); current.State != snapshotStale {
+ 		t.Fatalf("collector state after expiry = %s, want stale", current.State)
+ 	}
