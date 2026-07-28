@@ -1,0 +1,43 @@
+--- a/pkg/scheduler/plugins/gpustability/collector.go
++++ b/pkg/scheduler/plugins/gpustability/collector.go
+@@ -469,17 +469,6 @@
+ 		observeRefreshSuppressed("backoff")
+ 		return false, fmt.Errorf("target refresh is in backoff until %s", next.UTC().Format(time.RFC3339Nano))
+ 	}
+-	// A synchronous refresh that arrives just after the previous flight completed
+-	// must not create a second exporter request for the same fresh generation.
+-	// Keep this check inside the unified admission path and after backoff/circuit
+-	// handling so failures remain authoritative. Store lookup only touches eviction
+-	// recency; it never extends or otherwise changes snapshot freshness.
+-	if waiter != nil && c.store.lookup(target, now).State == snapshotFresh {
+-		c.mu.Unlock()
+-		waiter <- nil
+-		observeRefreshSuppressed("fresh_reuse")
+-		return false, nil
+-	}
+ 	flight := &collectionFlight{}
+ 	if waiter != nil {
+ 		flight.waiters = append(flight.waiters, waiter)
+--- a/pkg/scheduler/plugins/gpustability/phase10_test.go
++++ b/pkg/scheduler/plugins/gpustability/phase10_test.go
+@@ -92,6 +92,20 @@
+ 		}()
+ 	}
+ 	<-started
++	// Do not release the exporter until every caller is actually attached to the
++	// same in-flight collection. Without this barrier, the scheduler may start a
++	// goroutine only after the first HTTP request has already completed, which is
++	// a sequential refresh rather than a singleflight participant.
++	waitFor(t, time.Second, func() bool {
++		collector.mu.RLock()
++		defer collector.mu.RUnlock()
++		target, exists := collector.targets[node.Name]
++		if !exists {
++			return false
++		}
++		flight := collector.pending[target.Key]
++		return flight != nil && len(flight.waiters) == callers
++	})
+ 	close(release)
+ 	wg.Wait()
+ 	close(errs)
