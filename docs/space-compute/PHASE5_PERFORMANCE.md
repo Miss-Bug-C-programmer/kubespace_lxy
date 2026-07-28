@@ -35,10 +35,39 @@ queue depth, retries exhausted, API writes, reconciliation errors, snapshot
 age, deadline slack, replan reason and link-risk class. Collector cache, target,
 queue, worker, response/sample/label and per-node device counts are bounded.
 
+## Phase 10 post-optimization evidence
+
+Phase 10 was re-profiled on GitHub Actions run `30335789459` using Go 1.25.12,
+Linux amd64 and an AMD EPYC 7763 runner after the complete repository gates had
+passed. The production commit is `19609892ada3e46ba0ec93f1b0d128e330263e2c`.
+The benchmark command used exactly one 5,000-target Collector iteration and
+three 5,000-domain prepared-planning iterations with `-benchmem`, plus CPU and
+allocation profiles.
+
+| Workload | Phase 10 result | Change from Phase 5 baseline |
+| --- | ---: | ---: |
+| Collector target lifecycle, 5,000 targets | 474.468 ms; 191.332 MB; 3,311,584 allocs | latency -48.2%; allocation bytes -18.2%; alloc count -3.6% |
+| Prepared mission planning, 5,000 domains | 55.754 ms; 28.527 MB; 366,584 allocs | remains below the 150 ms Phase 5 planning budget; prepared inputs are reused across unchanged informer generations |
+
+The Collector allocation profile sampled 206.48 MB total allocation space. Its
+largest flat contributors are `bufio.NewReaderSize`, the Prometheus text parser,
+metric-profile construction and HTTP/parser support. The former
+`strings.NewReader(string(raw))` response-copy path is absent; production now
+parses directly from `bytes.NewReader(raw)`. Scheduling due work is deadline
+driven rather than a periodic all-target scan, snapshot eviction is sharded and
+access-weighted without changing freshness, and explicit refreshes remain behind
+the common generation/singleflight/backoff queue path.
+
+Planner reconciliation now consumes an immutable informer-backed
+`PlanningIndex`, reuses prepared canonical inputs and their digest across
+unchanged generations, and suppresses no-op status writes. Phase 10 tests cover
+5,000-domain snapshot reuse and repeated planning without linear API list/write
+amplification.
+
 ## Evidence limitations
 
 This is not a multi-hour soak and does not measure API-server informer lag,
 physical network transfer, actual exporter response latency, leader recovery
-under load or a 10,000-node cluster. Collector 5,000-node temporary allocation
-is material and requires production sizing/soak. Consequently the scale code
-gate passes, but production capacity qualification remains incomplete.
+under load or a 10,000-node cluster. The Phase 10 profile materially reduces the
+5,000-target temporary allocation observed in Phase 5, but production capacity
+qualification still requires deployment-class soak and physical-hardware tests.
