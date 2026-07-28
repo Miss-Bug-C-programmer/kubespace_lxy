@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"time"
 
 	apiMeta "k8s.io/apimachinery/pkg/api/meta"
@@ -23,6 +24,7 @@ var ErrNotFound = errors.New("not found")
 type PlanningInputSnapshot struct {
 	ResourceSummaries []*spacev1.SpaceDomainResourceSummary
 	LinkSnapshots     []*spacev1.SpaceLinkSnapshot
+	Prepared          *PreparedPlanningInputs
 	CacheVersions     map[string]string
 	InputDigest       string
 }
@@ -97,6 +99,34 @@ func (c *Controller) Reconcile(ctx context.Context, key MissionKey) (ReconcileRe
 	}
 	summaries := snapshot.ResourceSummaries
 	links := snapshot.LinkSnapshots
+	existing, getErr := c.Repository.GetPlacement(ctx, key)
+	if getErr != nil && !errors.Is(getErr, ErrNotFound) {
+		return c.fail(observer, start, "placement_read", getErr)
+	}
+	// Unchanged informer generation + unchanged Mission generation makes the
+	// durable placement authoritative until its guarded expiry. This O(1) fast
+	// path avoids rescanning every domain and rebuilding material digests for
+	// duplicate/retry reconciles.
+	if existing != nil && existing.Status.Phase == spacev1.PlacementPending && mission.Status.Phase == spacev1.MissionPlanned &&
+		mission.Status.ObservedGeneration == mission.Generation &&
+		existing.Spec.PlanningInputDigest != "" && existing.Spec.PlanningInputDigest == snapshot.InputDigest &&
+		mission.Status.LastDecisionDigest == existing.Spec.MaterialInputDigest && existing.Spec.ExpiresAt.After(c.clock().Now()) {
+		previousStatus := mission.Status
+		previousStatus.Conditions = append([]metav1.Condition(nil), mission.Status.Conditions...)
+		mission.Status.Phase = missionPhaseForPlacement(existing.Status.Phase)
+		mission.Status.PlacementName = existing.Name
+		mission.Status.PlanID = existing.Spec.PlanID
+		mission.Status.LastDecisionDigest = existing.Spec.MaterialInputDigest
+		setMissionCondition(mission, c.clock(), metav1.ConditionTrue, "PlanCurrent", "existing placement intent matches the pinned planning input generation")
+		if !missionStatusEqual(previousStatus, mission.Status) {
+			if err := c.Repository.UpdateMissionStatus(ctx, mission); err != nil {
+				return c.fail(observer, start, "mission_status", err)
+			}
+		}
+		observer.DeadlineSlack(mission.Spec.Deadline.Time.Sub(existing.Spec.ComputeEnd.Time))
+		observer.PlanningFinished(c.clock().Now().Sub(start), "idempotent")
+		return ReconcileResult{RequeueAfter: untilExpiry(c.clock().Now(), existing.Spec.ExpiresAt.Time)}, nil
+	}
 	for _, summary := range summaries {
 		if summary != nil {
 			observer.SnapshotAge(c.clock().Now().Sub(summary.Spec.ObservedAt.Time))
@@ -107,7 +137,12 @@ func (c *Controller) Reconcile(ctx context.Context, key MissionKey) (ReconcileRe
 			observer.SnapshotAge(c.clock().Now().Sub(link.Spec.ObservedAt.Time))
 		}
 	}
-	decision, err := Plan(mission, summaries, links, c.clock())
+	var decision Decision
+	if snapshot.Prepared != nil {
+		decision, err = PlanPrepared(mission, snapshot.Prepared, c.clock())
+	} else {
+		decision, err = Plan(mission, summaries, links, c.clock())
+	}
 	if err != nil {
 		setMissionCondition(mission, c.clock(), metav1.ConditionFalse, "NoFeasiblePlan", boundedMessage(err.Error(), 512))
 		mission.Status.Phase = spacev1.MissionBlocked
@@ -120,10 +155,6 @@ func (c *Controller) Reconcile(ctx context.Context, key MissionKey) (ReconcileRe
 	}
 	decision.Placement.Spec.PlanningInputDigest = snapshot.InputDigest
 	decision.Placement.Spec.CacheResourceVersions = cloneStringMap(snapshot.CacheVersions)
-	existing, getErr := c.Repository.GetPlacement(ctx, key)
-	if getErr != nil && !errors.Is(getErr, ErrNotFound) {
-		return c.fail(observer, start, "placement_read", getErr)
-	}
 	expectedPlanID := ""
 	if existing != nil {
 		expectedPlanID = existing.Spec.PlanID
@@ -198,6 +229,10 @@ func (c *Controller) Reconcile(ctx context.Context, key MissionKey) (ReconcileRe
 	observer.LinkRisk(linkRiskClass(decision.Placement.Spec.Score.LinkRisk))
 	observer.PlanningFinished(c.clock().Now().Sub(start), "planned")
 	return ReconcileResult{RequeueAfter: untilExpiry(c.clock().Now(), decision.Placement.Spec.ExpiresAt.Time)}, nil
+}
+
+func missionStatusEqual(left, right spacev1.SpaceMissionStatus) bool {
+	return reflect.DeepEqual(left, right)
 }
 
 func cloneStringMap(in map[string]string) map[string]string {

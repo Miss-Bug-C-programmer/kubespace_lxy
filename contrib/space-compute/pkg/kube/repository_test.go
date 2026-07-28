@@ -189,3 +189,89 @@ func TestPhase9RepositoryUsesCanonicalBetaGVRs(t *testing.T) {
 		}
 	}
 }
+
+func TestPhase10PlanningIndexReusesImmutablePreparedSnapshotAt5000Domains(t *testing.T) {
+	index := NewPlanningIndex()
+	now := time.Date(2026, 7, 28, 0, 0, 0, 0, time.UTC)
+	for n := 0; n < 5000; n++ {
+		name := fmt.Sprintf("domain-%05d", n)
+		summary := &spacev1.SpaceDomainResourceSummary{
+			ObjectMeta: metav1.ObjectMeta{Name: name, ResourceVersion: fmt.Sprintf("%d", n+1)},
+			Spec: spacev1.SpaceDomainResourceSummarySpec{
+				Domain:     spacev1.DomainReference{Name: name, ClusterID: name + "-cluster", OrbitClass: spacev1.OrbitGround},
+				ObservedAt: metav1.NewTime(now), ValidUntil: metav1.NewTime(now.Add(time.Hour)),
+			},
+		}
+		if err := index.UpsertResource(summary); err != nil {
+			t.Fatal(err)
+		}
+	}
+	repository := &Repository{PlanningIndex: index, CacheResourceVersions: func() map[string]string {
+		return map[string]string{"resourceSummaries": "5000", "linkSnapshots": "0"}
+	}}
+	first, err := repository.PlanningSnapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := repository.PlanningSnapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first != second || first.Prepared != second.Prepared {
+		t.Fatal("unchanged informer generation rebuilt the immutable planning snapshot")
+	}
+	if len(first.ResourceSummaries) != 5000 || first.InputDigest == "" {
+		t.Fatalf("prepared snapshot resources=%d digest=%q", len(first.ResourceSummaries), first.InputDigest)
+	}
+	changed := first.ResourceSummaries[1234].DeepCopy()
+	changed.ResourceVersion = "5001"
+	changed.Spec.QueueDelaySeconds++
+	if err := index.UpsertResource(changed); err != nil {
+		t.Fatal(err)
+	}
+	third, err := repository.PlanningSnapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if third == first || third.Prepared == first.Prepared || third.InputDigest == first.InputDigest {
+		t.Fatal("changed informer object did not replace prepared snapshot/digest")
+	}
+}
+
+func TestPhase10MissionStatusNoopSkipsUpdateWrite(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := spacev1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	if err := spacev1beta1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	now := metav1.Now()
+	mission := &spacev1.SpaceMission{
+		TypeMeta:   metav1.TypeMeta{APIVersion: spacev1.CanonicalAPIVersion, Kind: "SpaceMission"},
+		ObjectMeta: metav1.ObjectMeta{Name: "noop", Namespace: "missions"},
+		Status:     spacev1.SpaceMissionStatus{ObservedGeneration: 3, Phase: spacev1.MissionPlanned, PlanID: "plan", Conditions: []metav1.Condition{{Type: "Planned", Status: metav1.ConditionTrue, Reason: "PlanCurrent", Message: "same", ObservedGeneration: 3, LastTransitionTime: now}}},
+	}
+	client := dynamicfake.NewSimpleDynamicClient(scheme)
+	object, err := toUnstructured(mission)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Resource(MissionGVR).Namespace(mission.Namespace).Create(context.Background(), object, metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	client.ClearActions()
+	repository := &Repository{Dynamic: client}
+	if err := repository.UpdateMissionStatus(context.Background(), mission.DeepCopy()); err != nil {
+		t.Fatal(err)
+	}
+	updates := 0
+	for _, action := range client.Actions() {
+		if action.GetVerb() == "update" {
+			updates++
+		}
+	}
+	if updates != 0 {
+		t.Fatalf("no-op status produced %d update writes", updates)
+	}
+}

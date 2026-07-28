@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -65,8 +66,9 @@ func TestCycleSnapshotExpiryAppliesNextCycleOnly(t *testing.T) {
 	nodeInfo := nodeInfoWithEndpointAndGPUCapacity("http://gpu-node:32021/metrics", 1)
 	nodeInfo.Node().UID = types.UID("cycle-expiry-uid")
 
-	now := time.Unix(1_800_000_000, 0)
-	plugin.collector.now = func() time.Time { return now }
+	var nowUnixNano atomic.Int64
+	nowUnixNano.Store(time.Unix(1_800_000_000, 0).UnixNano())
+	plugin.collector.setClock(func() time.Time { return time.Unix(0, nowUnixNano.Load()) })
 	warmNode(t, plugin, nodeInfo)
 
 	state := cycleStateForPod(t, plugin, pod)
@@ -78,7 +80,7 @@ func TestCycleSnapshotExpiryAppliesNextCycleOnly(t *testing.T) {
 		t.Fatalf("pinned state = %s, want fresh", pinned.Snapshot.State)
 	}
 
-	now = pinned.Snapshot.ValidUntil.Add(time.Nanosecond)
+	nowUnixNano.Store(pinned.Snapshot.ValidUntil.Add(time.Nanosecond).UnixNano())
 	if current := plugin.collector.lookupSnapshotForNodeInfo(nodeInfo); current.State != snapshotStale {
 		t.Fatalf("collector state after expiry = %s, want stale", current.State)
 	}
@@ -222,7 +224,7 @@ func TestRequestedResourcesRemainCycleLocal(t *testing.T) {
 	plugin.collector.mu.RLock()
 	target := plugin.collector.targets[nodeInfo.Node().Name]
 	plugin.collector.mu.RUnlock()
-	global := plugin.collector.store.lookup(target, plugin.collector.now())
+	global := plugin.collector.store.lookup(target, plugin.collector.clockNow())
 	if len(global.Resources.Requested) != 0 {
 		t.Fatalf("global snapshot persisted Requested=%v", global.Resources.Requested)
 	}
@@ -236,7 +238,7 @@ func TestRequestedResourcesRemainCycleLocal(t *testing.T) {
 	if got := pinned.NodeResource.Requested[resourceName]; got != 1 {
 		t.Fatalf("cycle-local Requested=%d, want 1", got)
 	}
-	global = plugin.collector.store.lookup(target, plugin.collector.now())
+	global = plugin.collector.store.lookup(target, plugin.collector.clockNow())
 	if len(global.Resources.Requested) != 0 {
 		t.Fatalf("Filter leaked Requested into global snapshot: %v", global.Resources.Requested)
 	}

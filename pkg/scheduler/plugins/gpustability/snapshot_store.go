@@ -1,7 +1,7 @@
 package gpustability
 
 import (
-	"sort"
+	"container/list"
 	"sync"
 	"time"
 
@@ -51,75 +51,178 @@ type unifiedSnapshot struct {
 	LastAccess       time.Time
 }
 
+type snapshotEntry struct {
+	name   string
+	record unifiedSnapshot
+}
+
+type snapshotShard struct {
+	mu      sync.Mutex
+	records map[string]*list.Element
+	lru     list.List
+}
+
+// snapshotStore is a bounded sharded LRU. Reads update only eviction weight;
+// observation and validity timestamps are immutable on lookup, so cache access
+// can never make telemetry fresher than the exporter observation.
 type snapshotStore struct {
-	mu         sync.RWMutex
 	maxEntries int
-	records    map[string]unifiedSnapshot
+	shards     []snapshotShard
+
+	evictionMu sync.Mutex
+	size       int
 }
 
 func newSnapshotStore(maxEntries int) *snapshotStore {
-	return &snapshotStore{maxEntries: maxEntries, records: make(map[string]unifiedSnapshot)}
+	if maxEntries < 1 {
+		maxEntries = 1
+	}
+	shardCount := 1
+	if maxEntries >= 64 {
+		shardCount = 16
+		if maxEntries < shardCount {
+			shardCount = maxEntries
+		}
+	}
+	s := &snapshotStore{maxEntries: maxEntries, shards: make([]snapshotShard, shardCount)}
+	for i := range s.shards {
+		s.shards[i] = snapshotShard{records: make(map[string]*list.Element)}
+	}
+	return s
+}
+
+func (s *snapshotStore) shardFor(name string) *snapshotShard {
+	if len(s.shards) == 1 {
+		return &s.shards[0]
+	}
+	// Inline FNV-1a avoids allocating a hash.Hash object on the scheduler read path.
+	var hash uint32 = 2166136261
+	for index := 0; index < len(name); index++ {
+		hash ^= uint32(name[index])
+		hash *= 16777619
+	}
+	return &s.shards[int(hash%uint32(len(s.shards)))]
 }
 
 func (s *snapshotStore) transition(target scrapeTarget, resources nodeResourceContext, now time.Time) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	record, exists := s.records[target.NodeName]
-	if exists && record.Identity == target.Identity && record.TargetGeneration == target.Generation && record.TargetKey == target.Key {
-		record.Allocatable = cloneResourceMap(resources.Allocatable)
-		record.LastAccess = now
-		s.records[target.NodeName] = record
+	shard := s.shardFor(target.NodeName)
+	shard.mu.Lock()
+	if element := shard.records[target.NodeName]; element != nil {
+		entry := element.Value.(*snapshotEntry)
+		if entry.record.Identity == target.Identity && entry.record.TargetGeneration == target.Generation && entry.record.TargetKey == target.Key {
+			entry.record.Allocatable = cloneResourceMap(resources.Allocatable)
+			entry.record.LastAccess = now
+			shard.lru.MoveToFront(element)
+			shard.mu.Unlock()
+			return
+		}
+		entry.record = unifiedSnapshot{
+			Identity: target.Identity, TargetKey: target.Key, TargetGeneration: target.Generation,
+			Profile: target.Profile, Endpoint: target.Endpoint, Allocatable: cloneResourceMap(resources.Allocatable),
+			Confidence: confidenceMissing, LastAccess: now,
+		}
+		shard.lru.MoveToFront(element)
+		shard.mu.Unlock()
 		return
 	}
-	s.records[target.NodeName] = unifiedSnapshot{
+	shard.mu.Unlock()
+
+	// Inserts/deletes serialize only at the eviction boundary. Ordinary lookups and
+	// updates remain shard-local. When globally full, inspect only the tail of each
+	// fixed shard (never every entry) and evict the oldest tail before inserting.
+	s.evictionMu.Lock()
+	defer s.evictionMu.Unlock()
+	shard.mu.Lock()
+	if element := shard.records[target.NodeName]; element != nil {
+		entry := element.Value.(*snapshotEntry)
+		entry.record = unifiedSnapshot{
+			Identity: target.Identity, TargetKey: target.Key, TargetGeneration: target.Generation,
+			Profile: target.Profile, Endpoint: target.Endpoint, Allocatable: cloneResourceMap(resources.Allocatable),
+			Confidence: confidenceMissing, LastAccess: now,
+		}
+		shard.lru.MoveToFront(element)
+		shard.mu.Unlock()
+		return
+	}
+	shard.mu.Unlock()
+	if s.size >= s.maxEntries {
+		s.evictOldestLocked()
+	}
+	shard.mu.Lock()
+	entry := &snapshotEntry{name: target.NodeName, record: unifiedSnapshot{
 		Identity: target.Identity, TargetKey: target.Key, TargetGeneration: target.Generation,
 		Profile: target.Profile, Endpoint: target.Endpoint, Allocatable: cloneResourceMap(resources.Allocatable),
 		Confidence: confidenceMissing, LastAccess: now,
-	}
-	s.pruneLocked()
+	}}
+	shard.records[target.NodeName] = shard.lru.PushFront(entry)
+	shard.mu.Unlock()
+	s.size++
 }
 
 func (s *snapshotStore) publish(target scrapeTarget, metrics nodeMetrics, observedAt, validUntil time.Time) bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	record, exists := s.records[target.NodeName]
-	if !exists || record.Identity != target.Identity || record.TargetGeneration != target.Generation || record.TargetKey != target.Key {
+	shard := s.shardFor(target.NodeName)
+	shard.mu.Lock()
+	defer shard.mu.Unlock()
+	element := shard.records[target.NodeName]
+	if element == nil {
 		return false
 	}
-	record.Metrics = cloneNodeMetrics(metrics)
-	record.Profile = metrics.Profile
-	record.ObservedAt = observedAt
-	record.ValidUntil = validUntil
-	record.CollectionError = ""
-	record.Confidence = confidenceValidated
-	record.LastAccess = observedAt
-	s.records[target.NodeName] = record
+	entry := element.Value.(*snapshotEntry)
+	if entry.record.Identity != target.Identity || entry.record.TargetGeneration != target.Generation || entry.record.TargetKey != target.Key {
+		return false
+	}
+	// collectTarget transfers ownership of metrics to the store and never mutates
+	// it after publication. Scheduler reads clone it into cycle-local state.
+	entry.record.Metrics = metrics
+	entry.record.Profile = metrics.Profile
+	entry.record.ObservedAt = observedAt
+	entry.record.ValidUntil = validUntil
+	entry.record.CollectionError = ""
+	entry.record.Confidence = confidenceValidated
+	entry.record.LastAccess = observedAt
+	shard.lru.MoveToFront(element)
 	return true
 }
 
 func (s *snapshotStore) recordFailure(target scrapeTarget, message string, now time.Time) bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	record, exists := s.records[target.NodeName]
-	if !exists || record.Identity != target.Identity || record.TargetGeneration != target.Generation || record.TargetKey != target.Key {
+	shard := s.shardFor(target.NodeName)
+	shard.mu.Lock()
+	defer shard.mu.Unlock()
+	element := shard.records[target.NodeName]
+	if element == nil {
 		return false
 	}
-	record.CollectionError = message
-	if record.ObservedAt.IsZero() {
-		record.Confidence = confidenceFailed
+	entry := element.Value.(*snapshotEntry)
+	if entry.record.Identity != target.Identity || entry.record.TargetGeneration != target.Generation || entry.record.TargetKey != target.Key {
+		return false
 	}
-	record.LastAccess = now
-	s.records[target.NodeName] = record
+	entry.record.CollectionError = message
+	if entry.record.ObservedAt.IsZero() {
+		entry.record.Confidence = confidenceFailed
+	}
+	entry.record.LastAccess = now
+	shard.lru.MoveToFront(element)
 	return true
 }
 
 func (s *snapshotStore) lookup(target scrapeTarget, now time.Time) snapshotResult {
-	s.mu.RLock()
-	record, exists := s.records[target.NodeName]
-	s.mu.RUnlock()
-	if !exists || record.Identity != target.Identity || record.TargetGeneration != target.Generation || record.TargetKey != target.Key {
+	shard := s.shardFor(target.NodeName)
+	shard.mu.Lock()
+	element := shard.records[target.NodeName]
+	if element == nil {
+		shard.mu.Unlock()
 		return snapshotResult{State: snapshotMissing, Confidence: confidenceMissing, Reason: "telemetry snapshot is not available"}
 	}
+	entry := element.Value.(*snapshotEntry)
+	if entry.record.Identity != target.Identity || entry.record.TargetGeneration != target.Generation || entry.record.TargetKey != target.Key {
+		shard.mu.Unlock()
+		return snapshotResult{State: snapshotMissing, Confidence: confidenceMissing, Reason: "telemetry snapshot is not available"}
+	}
+	entry.record.LastAccess = now
+	shard.lru.MoveToFront(element)
+	record := entry.record
+	shard.mu.Unlock()
+
 	result := snapshotResult{
 		Metrics: cloneNodeMetrics(record.Metrics), Resources: nodeResourceContext{Allocatable: cloneResourceMap(record.Allocatable)},
 		ObservedAt: record.ObservedAt, ValidUntil: record.ValidUntil, Profile: record.Profile,
@@ -157,70 +260,119 @@ func (s *snapshotStore) lookup(target scrapeTarget, now time.Time) snapshotResul
 }
 
 func (s *snapshotStore) updateResources(target scrapeTarget, resources nodeResourceContext) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	record, exists := s.records[target.NodeName]
-	if !exists || record.Identity != target.Identity || record.TargetGeneration != target.Generation || record.TargetKey != target.Key {
+	shard := s.shardFor(target.NodeName)
+	shard.mu.Lock()
+	defer shard.mu.Unlock()
+	element := shard.records[target.NodeName]
+	if element == nil {
 		return
 	}
-	record.Allocatable = cloneResourceMap(resources.Allocatable)
-	s.records[target.NodeName] = record
+	entry := element.Value.(*snapshotEntry)
+	if entry.record.Identity != target.Identity || entry.record.TargetGeneration != target.Generation || entry.record.TargetKey != target.Key {
+		return
+	}
+	entry.record.Allocatable = cloneResourceMap(resources.Allocatable)
+	shard.lru.MoveToFront(element)
 }
 
 func (s *snapshotStore) delete(identity nodeIdentity) bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	record, exists := s.records[identity.Name]
-	if !exists || (identity.UID != "" && record.Identity.UID != identity.UID) {
+	s.evictionMu.Lock()
+	defer s.evictionMu.Unlock()
+	shard := s.shardFor(identity.Name)
+	shard.mu.Lock()
+	defer shard.mu.Unlock()
+	element := shard.records[identity.Name]
+	if element == nil {
 		return false
 	}
-	delete(s.records, identity.Name)
+	entry := element.Value.(*snapshotEntry)
+	if identity.UID != "" && entry.record.Identity.UID != identity.UID {
+		return false
+	}
+	delete(shard.records, identity.Name)
+	shard.lru.Remove(element)
+	s.size--
 	return true
 }
 
 func (s *snapshotStore) remove(nodeName string) {
-	s.mu.Lock()
-	delete(s.records, nodeName)
-	s.mu.Unlock()
+	s.evictionMu.Lock()
+	defer s.evictionMu.Unlock()
+	shard := s.shardFor(nodeName)
+	shard.mu.Lock()
+	if element := shard.records[nodeName]; element != nil {
+		delete(shard.records, nodeName)
+		shard.lru.Remove(element)
+		s.size--
+	}
+	shard.mu.Unlock()
 }
 
 func (s *snapshotStore) len() int {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return len(s.records)
+	s.evictionMu.Lock()
+	defer s.evictionMu.Unlock()
+	return s.size
+}
+
+func (s *snapshotStore) contains(nodeName string) bool {
+	shard := s.shardFor(nodeName)
+	shard.mu.Lock()
+	_, exists := shard.records[nodeName]
+	shard.mu.Unlock()
+	return exists
+}
+
+func (s *snapshotStore) rangeRecords(fn func(string, unifiedSnapshot)) {
+	for i := range s.shards {
+		shard := &s.shards[i]
+		shard.mu.Lock()
+		for name, element := range shard.records {
+			fn(name, element.Value.(*snapshotEntry).record)
+		}
+		shard.mu.Unlock()
+	}
 }
 
 func (s *snapshotStore) clear() {
-	s.mu.Lock()
-	s.records = make(map[string]unifiedSnapshot)
-	s.mu.Unlock()
+	s.evictionMu.Lock()
+	defer s.evictionMu.Unlock()
+	for i := range s.shards {
+		shard := &s.shards[i]
+		shard.mu.Lock()
+		shard.records = make(map[string]*list.Element)
+		shard.lru.Init()
+		shard.mu.Unlock()
+	}
+	s.size = 0
 }
 
-func (s *snapshotStore) pruneLocked() {
-	remove := len(s.records) - s.maxEntries
-	if remove <= 0 {
-		return
+// evictOldestLocked chooses the globally oldest LRU tail while examining at
+// most one entry per shard. evictionMu must be held by the caller.
+func (s *snapshotStore) evictOldestLocked() {
+	for i := range s.shards {
+		s.shards[i].mu.Lock()
 	}
-	type candidate struct {
-		name string
-		time time.Time
-	}
-	candidates := make([]candidate, 0, len(s.records))
-	for name, record := range s.records {
-		when := record.LastAccess
-		if when.IsZero() {
-			when = record.ObservedAt
+	oldestShard := -1
+	var oldest *list.Element
+	for i := range s.shards {
+		element := s.shards[i].lru.Back()
+		if element == nil {
+			continue
 		}
-		candidates = append(candidates, candidate{name: name, time: when})
-	}
-	sort.Slice(candidates, func(i, j int) bool {
-		if candidates[i].time.Equal(candidates[j].time) {
-			return candidates[i].name < candidates[j].name
+		if oldest == nil || element.Value.(*snapshotEntry).record.LastAccess.Before(oldest.Value.(*snapshotEntry).record.LastAccess) {
+			oldest = element
+			oldestShard = i
 		}
-		return candidates[i].time.Before(candidates[j].time)
-	})
-	for _, candidate := range candidates[:remove] {
-		delete(s.records, candidate.name)
+	}
+	if oldestShard >= 0 {
+		shard := &s.shards[oldestShard]
+		entry := oldest.Value.(*snapshotEntry)
+		delete(shard.records, entry.name)
+		shard.lru.Remove(oldest)
+		s.size--
+	}
+	for i := len(s.shards) - 1; i >= 0; i-- {
+		s.shards[i].mu.Unlock()
 	}
 }
 
@@ -258,9 +410,9 @@ func cloneDeviceMetricsSlice(in []deviceMetrics) []deviceMetrics {
 		return nil
 	}
 	out := make([]deviceMetrics, len(in))
-	for i, device := range in {
-		out[i] = device
-		out[i].Fields = cloneDeviceFieldSet(device.Fields)
+	for i := range in {
+		out[i] = in[i]
+		out[i].Fields = cloneDeviceFieldSet(in[i].Fields)
 	}
 	return out
 }

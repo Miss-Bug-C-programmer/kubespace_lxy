@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"sort"
 
 	corev1 "k8s.io/api/core/v1"
@@ -46,6 +47,7 @@ type Repository struct {
 	PlacementIndexer      cache.Indexer
 	ResourceSummaryStore  cache.Store
 	LinkSnapshotStore     cache.Store
+	PlanningIndex         *PlanningIndex
 	CacheResourceVersions func() map[string]string
 }
 
@@ -79,6 +81,21 @@ func (r *Repository) GetMission(ctx context.Context, key planner.MissionKey) (*s
 }
 
 func (r *Repository) PlanningSnapshot(ctx context.Context) (*planner.PlanningInputSnapshot, error) {
+	if r.PlanningIndex != nil {
+		before := r.cacheVersions()
+		snapshot, err := r.PlanningIndex.Snapshot(before)
+		if err != nil {
+			return nil, err
+		}
+		after := r.cacheVersions()
+		if !sameStringMap(before, after) {
+			return nil, fmt.Errorf("planning informer inputs changed while snapshot was being pinned")
+		}
+		if !sameStringMap(snapshot.CacheVersions, after) {
+			return r.PlanningIndex.Snapshot(after)
+		}
+		return snapshot, nil
+	}
 	if r.ResourceSummaryStore != nil && r.LinkSnapshotStore != nil {
 		before := r.cacheVersions()
 		summaries, err := resourceSummariesFromCache(r.ResourceSummaryStore.List())
@@ -375,6 +392,9 @@ func (r *Repository) UpdatePlacementStatus(ctx context.Context, desired *spacev1
 			return err
 		}
 		merged := mergePlacementStatus(current.Status, desired.Status)
+		if reflect.DeepEqual(current.Status, merged) {
+			return nil
+		}
 		status, err := runtime.DefaultUnstructuredConverter.ToUnstructured(&merged)
 		if err != nil {
 			return err
@@ -397,6 +417,9 @@ func (r *Repository) UpdateMissionStatus(ctx context.Context, desired *spacev1.S
 			return err
 		}
 		merged := mergeMissionStatus(current.Status, desired.Status)
+		if reflect.DeepEqual(current.Status, merged) {
+			return nil
+		}
 		status, err := runtime.DefaultUnstructuredConverter.ToUnstructured(&merged)
 		if err != nil {
 			return err

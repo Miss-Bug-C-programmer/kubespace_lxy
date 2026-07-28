@@ -479,14 +479,14 @@ func metricFieldSpecFromConfig(profileName string, field deviceMetricField, cfg 
 	return spec, nil
 }
 
-func defaultIdentityLabels() []string {
-	return []string{"uuid", "gpu_uuid", "npu_uuid", "accelerator_uuid", "serial", "UUID", "gpu", "npu", "accelerator", "device", "chip", "minor_number", "index", "id", "gpu_id", "npu_id", "accelerator_id", "chip_id", "card"}
-}
+var (
+	defaultIdentityLabelsShared = []string{"uuid", "gpu_uuid", "npu_uuid", "accelerator_uuid", "serial", "UUID", "gpu", "npu", "accelerator", "device", "chip", "minor_number", "index", "id", "gpu_id", "npu_id", "accelerator_id", "chip_id", "card"}
+	defaultNameLabelsShared     = []string{"name", "model", "gpu_name", "npu_name", "accelerator_name", "chip_name", "card"}
+	defaultHealthMappingShared  = healthMapping{HealthyValues: map[float64]struct{}{1: {}}, UnhealthyValues: map[float64]struct{}{0: {}}}
+)
 
-func defaultNameLabels() []string {
-	return []string{"name", "model", "gpu_name", "npu_name", "accelerator_name", "chip_name", "card"}
-}
-
+func defaultIdentityLabels() []string { return append([]string(nil), defaultIdentityLabelsShared...) }
+func defaultNameLabels() []string     { return append([]string(nil), defaultNameLabelsShared...) }
 func defaultHealthMapping() healthMapping {
 	return healthMapping{HealthyValues: map[float64]struct{}{1: {}}, UnhealthyValues: map[float64]struct{}{0: {}}}
 }
@@ -638,23 +638,79 @@ func (p metricProfile) matches(store *metricStore) bool {
 	return false
 }
 
+type fieldAccumulator struct {
+	count       int
+	sum         float64
+	value       float64
+	positiveMin float64
+	hasValue    bool
+	hasPositive bool
+}
+
+func (a *fieldAccumulator) add(value float64, rollup fieldRollup) {
+	a.count++
+	a.sum += value
+	if !a.hasValue {
+		a.value = value
+		a.hasValue = true
+	} else {
+		switch rollup {
+		case rollupMax:
+			if value > a.value {
+				a.value = value
+			}
+		case rollupMin:
+			if value < a.value {
+				a.value = value
+			}
+		}
+	}
+	if value > 0 && (!a.hasPositive || value < a.positiveMin) {
+		a.positiveMin = value
+		a.hasPositive = true
+	}
+}
+
+func (a *fieldAccumulator) result(rollup fieldRollup) float64 {
+	if a == nil || a.count == 0 {
+		return 0
+	}
+	switch rollup {
+	case rollupMax, rollupMin:
+		return a.value
+	case rollupMinPositive:
+		if a.hasPositive {
+			return a.positiveMin
+		}
+		return 0
+	case rollupSum:
+		return a.sum
+	default:
+		return a.sum / float64(a.count)
+	}
+}
+
+type deviceBuildAccumulator struct {
+	device      deviceMetrics
+	fields      map[deviceMetricField]*fieldAccumulator
+	labelValues map[string]string
+	name        string
+}
+
 func (p metricProfile) build(store *metricStore) (nodeMetrics, error) {
-	deviceValues := map[string]map[deviceMetricField][]float64{}
-	deviceInfo := map[string]deviceMetrics{}
-	deviceAliases := map[string]string{}
-	deviceLabelValues := map[string]map[string]string{}
-	deviceNames := map[string]string{}
+	devices := make(map[string]*deviceBuildAccumulator)
+	deviceAliases := make(map[string]string)
 	identityLabels := p.IdentityLabels
 	if len(identityLabels) == 0 {
-		identityLabels = defaultIdentityLabels()
+		identityLabels = defaultIdentityLabelsShared
 	}
 	nameLabels := p.NameLabels
 	if len(nameLabels) == 0 {
-		nameLabels = defaultNameLabels()
+		nameLabels = defaultNameLabelsShared
 	}
 	health := p.Health
 	if len(health.HealthyValues) == 0 || len(health.UnhealthyValues) == 0 {
-		health = defaultHealthMapping()
+		health = defaultHealthMappingShared
 	}
 
 	fields := make([]deviceMetricField, 0, len(p.Fields))
@@ -671,20 +727,24 @@ func (p metricProfile) build(store *metricStore) (nodeMetrics, error) {
 				if strings.HasSuffix(key, ":") {
 					key += "unlabeled"
 				}
-				if _, ok := deviceValues[key]; !ok {
-					if store.maxDevices > 0 && len(deviceValues) >= store.maxDevices {
+				acc := devices[key]
+				if acc == nil {
+					if store.maxDevices > 0 && len(devices) >= store.maxDevices {
 						return nodeMetrics{}, fmt.Errorf("normalized device count exceeds limit %d", store.maxDevices)
 					}
-					deviceValues[key] = map[deviceMetricField][]float64{}
-					deviceLabelValues[key] = map[string]string{}
-					deviceInfo[key] = deviceMetrics{
-						ID:      key,
-						Class:   class,
-						Name:    firstLabel(sample.Labels, nameLabels...),
-						UUID:    firstLabel(sample.Labels, "uuid", "gpu_uuid", "npu_uuid", "accelerator_uuid", "serial", "UUID"),
-						Fields:  map[deviceMetricField]struct{}{},
-						Healthy: true,
+					acc = &deviceBuildAccumulator{
+						device: deviceMetrics{
+							ID:      key,
+							Class:   class,
+							Name:    firstLabel(sample.Labels, nameLabels...),
+							UUID:    firstLabel(sample.Labels, "uuid", "gpu_uuid", "npu_uuid", "accelerator_uuid", "serial", "UUID"),
+							Fields:  map[deviceMetricField]struct{}{},
+							Healthy: true,
+						},
+						fields:      make(map[deviceMetricField]*fieldAccumulator, len(p.Fields)),
+						labelValues: make(map[string]string, len(identityLabels)),
 					}
+					devices[key] = acc
 				}
 				for _, label := range identityLabels {
 					value := strings.TrimSpace(sample.Labels[label])
@@ -696,35 +756,40 @@ func (p metricProfile) build(store *metricStore) (nodeMetrics, error) {
 						return nodeMetrics{}, fmt.Errorf("identity alias %q maps to both %q and %q", alias, owner, key)
 					}
 					deviceAliases[alias] = key
-					if previous := deviceLabelValues[key][label]; previous != "" && previous != value {
+					if previous := acc.labelValues[label]; previous != "" && previous != value {
 						return nodeMetrics{}, fmt.Errorf("device %q identity label %q changed from %q to %q within one scrape", key, label, previous, value)
 					}
-					deviceLabelValues[key][label] = value
+					acc.labelValues[label] = value
 				}
 				name := firstLabel(sample.Labels, nameLabels...)
-				if previous := deviceNames[key]; previous != "" && name != "" && previous != name {
+				if previous := acc.name; previous != "" && name != "" && previous != name {
 					return nodeMetrics{}, fmt.Errorf("device %q model/name changed from %q to %q within one scrape", key, previous, name)
 				}
 				if name != "" {
-					deviceNames[key] = name
+					acc.name = name
 				}
-				if p.SingleSamplePerDeviceField && len(deviceValues[key][field]) != 0 {
+				fieldAcc := acc.fields[field]
+				if fieldAcc == nil {
+					fieldAcc = &fieldAccumulator{}
+					acc.fields[field] = fieldAcc
+				}
+				if p.SingleSamplePerDeviceField && fieldAcc.count != 0 {
 					return nodeMetrics{}, fmt.Errorf("device %q field %q has duplicate samples", key, field)
 				}
-				deviceValues[key][field] = append(deviceValues[key][field], normalizeMetricValue(sample.Value, spec.Unit))
+				fieldAcc.add(normalizeMetricValue(sample.Value, spec.Unit), spec.Rollup)
 			}
 		}
 	}
 
-	metrics := nodeMetrics{
-		Profile: p.Name,
-		Fields:  map[deviceMetricField]struct{}{},
-	}
-	for key, values := range deviceValues {
-		device := deviceInfo[key]
-		for field, fieldValues := range values {
+	metrics := nodeMetrics{Profile: p.Name, Fields: map[deviceMetricField]struct{}{}}
+	for key, acc := range devices {
+		device := acc.device
+		if acc.name != "" {
+			device.Name = acc.name
+		}
+		for field, values := range acc.fields {
 			spec := p.Fields[field]
-			value := rollupValues(fieldValues, spec.Rollup)
+			value := values.result(spec.Rollup)
 			if spec.Min != nil && value < *spec.Min {
 				return nodeMetrics{}, fmt.Errorf("device %q field %q is below configured minimum", key, field)
 			}

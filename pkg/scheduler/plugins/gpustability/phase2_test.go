@@ -628,14 +628,12 @@ func phase2ScaleNodes(t phase2TB, serverURL string, count int) []*v1.Node {
 }
 
 func phase2ValidSnapshotCount(collector *collector) int {
-	collector.store.mu.RLock()
-	defer collector.store.mu.RUnlock()
 	count := 0
-	for _, snapshot := range collector.store.records {
+	collector.store.rangeRecords(func(_ string, snapshot unifiedSnapshot) {
 		if !snapshot.ObservedAt.IsZero() && snapshot.CollectionError == "" {
 			count++
 		}
-	}
+	})
 	return count
 }
 

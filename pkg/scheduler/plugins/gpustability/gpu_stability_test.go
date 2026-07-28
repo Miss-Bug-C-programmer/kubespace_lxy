@@ -527,7 +527,7 @@ func TestCacheMaxEntriesPrunesOldestMetrics(t *testing.T) {
 	plugin := newTestPlugin(t, iluvatarMetrics)
 	plugin.config.CacheMaxEntries = 2
 	plugin.collector.config.CacheMaxEntries = 2
-	plugin.collector.store.maxEntries = 2
+	plugin.collector.store = newSnapshotStore(2)
 	now := time.Now()
 	plugin.collector.mu.Lock()
 	for i, name := range []string{"oldest", "middle", "newest"} {
@@ -554,12 +554,10 @@ func TestCacheMaxEntriesPrunesOldestMetrics(t *testing.T) {
 		t.Fatalf("newest cache entry was pruned")
 	}
 	plugin.collector.mu.RUnlock()
-	plugin.collector.store.mu.RLock()
-	defer plugin.collector.store.mu.RUnlock()
-	if len(plugin.collector.store.records) != 2 {
-		t.Fatalf("snapshot entries = %d, want 2", len(plugin.collector.store.records))
+	if plugin.collector.store.len() != 2 {
+		t.Fatalf("snapshot entries = %d, want 2", plugin.collector.store.len())
 	}
-	if _, ok := plugin.collector.store.records["oldest"]; ok {
+	if plugin.collector.store.contains("oldest") {
 		t.Fatalf("oldest snapshot entry was not pruned")
 	}
 }

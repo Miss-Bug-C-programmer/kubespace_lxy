@@ -1,6 +1,7 @@
 package gpustability
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
@@ -53,6 +54,10 @@ type failureState struct {
 	OpenUntil time.Time
 }
 
+type collectionFlight struct {
+	waiters []chan error
+}
+
 type snapshotResult struct {
 	State            snapshotState
 	Metrics          nodeMetrics
@@ -68,7 +73,9 @@ type snapshotResult struct {
 type collector struct {
 	config Config
 	client *http.Client
-	now    func() time.Time
+
+	nowMu sync.RWMutex
+	now   func() time.Time
 
 	ctx       context.Context
 	cancel    context.CancelFunc
@@ -81,12 +88,34 @@ type collector struct {
 	mu             sync.RWMutex
 	targets        map[string]scrapeTarget
 	nodes          map[string]*v1.Node
-	pending        map[string]struct{}
+	pending        map[string]*collectionFlight
 	failures       map[string]failureState
 	active         map[string]context.CancelFunc
+	endpointOwners map[string]string
+	deadlines      refreshDeadlineHeap
+	deadlineByNode map[string]*refreshDeadline
+	deadlineWake   chan struct{}
+	responsePool   sync.Pool
 	nextGeneration uint64
 	listenerMu     sync.RWMutex
 	snapshotReady  func(string, uint64)
+}
+
+func (c *collector) clockNow() time.Time {
+	c.nowMu.RLock()
+	now := c.now
+	c.nowMu.RUnlock()
+	return now()
+}
+
+func (c *collector) setClock(now func() time.Time) {
+	if now == nil {
+		now = time.Now
+	}
+	c.nowMu.Lock()
+	c.now = now
+	c.nowMu.Unlock()
+	c.wakeRefreshLoop()
 }
 
 func (c *collector) setSnapshotListener(listener func(string, uint64)) {
@@ -105,6 +134,10 @@ func (c *collector) notifySnapshotReady(nodeName string, generation uint64) {
 }
 
 func newCollector(ctx context.Context, cfg Config, client *http.Client) (*collector, error) {
+	// Direct collector users (including integration/scale paths) may start workers
+	// before the scheduler Plugin constructor runs. Initialize lazy metrics before
+	// any worker can observe them so registration and observation cannot race.
+	registerPluginMetrics()
 	registry, err := newProfileRegistry(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("create metric profile registry: %w", err)
@@ -130,8 +163,10 @@ func newCollector(ctx context.Context, cfg Config, client *http.Client) (*collec
 		ctx: collectorCtx, cancel: cancel, queue: make(chan scrapeTarget, cfg.QueueSize),
 		registry: registry, store: newSnapshotStore(cfg.CacheMaxEntries),
 		targets: map[string]scrapeTarget{}, nodes: map[string]*v1.Node{},
-		pending: map[string]struct{}{}, failures: map[string]failureState{}, active: map[string]context.CancelFunc{},
+		pending: map[string]*collectionFlight{}, failures: map[string]failureState{}, active: map[string]context.CancelFunc{},
+		endpointOwners: map[string]string{}, deadlineByNode: map[string]*refreshDeadline{}, deadlineWake: make(chan struct{}, 1),
 	}
+	c.responsePool.New = func() interface{} { return &bytes.Buffer{} }
 	for i := 0; i < cfg.Workers; i++ {
 		c.wg.Add(1)
 		go c.worker()
@@ -181,9 +216,12 @@ func (c *collector) Close() {
 		c.mu.Lock()
 		c.targets = map[string]scrapeTarget{}
 		c.nodes = map[string]*v1.Node{}
-		c.pending = map[string]struct{}{}
+		c.pending = map[string]*collectionFlight{}
 		c.failures = map[string]failureState{}
 		c.active = map[string]context.CancelFunc{}
+		c.endpointOwners = map[string]string{}
+		c.deadlines = nil
+		c.deadlineByNode = map[string]*refreshDeadline{}
 		c.mu.Unlock()
 		c.store.clear()
 		c.client.CloseIdleConnections()
@@ -240,7 +278,7 @@ func (c *collector) observeNode(node *v1.Node) {
 		c.recordTargetError(node.Name, err)
 		return
 	}
-	if changed || c.store.lookup(target, c.now()).State != snapshotFresh {
+	if changed || c.store.lookup(target, c.clockNow()).State != snapshotFresh {
 		c.enqueue(target)
 	}
 }
@@ -278,7 +316,12 @@ func (c *collector) deleteNode(identity nodeIdentity) {
 			delete(c.active, target.Key)
 		}
 		delete(c.failures, target.Key)
+		cancelFlightLocked(c.pending[target.Key], fmt.Errorf("target was deleted"))
 		delete(c.pending, target.Key)
+		if c.endpointOwners[target.Endpoint] == identity.Name {
+			delete(c.endpointOwners, target.Endpoint)
+		}
+		c.removeRefreshDeadlineLocked(identity.Name)
 	}
 	delete(c.targets, identity.Name)
 	delete(c.nodes, identity.Name)
@@ -295,7 +338,12 @@ func (c *collector) recordTargetError(nodeName string, err error) {
 			delete(c.active, old.Key)
 		}
 		delete(c.failures, old.Key)
+		cancelFlightLocked(c.pending[old.Key], err)
 		delete(c.pending, old.Key)
+		if c.endpointOwners[old.Endpoint] == nodeName {
+			delete(c.endpointOwners, old.Endpoint)
+		}
+		c.removeRefreshDeadlineLocked(nodeName)
 	}
 	delete(c.targets, nodeName)
 	delete(c.nodes, nodeName)
@@ -344,7 +392,7 @@ func (c *collector) lookupSnapshotForNodeInfo(nodeInfo *framework.NodeInfo) snap
 		return result
 	}
 
-	now := c.now()
+	now := c.clockNow()
 	result := c.store.lookup(target, now)
 	// A store miss still carries the already-discovered target generation so the
 	// caller may request a non-blocking refresh without resolving or creating it.
@@ -388,31 +436,71 @@ func (c *collector) requestRefreshExisting(nodeName string, generation uint64) b
 }
 
 func (c *collector) enqueue(target scrapeTarget) bool {
-	now := c.now()
+	queued, _ := c.enqueueWithWaiter(target, nil)
+	return queued
+}
+
+// enqueueWithWaiter is the only collector admission path. A duplicate target key
+// joins the existing flight, while backoff/circuit and queue capacity remain
+// authoritative for both background refreshes and synchronous refreshNode callers.
+func (c *collector) enqueueWithWaiter(target scrapeTarget, waiter chan error) (bool, error) {
+	now := c.clockNow()
 	c.mu.Lock()
-	if _, exists := c.pending[target.Key]; exists {
+	current, exists := c.targets[target.NodeName]
+	if !exists || current.Key != target.Key || current.Generation != target.Generation {
+		c.mu.Unlock()
+		return false, fmt.Errorf("target generation is obsolete")
+	}
+	if flight := c.pending[target.Key]; flight != nil {
+		if waiter != nil {
+			flight.waiters = append(flight.waiters, waiter)
+		}
 		c.mu.Unlock()
 		observeRefreshSuppressed("coalesced")
-		return false
+		return false, nil
 	}
 	if failure := c.failures[target.Key]; now.Before(failure.NextTry) || now.Before(failure.OpenUntil) {
+		next := failure.NextTry
+		if failure.OpenUntil.After(next) {
+			next = failure.OpenUntil
+		}
+		c.scheduleRefreshLocked(target, next)
 		c.mu.Unlock()
 		observeRefreshSuppressed("backoff")
-		return false
+		return false, fmt.Errorf("target refresh is in backoff until %s", next.UTC().Format(time.RFC3339Nano))
 	}
-	c.pending[target.Key] = struct{}{}
+	flight := &collectionFlight{}
+	if waiter != nil {
+		flight.waiters = append(flight.waiters, waiter)
+	}
+	c.pending[target.Key] = flight
 	c.mu.Unlock()
 
 	select {
 	case c.queue <- target:
 		observeQueueDepth(len(c.queue))
-		return true
+		return true, nil
 	default:
 		c.mu.Lock()
-		delete(c.pending, target.Key)
+		if currentFlight := c.pending[target.Key]; currentFlight == flight {
+			delete(c.pending, target.Key)
+			cancelFlightLocked(flight, fmt.Errorf("collector refresh queue is full"))
+		}
 		c.mu.Unlock()
 		observeRefreshSuppressed("queue_full")
-		return false
+		return false, fmt.Errorf("collector refresh queue is full")
+	}
+}
+
+func cancelFlightLocked(flight *collectionFlight, err error) {
+	if flight == nil {
+		return
+	}
+	for _, waiter := range flight.waiters {
+		select {
+		case waiter <- err:
+		default:
+		}
 	}
 }
 
@@ -439,16 +527,26 @@ func (c *collector) worker() {
 			if err != nil {
 				observeCollectorFailure(collectionFailureReason(err))
 			}
+			now := c.clockNow()
 			c.mu.Lock()
+			flight := c.pending[target.Key]
 			delete(c.pending, target.Key)
 			current, stillCurrent := c.targets[target.NodeName]
 			if err != nil && stillCurrent && current.Key == target.Key {
 				c.recordFailureLocked(target, err)
-				c.store.recordFailure(target, sanitizeCollectionError(err), c.now())
+				failure := c.failures[target.Key]
+				next := failure.NextTry
+				if failure.OpenUntil.After(next) {
+					next = failure.OpenUntil
+				}
+				c.scheduleRefreshLocked(current, next)
+				c.store.recordFailure(target, sanitizeCollectionError(err), now)
 			} else if err == nil && stillCurrent && current.Key == target.Key {
 				delete(c.failures, target.Key)
+				c.scheduleRefreshLocked(current, now.Add(jitteredInterval(target.Key, c.config.RefreshInterval, c.config.JitterFraction)))
 			}
 			c.observeFailureStateLocked()
+			cancelFlightLocked(flight, err)
 			c.mu.Unlock()
 		}
 	}
@@ -474,42 +572,74 @@ func (c *collector) beginCollection(target scrapeTarget) (context.Context, func(
 	}, true
 }
 
+// refreshLoop is deadline-driven: it sleeps until the earliest target deadline
+// and therefore performs no periodic O(target-count) scan.
 func (c *collector) refreshLoop() {
 	defer c.wg.Done()
-	scanInterval := c.config.RefreshInterval / 10
-	if scanInterval > time.Second {
-		scanInterval = time.Second
+	timer := time.NewTimer(time.Hour)
+	if !timer.Stop() {
+		<-timer.C
 	}
-	if scanInterval < 10*time.Millisecond {
-		scanInterval = 10 * time.Millisecond
-	}
-	ticker := time.NewTicker(scanInterval)
-	defer ticker.Stop()
 	for {
+		deadline, ok := c.nextRefreshDeadline()
+		if !ok {
+			select {
+			case <-c.ctx.Done():
+				return
+			case <-c.deadlineWake:
+				continue
+			}
+		}
+		delay := deadline.Sub(c.clockNow())
+		if delay < 0 {
+			delay = 0
+		}
+		timer.Reset(delay)
 		select {
 		case <-c.ctx.Done():
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
 			return
-		case now := <-ticker.C:
-			c.scheduleDue(now)
+		case <-c.deadlineWake:
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			continue
+		case <-timer.C:
+			now := c.clockNow()
+			for _, target := range c.popDueRefreshes(now) {
+				if !c.enqueue(target) {
+					c.rescheduleSuppressed(target, now)
+				}
+			}
 		}
 	}
 }
 
-func (c *collector) scheduleDue(now time.Time) {
-	c.mu.Lock()
-	targets := make([]scrapeTarget, 0)
-	for name, target := range c.targets {
-		if target.NextRefresh.After(now) {
-			continue
-		}
-		target.NextRefresh = now.Add(jitteredInterval(target.Key, c.config.RefreshInterval, c.config.JitterFraction))
-		c.targets[name] = target
-		targets = append(targets, target)
+func (c *collector) refreshNode(ctx context.Context, node *v1.Node) error {
+	target, _, err := c.ensureTarget(node)
+	if err != nil {
+		observeCollectorFailure("invalid_target")
+		return err
 	}
-	c.mu.Unlock()
-	sort.Slice(targets, func(i, j int) bool { return targets[i].Key < targets[j].Key })
-	for _, target := range targets {
-		c.enqueue(target)
+	waiter := make(chan error, 1)
+	if _, err := c.enqueueWithWaiter(target, waiter); err != nil {
+		return err
+	}
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-c.ctx.Done():
+		return c.ctx.Err()
+	case err := <-waiter:
+		return err
 	}
 }
 
@@ -557,31 +687,6 @@ func jitteredInterval(key string, interval time.Duration, fraction float64) time
 	return time.Duration(float64(interval) * factor)
 }
 
-func (c *collector) refreshNode(ctx context.Context, node *v1.Node) error {
-	target, _, err := c.ensureTarget(node)
-	if err != nil {
-		observeCollectorFailure("invalid_target")
-		return err
-	}
-	start := time.Now()
-	err = c.collectTarget(ctx, target)
-	observeCollection(time.Since(start), err)
-	if err != nil {
-		observeCollectorFailure(collectionFailureReason(err))
-	}
-	c.mu.Lock()
-	current, stillCurrent := c.targets[target.NodeName]
-	if err != nil && stillCurrent && current.Key == target.Key {
-		c.recordFailureLocked(target, err)
-		c.store.recordFailure(target, sanitizeCollectionError(err), c.now())
-	} else if err == nil && stillCurrent && current.Key == target.Key {
-		delete(c.failures, target.Key)
-	}
-	c.observeFailureStateLocked()
-	c.mu.Unlock()
-	return err
-}
-
 func (c *collector) collectTarget(ctx context.Context, target scrapeTarget) error {
 	reqCtx, cancel := context.WithTimeout(ctx, c.config.Timeout)
 	defer cancel()
@@ -600,16 +705,25 @@ func (c *collector) collectTarget(ctx context.Context, target scrapeTarget) erro
 	if resp.ContentLength > c.config.MaxResponseBytes {
 		return fmt.Errorf("exporter response exceeds %d bytes", c.config.MaxResponseBytes)
 	}
+	buffer := c.responsePool.Get().(*bytes.Buffer)
+	buffer.Reset()
+	defer func() {
+		// Keep pooling bounded: unusually large responses are released to the GC
+		// instead of becoming persistent worker-sized cache entries.
+		if buffer.Cap() <= 256<<10 {
+			c.responsePool.Put(buffer)
+		}
+	}()
 	limited := io.LimitReader(resp.Body, c.config.MaxResponseBytes+1)
-	raw, err := io.ReadAll(limited)
-	if err != nil {
+	if _, err := buffer.ReadFrom(limited); err != nil {
 		return fmt.Errorf("read exporter response: %w", err)
 	}
+	raw := buffer.Bytes()
 	if int64(len(raw)) > c.config.MaxResponseBytes {
 		return fmt.Errorf("exporter response exceeds %d bytes", c.config.MaxResponseBytes)
 	}
 	parseStart := time.Now()
-	metrics, err := c.registry.parseVersion(strings.NewReader(string(raw)), target.Profile, target.ProfileVersion, parserLimits{
+	metrics, err := c.registry.parseVersion(bytes.NewReader(raw), target.Profile, target.ProfileVersion, parserLimits{
 		MaxMetricFamilies: c.config.MaxMetricFamilies, MaxSamples: c.config.MaxSamples,
 		MaxLabelsPerSample: c.config.MaxLabelsPerSample, MaxDevices: c.config.MaxDevicesPerNode,
 	})
@@ -617,7 +731,7 @@ func (c *collector) collectTarget(ctx context.Context, target scrapeTarget) erro
 	if err != nil {
 		return fmt.Errorf("parse exporter response: %w", err)
 	}
-	observedAt := c.now()
+	observedAt := c.clockNow()
 	metrics.Endpoint = target.Endpoint
 	metrics.FetchedAt = observedAt
 	metrics.ValidUntil = observedAt.Add(c.config.SnapshotTTL)
@@ -648,9 +762,9 @@ func (c *collector) recordFailureLocked(target scrapeTarget, err error) {
 			delay = c.config.BackoffMax
 		}
 	}
-	failure.NextTry = c.now().Add(delay)
+	failure.NextTry = c.clockNow().Add(delay)
 	if failure.Count >= c.config.CircuitFailures {
-		failure.OpenUntil = c.now().Add(c.config.CircuitOpenDuration)
+		failure.OpenUntil = c.clockNow().Add(c.config.CircuitOpenDuration)
 	}
 	c.failures[target.Key] = failure
 }
@@ -658,7 +772,7 @@ func (c *collector) recordFailureLocked(target scrapeTarget, err error) {
 func (c *collector) observeFailureStateLocked() {
 	backoff := 0
 	circuit := 0
-	now := c.now()
+	now := c.clockNow()
 	for _, failure := range c.failures {
 		if now.Before(failure.OpenUntil) {
 			circuit++
@@ -735,7 +849,12 @@ func (c *collector) pruneLocked(protectedNode string) {
 		delete(c.targets, item.name)
 		delete(c.nodes, item.name)
 		delete(c.failures, target.Key)
+		cancelFlightLocked(c.pending[target.Key], fmt.Errorf("target cache entry evicted"))
 		delete(c.pending, target.Key)
+		if c.endpointOwners[target.Endpoint] == item.name {
+			delete(c.endpointOwners, target.Endpoint)
+		}
+		c.removeRefreshDeadlineLocked(item.name)
 		c.store.remove(item.name)
 	}
 }
@@ -750,23 +869,30 @@ func (c *collector) ensureTarget(node *v1.Node) (scrapeTarget, bool, error) {
 	if err != nil {
 		return scrapeTarget{}, false, err
 	}
-	now := c.now()
+	now := c.clockNow()
 	c.mu.Lock()
 	old, exists := c.targets[node.Name]
 	if exists && sameResolvedTarget(old, resolved) {
 		old.SeenAt = now
 		c.targets[node.Name] = old
-		c.nodes[node.Name] = node.DeepCopy()
+		previous := c.nodes[node.Name]
+		// Informer objects are immutable snapshots. Keep the current pointer instead
+		// of deep-copying every duplicate update; reloadProfiles deep-copies only
+		// when a profile generation actually changes.
+		c.nodes[node.Name] = node
+		unchangedResourceVersion := previous != nil && previous.ResourceVersion != "" && previous.ResourceVersion == node.ResourceVersion
+		if unchangedResourceVersion {
+			c.mu.Unlock()
+			return old, false, nil
+		}
 		resources := resourceContextForNode(node, c.config.ResourceMappings)
 		c.mu.Unlock()
 		c.store.updateResources(old, resources)
 		return old, false, nil
 	}
-	for otherName, target := range c.targets {
-		if otherName != node.Name && target.Endpoint == resolved.Endpoint {
-			c.mu.Unlock()
-			return scrapeTarget{}, false, fmt.Errorf("node %q exporter endpoint conflicts with node %q", node.Name, otherName)
-		}
+	if owner := c.endpointOwners[resolved.Endpoint]; owner != "" && owner != node.Name {
+		c.mu.Unlock()
+		return scrapeTarget{}, false, fmt.Errorf("node %q exporter endpoint conflicts with node %q", node.Name, owner)
 	}
 	c.nextGeneration++
 	resolved.Generation = c.nextGeneration
@@ -779,10 +905,17 @@ func (c *collector) ensureTarget(node *v1.Node) (scrapeTarget, bool, error) {
 			delete(c.active, old.Key)
 		}
 		delete(c.failures, old.Key)
+		cancelFlightLocked(c.pending[old.Key], fmt.Errorf("target generation changed"))
 		delete(c.pending, old.Key)
+		if c.endpointOwners[old.Endpoint] == node.Name {
+			delete(c.endpointOwners, old.Endpoint)
+		}
+		c.removeRefreshDeadlineLocked(node.Name)
 	}
 	c.targets[node.Name] = resolved
-	c.nodes[node.Name] = node.DeepCopy()
+	c.endpointOwners[resolved.Endpoint] = node.Name
+	c.nodes[node.Name] = node
+	c.scheduleRefreshLocked(resolved, resolved.NextRefresh)
 	c.pruneLocked(node.Name)
 	observeTargetCount(len(c.targets))
 	c.observeFailureStateLocked()

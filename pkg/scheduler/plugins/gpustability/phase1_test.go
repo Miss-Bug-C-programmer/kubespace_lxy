@@ -318,12 +318,23 @@ func TestCollectorBackoffAndCircuitState(t *testing.T) {
 	node := nodeInfoWithEndpoint("http://backoff-node:32021/metrics").Node()
 	node.Name = "backoff-node"
 	node.Status.Addresses[0].Address = "backoff-node"
-	for i := 0; i < 2; i++ {
-		if err := collector.refreshNode(context.Background(), node); err == nil {
-			t.Fatal("refreshNode error = nil, want failure")
-		}
+	if err := collector.refreshNode(context.Background(), node); err == nil {
+		t.Fatal("refreshNode error = nil, want failure")
 	}
 	target, _ := collector.targetForNode(node)
+	collector.mu.RLock()
+	firstFailure := collector.failures[target.Key]
+	collector.mu.RUnlock()
+	if firstFailure.Count != 1 || firstFailure.NextTry.IsZero() {
+		t.Fatalf("first failure state = %+v, want one backoff failure", firstFailure)
+	}
+	if err := collector.refreshNode(context.Background(), node); err == nil || !strings.Contains(err.Error(), "backoff") {
+		t.Fatalf("refresh during backoff error = %v, want backoff suppression", err)
+	}
+	collector.setClock(func() time.Time { return firstFailure.NextTry.Add(time.Millisecond) })
+	if err := collector.refreshNode(context.Background(), node); err == nil {
+		t.Fatal("second post-backoff refresh error = nil, want exporter failure")
+	}
 	collector.mu.RLock()
 	failure := collector.failures[target.Key]
 	collector.mu.RUnlock()

@@ -4,9 +4,6 @@
 package planner
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -58,22 +55,27 @@ type candidate struct {
 	totalBytes           int64
 }
 
-// Plan chooses a domain and complete transfer/compute/return epoch. Inputs are
-// cloned or read only. The same inputs and clock time produce byte-for-byte
-// equivalent placement decisions.
+// Plan chooses a domain and complete transfer/compute/return epoch. Direct
+// callers retain the legacy API; production controllers reuse PreparedPlanningInputs
+// so unchanged informer generations do not rebuild indexes or canonical digests.
 func Plan(mission *spacev1.SpaceMission, summaries []*spacev1.SpaceDomainResourceSummary, links []*spacev1.SpaceLinkSnapshot, clock spacev1.Clock) (Decision, error) {
+	prepared, err := PreparePlanningInputs(summaries, links)
+	if err != nil {
+		return Decision{}, err
+	}
+	return PlanPrepared(mission, prepared, clock)
+}
+
+func PlanPrepared(mission *spacev1.SpaceMission, prepared *PreparedPlanningInputs, clock spacev1.Clock) (Decision, error) {
 	if err := spacev1.ValidateMission(mission, clock); err != nil {
 		return Decision{}, err
 	}
-	if err := validatePlannerTopology(summaries, links); err != nil {
-		return Decision{}, err
+	if prepared == nil {
+		return Decision{}, fmt.Errorf("prepared planning inputs are required")
 	}
 	now := clock.Now().UTC()
-	sortedSummaries := append([]*spacev1.SpaceDomainResourceSummary(nil), summaries...)
-	sort.SliceStable(sortedSummaries, func(i, j int) bool {
-		return domainKey(sortedSummaries[i].Spec.Domain) < domainKey(sortedSummaries[j].Spec.Domain)
-	})
-	linkIndex := buildLinkIndex(links, clock)
+	sortedSummaries := prepared.resourceSummaries
+	linkIndex := usablePreparedLinkIndex(prepared, clock)
 	decision := Decision{}
 	var feasible []candidate
 	for _, summary := range sortedSummaries {
@@ -103,7 +105,7 @@ func Plan(mission *spacev1.SpaceMission, summaries []*spacev1.SpaceDomainResourc
 		return domainKey(feasible[i].summary.Spec.Domain) < domainKey(feasible[j].summary.Spec.Domain)
 	})
 	selected := feasible[0]
-	digest, err := materialDigest(mission, sortedSummaries, links)
+	digest, err := materialDigestPrepared(mission, prepared)
 	if err != nil {
 		return decision, fmt.Errorf("calculate material input digest: %w", err)
 	}
@@ -646,48 +648,11 @@ func linkQuality(snapshot *spacev1.SpaceLinkSnapshot, windowID string) int32 {
 }
 
 func materialDigest(mission *spacev1.SpaceMission, summaries []*spacev1.SpaceDomainResourceSummary, links []*spacev1.SpaceLinkSnapshot) (string, error) {
-	type material struct {
-		Mission           spacev1.SpaceMissionSpec                 `json:"mission"`
-		MissionGeneration int64                                    `json:"missionGeneration"`
-		Resources         []spacev1.SpaceDomainResourceSummarySpec `json:"resources"`
-		Links             []spacev1.SpaceLinkSnapshotSpec          `json:"links"`
-	}
-	normalizedMission, err := normalizedMissionSpecForDigest(mission.Spec)
+	prepared, err := PreparePlanningInputs(summaries, links)
 	if err != nil {
 		return "", err
 	}
-	value := material{Mission: normalizedMission, MissionGeneration: mission.Generation}
-	for _, summary := range summaries {
-		if summary != nil {
-			value.Resources = append(value.Resources, normalizedResourceSummarySpecForDigest(summary.Spec))
-		}
-	}
-	sort.SliceStable(value.Resources, func(i, j int) bool {
-		return fullDomainKey(value.Resources[i].Domain) < fullDomainKey(value.Resources[j].Domain)
-	})
-	sortedLinks := append([]*spacev1.SpaceLinkSnapshot(nil), links...)
-	sort.SliceStable(sortedLinks, func(i, j int) bool {
-		if sortedLinks[i] == nil {
-			return false
-		}
-		if sortedLinks[j] == nil {
-			return true
-		}
-		left := directedDomainKey(sortedLinks[i].Spec.Source, sortedLinks[i].Spec.Destination) + "\x00" + sortedLinks[i].Name
-		right := directedDomainKey(sortedLinks[j].Spec.Source, sortedLinks[j].Spec.Destination) + "\x00" + sortedLinks[j].Name
-		return left < right
-	})
-	for _, link := range sortedLinks {
-		if link != nil {
-			value.Links = append(value.Links, normalizedLinkSpecForDigest(link.Spec))
-		}
-	}
-	raw, err := json.Marshal(value)
-	if err != nil {
-		return "", err
-	}
-	digest := sha256.Sum256(raw)
-	return hex.EncodeToString(digest[:]), nil
+	return materialDigestPrepared(mission, prepared)
 }
 
 func nextAttempt(mission *spacev1.SpaceMission) int32 {

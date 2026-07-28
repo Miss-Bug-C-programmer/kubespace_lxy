@@ -179,6 +179,7 @@ func runPlannerControllers(ctx context.Context, dynamicClient dynamic.Interface,
 		return err
 	}
 	observer := spaceplanner.NewPrometheusObserver()
+	planningIndex := spacekube.NewPlanningIndex()
 	queue := newBoundedRateLimitingQueue("planner_missions", maxPending, observer)
 	resourceQueue := newBoundedRateLimitingQueue("resource_status", maxPending, observer)
 	defer queue.ShutDown()
@@ -190,32 +191,48 @@ func runPlannerControllers(ctx context.Context, dynamicClient dynamic.Interface,
 	}
 	_, _ = missions.AddEventHandler(cache.ResourceEventHandlerFuncs{AddFunc: enqueueMission, UpdateFunc: func(_, value interface{}) { enqueueMission(value) }, DeleteFunc: enqueueMission})
 	_, _ = placements.AddEventHandler(cache.ResourceEventHandlerFuncs{AddFunc: func(value interface{}) { enqueuePlacementMission(value, queue) }, UpdateFunc: func(_, value interface{}) { enqueuePlacementMission(value, queue) }, DeleteFunc: func(value interface{}) { enqueuePlacementMission(value, queue) }})
+	indexLink := func(value interface{}) {
+		if err := planningIndex.UpsertLink(value); err != nil {
+			klog.ErrorS(err, "failed to index link snapshot for planning")
+		}
+	}
+	indexResource := func(value interface{}) {
+		if err := planningIndex.UpsertResource(value); err != nil {
+			klog.ErrorS(err, "failed to index resource summary for planning")
+		}
+	}
 	_, _ = links.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(value interface{}) {
+			indexLink(value)
 			resourceQueue.Add("resources")
 			enqueueLinkDependents(value, missions.GetIndexer(), placements.GetIndexer(), queue)
 		},
 		UpdateFunc: func(oldValue, value interface{}) {
+			indexLink(value)
 			resourceQueue.Add("resources")
 			enqueueLinkDependents(oldValue, missions.GetIndexer(), placements.GetIndexer(), queue)
 			enqueueLinkDependents(value, missions.GetIndexer(), placements.GetIndexer(), queue)
 		},
 		DeleteFunc: func(value interface{}) {
+			planningIndex.DeleteLink(value)
 			resourceQueue.Add("resources")
 			enqueueLinkDependents(value, missions.GetIndexer(), placements.GetIndexer(), queue)
 		},
 	})
 	_, _ = resources.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(value interface{}) {
+			indexResource(value)
 			resourceQueue.Add("resources")
 			enqueueResourceDependents(value, missions.GetIndexer(), placements.GetIndexer(), queue)
 		},
 		UpdateFunc: func(oldValue, value interface{}) {
+			indexResource(value)
 			resourceQueue.Add("resources")
 			enqueueResourceDependents(oldValue, missions.GetIndexer(), placements.GetIndexer(), queue)
 			enqueueResourceDependents(value, missions.GetIndexer(), placements.GetIndexer(), queue)
 		},
 		DeleteFunc: func(value interface{}) {
+			planningIndex.DeleteResource(value)
 			resourceQueue.Add("resources")
 			enqueueResourceDependents(value, missions.GetIndexer(), placements.GetIndexer(), queue)
 		},
@@ -232,6 +249,7 @@ func runPlannerControllers(ctx context.Context, dynamicClient dynamic.Interface,
 		PlacementIndexer:     placements.GetIndexer(),
 		ResourceSummaryStore: resources.GetStore(),
 		LinkSnapshotStore:    links.GetStore(),
+		PlanningIndex:        planningIndex,
 		CacheResourceVersions: func() map[string]string {
 			return map[string]string{"resourceSummaries": resources.LastSyncResourceVersion(), "linkSnapshots": links.LastSyncResourceVersion()}
 		},
