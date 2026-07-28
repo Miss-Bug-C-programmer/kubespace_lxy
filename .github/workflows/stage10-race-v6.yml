@@ -25,14 +25,25 @@ jobs:
           echo 'ef369be65e80690ed7b116871ebb3638c3266f64bb31e2b1aa0f976e7d819f1a  /tmp/stage10.patch.xz.b64' | sha256sum -c -
           base64 -d /tmp/stage10.patch.xz.b64 | xz -dc > /tmp/stage10.patch
           echo '0e039fc2bbb25c020901ea5d1f6c079b3e117bf8c71fa1534838b52f2f66cf86  /tmp/stage10.patch' | sha256sum -c -
+          git apply --check --whitespace=error-all /tmp/stage10.patch
           git apply /tmp/stage10.patch
           for spec in \
             'fix1.patch:6af9cd116950034598fbeac91dd4432b9f79f6298c21f1ee0149b7db1a69ed9a' \
             'fix2.patch:b16ef3bde45ca1d3ed3cf3ad383ae3aff396af749843fa18c9c28d394e9ebf43' \
-            'fix3.patch:4680e26bbcb7b221408aebda5a1a28b19b580e391a8f77afd092d1e23807b171' \
-            'fix4.patch:29a0aee99e56a415bb1e81df36a2fa6cecb6b2d59f76bbe16c88db426873ba37'; do
+            'fix3.patch:4680e26bbcb7b221408aebda5a1a28b19b580e391a8f77afd092d1e23807b171'; do
             f=${spec%%:*}; h=${spec#*:}; echo "$h  .github/stage10-payload/$f" | sha256sum -c -; git apply --check --whitespace=error-all ".github/stage10-payload/$f"; git apply ".github/stage10-payload/$f";
           done
+          echo 'b7bdeb719308541e814bdc23cca8ea3d965bed161e3b5caad3548b4f491f6c5e  .github/stage10-payload/fix4-chunk-00' | sha256sum -c -
+          echo '0bf1782d11d053b8b9d3a1eb9469767857bd16db74bf91fe086079b8378cd313  .github/stage10-payload/fix4-chunk-01' | sha256sum -c -
+          echo '6a784543d16593e5157b0e13895acb6cd14a9acef68de2cb69472355703f40cc  .github/stage10-payload/fix4-chunk-02' | sha256sum -c -
+          cat .github/stage10-payload/fix4-chunk-* > /tmp/fix4.patch.xz.b64
+          echo '7a2df490d54c8922852beb7aaaab4ac765a52e47ac4b6edb1cbdce7ba8166dcb  /tmp/fix4.patch.xz.b64' | sha256sum -c -
+          base64 -d /tmp/fix4.patch.xz.b64 > /tmp/fix4.patch.xz
+          echo 'e15ca28bb3d73fa04eba79a3837a3b7c39d59e4fe500a2c874179ec68b96259e  /tmp/fix4.patch.xz' | sha256sum -c -
+          xz -dc /tmp/fix4.patch.xz > /tmp/fix4.patch
+          echo '29a0aee99e56a415bb1e81df36a2fa6cecb6b2d59f76bbe16c88db426873ba37  /tmp/fix4.patch' | sha256sum -c -
+          git apply --check --whitespace=error-all /tmp/fix4.patch
+          git apply /tmp/fix4.patch
           git diff --check
       - name: Focused and race
         shell: bash
