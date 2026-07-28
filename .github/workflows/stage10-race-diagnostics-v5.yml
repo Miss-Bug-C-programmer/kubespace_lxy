@@ -1,0 +1,64 @@
+name: stage10-race-diagnostics-v5
+on:
+  push:
+    branches: [main]
+    paths: [.github/stage10-race-v5-trigger]
+permissions:
+  contents: read
+  statuses: write
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish pending
+        shell: bash
+        run: |
+          curl --fail --silent --show-error -X POST -H "Authorization: Bearer ${{ github.token }}" -H "Accept: application/vnd.github+json" "${{ github.api_url }}/repos/${{ github.repository }}/statuses/${{ github.sha }}" -d "{\"state\":\"pending\",\"context\":\"sandbox/stage10-race-v5-${{ github.run_id }}\",\"target_url\":\"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}"
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: {go-version: '1.25.12', cache: true}
+      - name: Apply candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/stage10-race-v5
+          cat .github/stage10-payload/payload-[0-9][0-9] > /tmp/stage10.patch.xz.b64
+          echo 'ef369be65e80690ed7b116871ebb3638c3266f64bb31e2b1aa0f976e7d819f1a  /tmp/stage10.patch.xz.b64' | sha256sum -c -
+          base64 -d /tmp/stage10.patch.xz.b64 | xz -dc > /tmp/stage10.patch
+          echo '0e039fc2bbb25c020901ea5d1f6c079b3e117bf8c71fa1534838b52f2f66cf86  /tmp/stage10.patch' | sha256sum -c -
+          git apply /tmp/stage10.patch
+          for f in fix1.patch fix2.patch fix3.patch; do git apply ".github/stage10-payload/$f"; done
+          git diff --check
+      - name: Run isolated race packages
+        shell: bash
+        run: |
+          set +e
+          rc=0
+          for item in \
+            'gpu:./pkg/scheduler/plugins/gpustability' \
+            'planner:./contrib/space-compute/pkg/planner' \
+            'kube:./contrib/space-compute/pkg/kube' \
+            'command:./cmd/space-compute-mission-planner'; do
+            name=${item%%:*}; pkg=${item#*:}
+            go test -race "$pkg" -count=1 2>&1 | tee "/tmp/stage10-race-v5/${name}.log"
+            code=${PIPESTATUS[0]}
+            echo "$code" > "/tmp/stage10-race-v5/${name}.status"
+            if [ "$code" -ne 0 ]; then rc=1; fi
+          done
+          exit "$rc"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: stage10-race-diagnostics-v5
+          path: /tmp/stage10-race-v5
+          retention-days: 7
+      - name: Publish success
+        if: success()
+        shell: bash
+        run: |
+          curl --fail --silent --show-error -X POST -H "Authorization: Bearer ${{ github.token }}" -H "Accept: application/vnd.github+json" "${{ github.api_url }}/repos/${{ github.repository }}/statuses/${{ github.sha }}" -d "{\"state\":\"success\",\"context\":\"sandbox/stage10-race-v5-${{ github.run_id }}\",\"target_url\":\"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}"
+      - name: Publish failure
+        if: failure()
+        shell: bash
+        run: |
+          curl --fail --silent --show-error -X POST -H "Authorization: Bearer ${{ github.token }}" -H "Accept: application/vnd.github+json" "${{ github.api_url }}/repos/${{ github.repository }}/statuses/${{ github.sha }}" -d "{\"state\":\"failure\",\"context\":\"sandbox/stage10-race-v5-${{ github.run_id }}\",\"target_url\":\"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}"
