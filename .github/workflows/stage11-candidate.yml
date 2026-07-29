@@ -22,9 +22,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python3 -m py_compile .github/stage11-apply.py .github/stage11-fix1.py .github/stage11-fix2.py
+          python3 -m py_compile .github/stage11-apply.py .github/stage11-fix1.py .github/stage11-fix2.py .github/stage11-fix3.py
           python3 .github/stage11-apply.py
           python3 .github/stage11-fix1.py
+          python3 .github/stage11-fix3.py
           python3 .github/stage11-fix2.py
           go get google.golang.org/grpc@v1.82.1
           go get golang.org/x/text@v0.39.0
