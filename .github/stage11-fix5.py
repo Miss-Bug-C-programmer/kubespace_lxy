@@ -22,3 +22,21 @@ for old, new in [('m.TemperatureC = max(temperatures)', 'm.TemperatureC = maxVal
         raise SystemExit(f'metrics profile max helper marker mismatch: {old!r}')
     text = text.replace(old, new, 1)
 profiles.write_text(text)
+
+workload = Path('contrib/space-compute/pkg/workload/controller.go')
+text = workload.read_text()
+old = 'func BuildAttemptPod(_ *spacev1.SpaceMission, _ *spacev1.SpacePlacementIntent, template corev1.PodTemplateSpec) (*corev1.Pod, error) {'
+new = 'func BuildAttemptPod(_ *spacev1.SpaceMission, _ *spacev1.SpacePlacementIntent, _ corev1.PodTemplateSpec) (*corev1.Pod, error) {'
+if text.count(old) != 1:
+    raise SystemExit('BuildAttemptPod legacy fail-closed signature marker mismatch')
+workload.write_text(text.replace(old, new, 1))
+
+for path, old, new in [
+    ('pkg/scheduler/plugins/gpustability/phase1_test.go', 'f.Fuzz(func(t *testing.T, raw string) {\n\t\t_, _ = configFromArgs(&runtime.Unknown{Raw: []byte(raw)})', 'f.Fuzz(func(_ *testing.T, raw string) {\n\t\t_, _ = configFromArgs(&runtime.Unknown{Raw: []byte(raw)})'),
+    ('pkg/scheduler/plugins/gpustability/phase3_test.go', 'f.Fuzz(func(t *testing.T, raw string) {\n\t\tpod := &v1.Pod{ObjectMeta: metav1.ObjectMeta{Annotations: map[string]string{AnnotationWorkloadIntent: raw}}}', 'f.Fuzz(func(_ *testing.T, raw string) {\n\t\tpod := &v1.Pod{ObjectMeta: metav1.ObjectMeta{Annotations: map[string]string{AnnotationWorkloadIntent: raw}}}'),
+]:
+    p = Path(path)
+    text = p.read_text()
+    if text.count(old) != 1:
+        raise SystemExit(f'{path}: remaining revive marker mismatch')
+    p.write_text(text.replace(old, new, 1))
