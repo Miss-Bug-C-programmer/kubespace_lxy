@@ -30,7 +30,7 @@ jobs:
           go get golang.org/x/text@v0.39.0
           go get go.opentelemetry.io/otel@v1.43.0 go.opentelemetry.io/otel/metric@v1.43.0 go.opentelemetry.io/otel/trace@v1.43.0 go.opentelemetry.io/otel/sdk@v1.43.0 go.opentelemetry.io/otel/exporters/otlp/otlptrace@v1.43.0 go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc@v1.43.0
           go mod tidy
-          gofmt -w cmd/space-compute-mission-planner/*.go cmd/space-compute-domain-agent/*.go contrib/space-compute/pkg tests/integration/spacecomputescheduler/phase4_external_int_test.go pkg/scheduler/plugins/gpustability/phase0_test.go
+          find cmd/space-compute-mission-planner cmd/space-compute-domain-agent contrib/space-compute/pkg tests/integration/spacecomputescheduler pkg/scheduler/plugins/gpustability -type f -name '*.go' -print0 | xargs -0 gofmt -w
           chmod +x scripts/space-compute-phase11
           git diff --check
       - name: Verify production isolation and source invariants
@@ -93,7 +93,10 @@ jobs:
           set -euo pipefail
           go mod verify
           go mod tidy -diff
-          test -z "$(gofmt -l cmd/space-compute-mission-planner cmd/space-compute-domain-agent contrib/space-compute/pkg pkg/scheduler/plugins/gpustability tests/integration/spacecomputescheduler)"
+          if find cmd/space-compute-mission-planner cmd/space-compute-domain-agent contrib/space-compute/pkg pkg/scheduler/plugins/gpustability tests/integration/spacecomputescheduler -type f -name '*.go' -print0 | xargs -0 gofmt -l | grep -q .; then
+            echo 'gofmt produced paths' >&2
+            exit 1
+          fi
           git diff --check
           git diff --stat
       - name: Capture candidate patch
