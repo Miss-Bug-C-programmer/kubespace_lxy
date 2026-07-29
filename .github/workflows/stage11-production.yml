@@ -33,7 +33,7 @@ jobs:
           go get go.opentelemetry.io/otel@v1.43.0 go.opentelemetry.io/otel/metric@v1.43.0 go.opentelemetry.io/otel/trace@v1.43.0 go.opentelemetry.io/otel/sdk@v1.43.0 go.opentelemetry.io/otel/exporters/otlp/otlptrace@v1.43.0 go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc@v1.43.0
           go mod tidy
           find cmd/space-compute-mission-planner cmd/space-compute-domain-agent contrib/space-compute/pkg tests/integration/spacecomputescheduler pkg/scheduler/plugins/gpustability -type f -name '*.go' -print0 | xargs -0 gofmt -w
-          chmod +x scripts/space-compute-phase11
+          chmod +x scripts/space-compute-phase11 scripts/space-compute-secret-scan
           git diff --check
       - name: Mandatory toolchain and module commands
         shell: bash
@@ -67,13 +67,13 @@ jobs:
           golangci-lint version
           govulncheck -version
           gitleaks version
-      - name: Pinned linter security vulnerability and leak gates
+      - name: Pinned linter vulnerability and leak gates
         shell: bash
         run: |
           set -euo pipefail
           golangci-lint run --timeout=20m ./pkg/scheduler/plugins/gpustability/... ./contrib/space-compute/pkg/... ./cmd/space-compute-scheduler/... ./cmd/space-compute-mission-planner/... ./cmd/space-compute-domain-agent/...
           govulncheck ./pkg/scheduler/plugins/gpustability ./contrib/space-compute/pkg/... ./cmd/space-compute-scheduler ./cmd/space-compute-mission-planner ./cmd/space-compute-domain-agent
-          gitleaks git --redact --no-banner --verbose .
+          bash scripts/space-compute-secret-scan
       - name: Mandatory space-compute unit race static integration scenarios fuzz scale
         shell: bash
         run: |
@@ -183,11 +183,11 @@ jobs:
           test "$(git rev-parse origin/main)" = "$GITHUB_SHA"
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add .golangci.json go.mod go.sum Dockerfile.dapper Dockerfile.local Dockerfile.space-compute-* \
+          git add .golangci.json .gitleaksignore go.mod go.sum Dockerfile.dapper Dockerfile.local Dockerfile.space-compute-* \
             cmd/space-compute-mission-planner cmd/space-compute-domain-agent \
-            contrib/space-compute/pkg pkg/scheduler/plugins/gpustability/phase0_test.go \
+            contrib/space-compute/pkg pkg/scheduler/plugins/gpustability \
             tests/integration/spacecomputescheduler/phase4_external_int_test.go \
-            scripts/space-compute-phase11 docs/space-compute/manifests/mission-planner.yaml \
+            scripts/space-compute-phase11 scripts/space-compute-secret-scan docs/space-compute/manifests/mission-planner.yaml \
             docs/space-compute/manifests/metrics-monitoring-access.yaml docs/space-compute/manifests/image-signature-policy.yaml \
             docs/space-compute/PHASE11_SECURITY_AND_SUPPLY_CHAIN.md \
             .github/workflows/govulncheck.yml .github/workflows/space-compute-supply-chain.yml
