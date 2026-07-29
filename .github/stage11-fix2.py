@@ -34,7 +34,7 @@ edit('contrib/space-compute/pkg/apis/v1alpha1/canonical_test.go', [
 
 p = Path('contrib/space-compute/pkg/apis/v1alpha1/validation_test.go')
 text = p.read_text()
-if text.count('f.Fuzz(func(t *testing.T, raw string) {') != 3:
+if text.count('f.Fuzz(func(t *testing.T, raw string) {') != 4:
     raise SystemExit('validation fuzz callback count changed')
 text = text.replace('f.Fuzz(func(t *testing.T, raw string) {', 'f.Fuzz(func(_ *testing.T, raw string) {')
 p.write_text(text)
