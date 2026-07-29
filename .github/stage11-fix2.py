@@ -28,8 +28,8 @@ edit('contrib/space-compute/pkg/migration/migrator.go', [
 ])
 
 edit('contrib/space-compute/pkg/apis/v1alpha1/canonical_test.go', [
-    ('\tcopy := base.DeepCopy()\n\tcopy.Spec.Windows[0].BandwidthBitsPerSec++\n\tdigestB, err := ReporterDigest(copy)',
-     '\tchanged := base.DeepCopy()\n\tchanged.Spec.Windows[0].BandwidthBitsPerSec++\n\tdigestB, err := ReporterDigest(changed)'),
+    ('\tcopy := base.DeepCopy()\n\tcopy.Spec.Devices[0], copy.Spec.Devices[1] = copy.Spec.Devices[1], copy.Spec.Devices[0]\n\tcopy.Spec.Devices[1].Architectures[0], copy.Spec.Devices[1].Architectures[1] = copy.Spec.Devices[1].Architectures[1], copy.Spec.Devices[1].Architectures[0]\n\tcopy.Spec.DataLocations[0], copy.Spec.DataLocations[1] = copy.Spec.DataLocations[1], copy.Spec.DataLocations[0]\n\tcopy.Spec.Software = map[string]string{"a.example/runtime": "1", "z.example/runtime": "2"}\n\tsecond, _ := CanonicalReporterBytes(copy)',
+     '\treordered := base.DeepCopy()\n\treordered.Spec.Devices[0], reordered.Spec.Devices[1] = reordered.Spec.Devices[1], reordered.Spec.Devices[0]\n\treordered.Spec.Devices[1].Architectures[0], reordered.Spec.Devices[1].Architectures[1] = reordered.Spec.Devices[1].Architectures[1], reordered.Spec.Devices[1].Architectures[0]\n\treordered.Spec.DataLocations[0], reordered.Spec.DataLocations[1] = reordered.Spec.DataLocations[1], reordered.Spec.DataLocations[0]\n\treordered.Spec.Software = map[string]string{"a.example/runtime": "1", "z.example/runtime": "2"}\n\tsecond, _ := CanonicalReporterBytes(reordered)'),
 ])
 
 p = Path('contrib/space-compute/pkg/apis/v1alpha1/validation_test.go')
