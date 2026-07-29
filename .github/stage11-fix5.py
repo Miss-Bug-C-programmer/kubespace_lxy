@@ -14,3 +14,11 @@ new = '{"kind: ClusterImagePolicy", "https://token.actions.githubusercontent.com
 if text.count(old) != 1:
     raise SystemExit('image policy test marker mismatch')
 test.write_text(text.replace(old, new, 1))
+
+profiles = Path('pkg/scheduler/plugins/gpustability/metrics_profiles.go')
+text = profiles.read_text()
+for old, new in [('m.TemperatureC = max(temperatures)', 'm.TemperatureC = maxValue(temperatures)'), ('return max(values)', 'return maxValue(values)')]:
+    if text.count(old) != 1:
+        raise SystemExit(f'metrics profile max helper marker mismatch: {old!r}')
+    text = text.replace(old, new, 1)
+profiles.write_text(text)
