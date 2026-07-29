@@ -22,14 +22,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python3 -m py_compile .github/stage11-apply.py .github/stage11-fix1.py
+          python3 -m py_compile .github/stage11-apply.py .github/stage11-fix1.py .github/stage11-fix2.py
           python3 .github/stage11-apply.py
           python3 .github/stage11-fix1.py
+          python3 .github/stage11-fix2.py
           go get google.golang.org/grpc@v1.82.1
           go get golang.org/x/text@v0.39.0
           go get go.opentelemetry.io/otel@v1.43.0 go.opentelemetry.io/otel/metric@v1.43.0 go.opentelemetry.io/otel/trace@v1.43.0 go.opentelemetry.io/otel/sdk@v1.43.0 go.opentelemetry.io/otel/exporters/otlp/otlptrace@v1.43.0 go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc@v1.43.0
           go mod tidy
-          gofmt -w cmd/space-compute-mission-planner/*.go tests/integration/spacecomputescheduler/phase4_external_int_test.go
+          gofmt -w cmd/space-compute-mission-planner/*.go cmd/space-compute-domain-agent/*.go contrib/space-compute/pkg tests/integration/spacecomputescheduler/phase4_external_int_test.go pkg/scheduler/plugins/gpustability/phase0_test.go
           chmod +x scripts/space-compute-phase11
           git diff --check
       - name: Verify production isolation and source invariants
@@ -92,7 +93,7 @@ jobs:
           set -euo pipefail
           go mod verify
           go mod tidy -diff
-          test -z "$(gofmt -l cmd/space-compute-mission-planner contrib/space-compute/pkg pkg/scheduler/plugins/gpustability tests/integration/spacecomputescheduler)"
+          test -z "$(gofmt -l cmd/space-compute-mission-planner cmd/space-compute-domain-agent contrib/space-compute/pkg pkg/scheduler/plugins/gpustability tests/integration/spacecomputescheduler)"
           git diff --check
           git diff --stat
       - name: Capture candidate patch
