@@ -33,7 +33,7 @@ jobs:
           go get go.opentelemetry.io/otel@v1.43.0 go.opentelemetry.io/otel/metric@v1.43.0 go.opentelemetry.io/otel/trace@v1.43.0 go.opentelemetry.io/otel/sdk@v1.43.0 go.opentelemetry.io/otel/exporters/otlp/otlptrace@v1.43.0 go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc@v1.43.0
           go mod tidy
           find cmd/space-compute-mission-planner cmd/space-compute-domain-agent contrib/space-compute/pkg tests/integration/spacecomputescheduler pkg/scheduler/plugins/gpustability -type f -name '*.go' -print0 | xargs -0 gofmt -w
-          chmod +x scripts/space-compute-phase11
+          chmod +x scripts/space-compute-phase11 scripts/space-compute-secret-scan
           git diff --check
       - name: Verify production isolation and source invariants
         shell: bash
@@ -68,9 +68,9 @@ jobs:
       - name: Reachable vulnerability gate
         shell: bash
         run: govulncheck ./pkg/scheduler/plugins/gpustability ./contrib/space-compute/pkg/... ./cmd/space-compute-scheduler ./cmd/space-compute-mission-planner ./cmd/space-compute-domain-agent
-      - name: Secret credential and private-key scan
+      - name: Secret private-key token and kubeconfig scan
         shell: bash
-        run: gitleaks git --redact --no-banner --verbose .
+        run: bash scripts/space-compute-secret-scan
       - name: Parse manifests and focused metrics security tests
         shell: bash
         run: |
