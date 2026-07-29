@@ -35,10 +35,16 @@ jobs:
           find .github/workflows -maxdepth 1 -type f -print | sort
           echo '=== distroless digest ==='
           docker buildx imagetools inspect gcr.io/distroless/static-debian12:nonroot
-          echo '=== golang builder digest ==='
+          echo '=== golang bookworm builder digest ==='
           docker buildx imagetools inspect docker.io/library/golang:1.25.12-bookworm
+          echo '=== golang alpine builder digest ==='
+          docker buildx imagetools inspect docker.io/library/golang:1.25.12-alpine3.22
           echo '=== checked-in linter ==='
           if [[ -x ./golangci-lint ]]; then ./golangci-lint --version || true; else file ./golangci-lint || true; fi
+          echo '=== integration files ==='
+          find tests/integration/spacecomputescheduler -maxdepth 1 -type f -print | sort
+          echo '=== cluster e2e references ==='
+          grep -R -n 'SPACE_COMPUTE_E2E_KUBECONFIG\|IndependentSchedulerAgainstK3s\|Phase4PlannerToIndependentSchedulerAgainstK3s' tests .github scripts | head -n 200 || true
       - name: Publish success
         if: success()
         shell: bash
