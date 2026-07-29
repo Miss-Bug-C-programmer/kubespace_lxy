@@ -29,22 +29,22 @@ jobs:
           find . -maxdepth 2 -type f -name 'Dockerfile*space-compute*' -print | sort
           echo '=== FROM lines ==='
           grep -R -n '^FROM ' --include='Dockerfile*space-compute*' . || true
+          echo '=== golangci config ==='
+          find . -maxdepth 2 -type f \( -name '.golangci*' -o -name '*golangci*' \) -print | sort
           echo '=== golangci references ==='
           grep -R -n --exclude-dir=.git --exclude=golangci-lint 'golangci-lint\|v1\.55\.2' .github scripts Dockerfile* Makefile 2>/dev/null || true
-          echo '=== workflow files ==='
-          find .github/workflows -maxdepth 1 -type f -print | sort
           echo '=== distroless digest ==='
           docker buildx imagetools inspect gcr.io/distroless/static-debian12:nonroot
           echo '=== golang bookworm builder digest ==='
           docker buildx imagetools inspect docker.io/library/golang:1.25.12-bookworm
           echo '=== golang alpine builder digest ==='
-          docker buildx imagetools inspect docker.io/library/golang:1.25.12-alpine3.22
+          docker buildx imagetools inspect docker.io/library/golang:1.25.12-alpine
           echo '=== checked-in linter ==='
           if [[ -x ./golangci-lint ]]; then ./golangci-lint --version || true; else file ./golangci-lint || true; fi
           echo '=== integration files ==='
           find tests/integration/spacecomputescheduler -maxdepth 1 -type f -print | sort
           echo '=== cluster e2e references ==='
-          grep -R -n 'SPACE_COMPUTE_E2E_KUBECONFIG\|IndependentSchedulerAgainstK3s\|Phase4PlannerToIndependentSchedulerAgainstK3s' tests .github scripts | head -n 200 || true
+          grep -R -n 'SPACE_COMPUTE_E2E_KUBECONFIG\|IndependentSchedulerAgainstK3s\|Phase4PlannerToIndependentSchedulerAgainstK3s' tests .github scripts | head -n 240 || true
       - name: Publish success
         if: success()
         shell: bash
