@@ -1,0 +1,73 @@
+name: stage11-baseline
+on:
+  push:
+    branches: [main]
+    paths: [.github/stage11-baseline-trigger]
+permissions:
+  contents: read
+  statuses: write
+jobs:
+  baseline:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with: {ref: "${{ github.sha }}", fetch-depth: 0}
+      - uses: actions/setup-go@v5
+        with: {go-version: '1.25.12', cache: true}
+      - name: Publish pending
+        env: {GH_TOKEN: "${{ github.token }}"}
+        run: gh api --method POST "repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=pending -f context="sandbox/stage11-baseline-${GITHUB_RUN_ID}" -f target_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" -f description="Phase 11 lint/vulnerability/test inventory baseline"
+      - name: Install pinned analysis tools
+        run: |
+          set -euo pipefail
+          go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2
+          go install golang.org/x/vuln/cmd/govulncheck@v1.6.0
+          golangci-lint version
+          govulncheck -version
+      - name: Test inventory
+        run: |
+          set -euo pipefail
+          for pkg in \
+            ./pkg/scheduler/plugins/gpustability \
+            ./contrib/space-compute/pkg/apis/v1alpha1 \
+            ./contrib/space-compute/pkg/apis/v1beta1 \
+            ./contrib/space-compute/pkg/admission \
+            ./contrib/space-compute/pkg/planner \
+            ./contrib/space-compute/pkg/transport \
+            ./contrib/space-compute/pkg/execution \
+            ./contrib/space-compute/pkg/workload \
+            ./contrib/space-compute/pkg/kube \
+            ./cmd/space-compute-mission-planner \
+            ./cmd/space-compute-domain-agent; do
+            echo "===== $pkg ====="
+            go test "$pkg" -list 'Test.*' | grep '^Test' || true
+          done
+      - name: Pinned golangci baseline
+        id: lint
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          golangci-lint run --timeout=15m ./pkg/scheduler/plugins/gpustability/... ./contrib/space-compute/pkg/... ./cmd/space-compute-scheduler/... ./cmd/space-compute-mission-planner/... ./cmd/space-compute-domain-agent/... 2>&1 | tee /tmp/golangci.log
+      - name: Reachable vulnerability baseline
+        id: vuln
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          govulncheck ./pkg/scheduler/plugins/gpustability ./contrib/space-compute/pkg/... ./cmd/space-compute-scheduler ./cmd/space-compute-mission-planner ./cmd/space-compute-domain-agent 2>&1 | tee /tmp/govulncheck.log
+      - name: Summarize baseline outcomes
+        run: |
+          echo "golangci=${{ steps.lint.outcome }}"
+          echo "govulncheck=${{ steps.vuln.outcome }}"
+          echo '--- golangci tail ---'
+          tail -n 120 /tmp/golangci.log || true
+          echo '--- govulncheck tail ---'
+          tail -n 200 /tmp/govulncheck.log || true
+      - name: Publish success
+        if: success()
+        env: {GH_TOKEN: "${{ github.token }}"}
+        run: gh api --method POST "repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=success -f context="sandbox/stage11-baseline-${GITHUB_RUN_ID}" -f target_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" -f description="Phase 11 baseline inventory completed; inspect lint/vulnerability outcomes"
+      - name: Publish failure
+        if: failure()
+        env: {GH_TOKEN: "${{ github.token }}"}
+        run: gh api --method POST "repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=failure -f context="sandbox/stage11-baseline-${GITHUB_RUN_ID}" -f target_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" -f description="Phase 11 baseline inventory failed unexpectedly"
