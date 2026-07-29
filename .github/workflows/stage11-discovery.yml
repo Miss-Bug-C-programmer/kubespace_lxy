@@ -1,0 +1,51 @@
+name: stage11-discovery
+on:
+  push:
+    branches: [main]
+    paths: [.github/stage11-discovery-trigger]
+permissions:
+  contents: read
+  statuses: write
+jobs:
+  discover:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish pending
+        shell: bash
+        run: |
+          curl --fail --silent --show-error -X POST -H "Authorization: Bearer ${{ github.token }}" -H "Accept: application/vnd.github+json" "${{ github.api_url }}/repos/${{ github.repository }}/statuses/${{ github.sha }}" -d "{\"state\":\"pending\",\"context\":\"sandbox/stage11-discovery-${{ github.run_id }}\",\"target_url\":\"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}"
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.12'
+          cache: true
+      - name: Repository and supply-chain inventory
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo '=== go ==='
+          go version
+          echo '=== dockerfiles ==='
+          find . -maxdepth 2 -type f -name 'Dockerfile*space-compute*' -print | sort
+          echo '=== FROM lines ==='
+          grep -R -n '^FROM ' --include='Dockerfile*space-compute*' . || true
+          echo '=== golangci references ==='
+          grep -R -n --exclude-dir=.git --exclude=golangci-lint 'golangci-lint\|v1\.55\.2' .github scripts Dockerfile* Makefile 2>/dev/null || true
+          echo '=== workflow files ==='
+          find .github/workflows -maxdepth 1 -type f -print | sort
+          echo '=== distroless digest ==='
+          docker buildx imagetools inspect gcr.io/distroless/static-debian12:nonroot
+          echo '=== golang builder digest ==='
+          docker buildx imagetools inspect docker.io/library/golang:1.25.12-bookworm
+          echo '=== checked-in linter ==='
+          if [[ -x ./golangci-lint ]]; then ./golangci-lint --version || true; else file ./golangci-lint || true; fi
+      - name: Publish success
+        if: success()
+        shell: bash
+        run: |
+          curl --fail --silent --show-error -X POST -H "Authorization: Bearer ${{ github.token }}" -H "Accept: application/vnd.github+json" "${{ github.api_url }}/repos/${{ github.repository }}/statuses/${{ github.sha }}" -d "{\"state\":\"success\",\"context\":\"sandbox/stage11-discovery-${{ github.run_id }}\",\"target_url\":\"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}"
+      - name: Publish failure
+        if: failure()
+        shell: bash
+        run: |
+          curl --fail --silent --show-error -X POST -H "Authorization: Bearer ${{ github.token }}" -H "Accept: application/vnd.github+json" "${{ github.api_url }}/repos/${{ github.repository }}/statuses/${{ github.sha }}" -d "{\"state\":\"failure\",\"context\":\"sandbox/stage11-discovery-${{ github.run_id }}\",\"target_url\":\"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}"
