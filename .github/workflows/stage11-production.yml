@@ -1,0 +1,204 @@
+name: stage11-production
+on:
+  push:
+    branches: [main]
+    paths: [.github/stage11-production-trigger]
+permissions:
+  contents: write
+  statuses: write
+jobs:
+  verify-and-publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with: {ref: "${{ github.sha }}", fetch-depth: 0}
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
+        with: {go-version: '1.25.12', cache: true}
+      - name: Publish pending
+        env: {GH_TOKEN: "${{ github.token }}"}
+        run: gh api --method POST "repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=pending -f context="sandbox/stage11-production-${GITHUB_RUN_ID}" -f target_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" -f description="Running complete Phase 11 production gates"
+      - name: Apply reviewed Phase 11 candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile .github/stage11-apply.py .github/stage11-fix1.py .github/stage11-fix2.py .github/stage11-fix3.py
+          python3 .github/stage11-apply.py
+          python3 .github/stage11-fix1.py
+          python3 .github/stage11-fix3.py
+          python3 .github/stage11-fix2.py
+          go get google.golang.org/grpc@v1.82.1
+          go get golang.org/x/text@v0.39.0
+          go get go.opentelemetry.io/otel@v1.43.0 go.opentelemetry.io/otel/metric@v1.43.0 go.opentelemetry.io/otel/trace@v1.43.0 go.opentelemetry.io/otel/sdk@v1.43.0 go.opentelemetry.io/otel/exporters/otlp/otlptrace@v1.43.0 go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc@v1.43.0
+          go mod tidy
+          find cmd/space-compute-mission-planner cmd/space-compute-domain-agent contrib/space-compute/pkg tests/integration/spacecomputescheduler pkg/scheduler/plugins/gpustability -type f -name '*.go' -print0 | xargs -0 gofmt -w
+          chmod +x scripts/space-compute-phase11
+          git diff --check
+      - name: Mandatory toolchain and module commands
+        shell: bash
+        run: |
+          set -euo pipefail
+          go version
+          go env
+          go mod verify
+          go mod tidy -diff
+      - name: Source security and scheduler isolation invariants
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -z "$(git diff --name-only -- pkg/executor/embed cmd/space-compute-scheduler docs/gpu-scheduler/manifests/space-compute-scheduler.yaml)"
+          grep -R -n 'ListenAndServeTLS' cmd/space-compute-mission-planner
+          grep -R -n 'TokenReviews().Create' cmd/space-compute-mission-planner
+          grep -R -n 'SubjectAccessReviews().Create' cmd/space-compute-mission-planner
+          grep -R -n 'MaxHeaderBytes' cmd/space-compute-mission-planner
+          grep -R -n 'kind: NetworkPolicy' docs/space-compute/manifests/metrics-monitoring-access.yaml
+          grep -R -n 'kind: ClusterImagePolicy' docs/space-compute/manifests/image-signature-policy.yaml
+          test "$(find . -maxdepth 1 -type f -name 'Dockerfile.space-compute-*' | wc -l)" -eq 7
+          for f in Dockerfile.space-compute-*; do test "$(grep -c '^FROM .*@sha256:' "$f")" -eq 2; done
+          ruby -e 'require "yaml"; ARGV.each { |p| YAML.load_stream(File.read(p)) }' docs/space-compute/manifests/*.yaml docs/gpu-scheduler/manifests/space-compute-scheduler.yaml
+      - name: Install pinned security tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2
+          go install golang.org/x/vuln/cmd/govulncheck@v1.6.0
+          go install github.com/zricethezav/gitleaks/v8@v8.30.1
+          golangci-lint version
+          govulncheck -version
+          gitleaks version
+      - name: Pinned linter security vulnerability and leak gates
+        shell: bash
+        run: |
+          set -euo pipefail
+          golangci-lint run --timeout=20m ./pkg/scheduler/plugins/gpustability/... ./contrib/space-compute/pkg/... ./cmd/space-compute-scheduler/... ./cmd/space-compute-mission-planner/... ./cmd/space-compute-domain-agent/...
+          govulncheck ./pkg/scheduler/plugins/gpustability ./contrib/space-compute/pkg/... ./cmd/space-compute-scheduler ./cmd/space-compute-mission-planner ./cmd/space-compute-domain-agent
+          gitleaks git --redact --no-banner --verbose .
+      - name: Mandatory space-compute unit race static integration scenarios fuzz scale
+        shell: bash
+        run: |
+          set -euo pipefail
+          scripts/space-compute unit
+          scripts/space-compute race
+          scripts/space-compute static
+          scripts/space-compute integration
+          scripts/space-compute scenarios
+          scripts/space-compute fuzz
+          scripts/space-compute scale
+      - name: Bootstrap isolated current-source K3s for mandatory cluster-e2e
+        shell: bash
+        run: |
+          set -euo pipefail
+          go build -buildvcs=false -trimpath -o /tmp/k3s-phase11 ./cmd/k3s
+          go build -buildvcs=false -trimpath -o /tmp/space-compute-scheduler-phase11 ./cmd/space-compute-scheduler
+          go build -buildvcs=false -trimpath -o /tmp/space-compute-mission-planner-phase11 ./cmd/space-compute-mission-planner
+          work="$(mktemp -d /tmp/space-compute-phase11-e2e.XXXXXX)"
+          echo "$work" > /tmp/space-compute-phase11-work
+          host_ip="$(hostname -I | awk '{print $1}')"
+          sudo /tmp/k3s-phase11 server \
+            --disable-agent \
+            --node-ip="$host_ip" \
+            --data-dir="$work/data" \
+            --write-kubeconfig="$work/kubeconfig.yaml" \
+            --write-kubeconfig-mode=644 \
+            --bind-address=0.0.0.0 \
+            --advertise-address="$host_ip" \
+            --https-listen-port=16443 \
+            --cluster-cidr=10.242.0.0/16 \
+            --service-cidr=10.243.0.0/16 \
+            --cluster-dns=10.243.0.10 \
+            --flannel-backend=none \
+            --egress-selector-mode=disabled \
+            --kube-scheduler-arg=secure-port=11259 \
+            --kube-controller-manager-arg=secure-port=11257 \
+            --kube-controller-manager-arg=allocate-node-cidrs=false \
+            --disable=coredns \
+            --disable=servicelb \
+            --disable=traefik \
+            --disable=local-storage \
+            --disable=metrics-server \
+            --disable-network-policy \
+            --disable-kube-proxy \
+            --disable-cloud-controller \
+            --disable-helm-controller >"$work/k3s.log" 2>&1 &
+          echo $! > /tmp/space-compute-phase11-k3s-pid
+          for _ in $(seq 1 180); do
+            if curl -kfsS https://127.0.0.1:16443/readyz >/tmp/phase11-readyz 2>/dev/null; then break; fi
+            if ! sudo kill -0 "$(cat /tmp/space-compute-phase11-k3s-pid)" 2>/dev/null; then cat "$work/k3s.log"; exit 1; fi
+            sleep 1
+          done
+          grep -qx ok /tmp/phase11-readyz || { cat "$work/k3s.log"; exit 1; }
+          echo "SPACE_COMPUTE_E2E_KUBECONFIG=$work/kubeconfig.yaml" >> "$GITHUB_ENV"
+          echo "SPACE_COMPUTE_E2E_SCHEDULER_BINARY=/tmp/space-compute-scheduler-phase11" >> "$GITHUB_ENV"
+          echo "SPACE_COMPUTE_PHASE4_E2E_PLANNER_BINARY=/tmp/space-compute-mission-planner-phase11" >> "$GITHUB_ENV"
+      - name: Mandatory cluster-e2e hardware and all
+        shell: bash
+        run: |
+          set -euo pipefail
+          scripts/space-compute cluster-e2e
+          scripts/space-compute hardware
+          scripts/space-compute all
+      - name: Stop isolated K3s
+        if: always()
+        shell: bash
+        run: |
+          if [[ -f /tmp/space-compute-phase11-k3s-pid ]]; then sudo kill "$(cat /tmp/space-compute-phase11-k3s-pid)" 2>/dev/null || true; fi
+          sleep 2
+          if [[ -f /tmp/space-compute-phase11-work ]]; then sudo rm -rf "$(cat /tmp/space-compute-phase11-work)"; fi
+      - name: Mandatory explicit Go tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          go test ./pkg/scheduler/plugins/gpustability -count=1
+          go test -race ./pkg/scheduler/plugins/gpustability -count=1
+          go test ./contrib/space-compute/pkg/... -count=1
+          go test -race ./contrib/space-compute/pkg/... -count=1
+          go test ./cmd/space-compute-scheduler ./cmd/space-compute-mission-planner ./cmd/space-compute-domain-agent -count=1
+      - name: Mandatory vet and final govulncheck commands
+        shell: bash
+        run: |
+          set -euo pipefail
+          go vet ./pkg/scheduler/plugins/gpustability ./contrib/space-compute/pkg/... ./cmd/space-compute-...
+          govulncheck ./pkg/scheduler/plugins/gpustability ./contrib/space-compute/pkg/... ./cmd/space-compute-...
+      - name: Phase 11 grouped regression matrix
+        shell: bash
+        run: scripts/space-compute-phase11 all
+      - name: Build all seven digest-pinned Space Compute images
+        shell: bash
+        run: |
+          set -euo pipefail
+          for dockerfile in Dockerfile.space-compute-*; do
+            echo "=== $dockerfile ==="
+            docker build --pull=false --progress=plain -f "$dockerfile" .
+          done
+      - name: Final repository invariants and non-force publication
+        shell: bash
+        run: |
+          set -euo pipefail
+          go mod verify
+          go mod tidy -diff
+          git diff --check
+          if find cmd/space-compute-mission-planner cmd/space-compute-domain-agent contrib/space-compute/pkg pkg/scheduler/plugins/gpustability tests/integration/spacecomputescheduler -type f -name '*.go' -print0 | xargs -0 gofmt -l | grep -q .; then exit 1; fi
+          git fetch origin main
+          test "$(git rev-parse origin/main)" = "$GITHUB_SHA"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add .golangci.json go.mod go.sum Dockerfile.dapper Dockerfile.local Dockerfile.space-compute-* \
+            cmd/space-compute-mission-planner cmd/space-compute-domain-agent \
+            contrib/space-compute/pkg pkg/scheduler/plugins/gpustability/phase0_test.go \
+            tests/integration/spacecomputescheduler/phase4_external_int_test.go \
+            scripts/space-compute-phase11 docs/space-compute/manifests/mission-planner.yaml \
+            docs/space-compute/manifests/metrics-monitoring-access.yaml docs/space-compute/manifests/image-signature-policy.yaml \
+            docs/space-compute/PHASE11_SECURITY_AND_SUPPLY_CHAIN.md \
+            .github/workflows/govulncheck.yml .github/workflows/space-compute-supply-chain.yml
+          test -n "$(git diff --cached --name-only)"
+          test -z "$(git diff --cached --name-only -- pkg/executor/embed cmd/space-compute-scheduler docs/gpu-scheduler/manifests/space-compute-scheduler.yaml)"
+          git commit -m 'security(space-compute): harden metrics and supply chain'
+          git push origin HEAD:main
+      - name: Publish success
+        if: success()
+        env: {GH_TOKEN: "${{ github.token }}"}
+        run: gh api --method POST "repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=success -f context="sandbox/stage11-production-${GITHUB_RUN_ID}" -f target_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" -f description="Phase 11 complete gates passed and production commit published"
+      - name: Publish failure
+        if: failure()
+        env: {GH_TOKEN: "${{ github.token }}"}
+        run: gh api --method POST "repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=failure -f context="sandbox/stage11-production-${GITHUB_RUN_ID}" -f target_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" -f description="Phase 11 production gate failed; no production push from this run"
