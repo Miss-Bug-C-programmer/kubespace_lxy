@@ -7,10 +7,6 @@ on:
   # For Branch-Protection check. Only the default branch is supported. See
   # https://github.com/ossf/scorecard/blob/main/docs/checks.md#branch-protection
   branch_protection_rule:
-  # To guarantee Maintained check is occasionally updated. See
-  # https://github.com/ossf/scorecard/blob/main/docs/checks.md#maintained
-  schedule:
-    - cron: '25 12 * * 5'
   push:
     branches: [ "main" ]
 
@@ -54,8 +50,8 @@ jobs:
           #   - Allows the repository to include the Scorecard badge.
           #   - See https://github.com/ossf/scorecard-action#publishing-results.
           # For private repositories:
-          #   - `publish_results` will always be set to `false`, regardless
-          #     of the value entered here.
+          #   - `publish_results` will always be set to `false`, regardless of
+          #     the value entered here.
           publish_results: true
 
           # (Optional) Uncomment file_mode if you have a .gitattributes with files marked export-ignore
