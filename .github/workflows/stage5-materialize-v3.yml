@@ -14,7 +14,7 @@ jobs:
       - name: Publish pending status
         env: {GH_TOKEN: "${{ github.token }}"}
         run: gh api --method POST "repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=pending -f context="sandbox/stage5-materialize-${GITHUB_RUN_ID}" -f target_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" -f description="Materializing reviewed Phase 5 core"
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with: {go-version-file: go.mod, cache: true}
       - name: Apply reviewed candidate
         shell: bash
