@@ -15,7 +15,7 @@ jobs:
         run: |
           curl --fail --silent --show-error -X POST -H "Authorization: Bearer ${{ github.token }}" -H "Accept: application/vnd.github+json" "${{ github.api_url }}/repos/${{ github.repository }}/statuses/${{ github.sha }}" -d "{\"state\":\"pending\",\"context\":\"sandbox/stage11-discovery-${{ github.run_id }}\",\"target_url\":\"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}"
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version: '1.25.12'
           cache: true
